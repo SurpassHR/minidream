@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "concurrently -k -n server,web -c blue,green \"pnpm run dev:server\" \"pnpm run dev:web\"",
+    "dev:server": "tsx watch src/index.ts",
+    "dev:web": "pnpm --filter director-workbench-web run dev",
     "start": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -23,6 +25,7 @@
     "@types/express": "^4.17.25",
     "@types/node": "^20.14.0",
     "@types/ws": "^8.5.10",
+    "concurrently": "^10.0.4",
     "tsx": "^4.16.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
