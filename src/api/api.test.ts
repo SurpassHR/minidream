@@ -1,0 +1,331 @@
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { buildApp } from '../index.js';
+import { loadGraph } from '../graph/graph-store.js';
+import { listSnapshots } from '../snapshots/snapshot-store.js';
+
+let dir: string;
+let a: Awaited<ReturnType<typeof buildApp>>;
+beforeEach(async () => {
+  // vitest 环境收不到 inotify 事件，启用 chokidar 轮询以测试外部文件变更回填
+  process.env.DIRECTOR_WATCH_POLLING = '1';
+  dir = mkdtempSync(join(tmpdir(), 'director-api-'));
+  mkdirSync(join(dir, 'mmh3'), { recursive: true });
+  writeFileSync(join(dir, 'mmh3', 'shot_01.md'), '# SHOT 01\n牵绳慢步', 'utf8');
+  a = buildApp({ projectDir: dir, comfyBaseUrl: 'http://127.0.0.1:59999' });
+});
+afterEach(async () => {
+  delete process.env.DIRECTOR_WATCH_POLLING;
+  await a.close(); // 关闭 watcher/wss，避免测试挂起
+  rmSync(dir, { recursive: true, force: true });
+});
+
+describe('API 节点', () => {
+  it('POST /api/nodes 创建节点并落盘+快照', async () => {
+    const res = await a.inject({
+      method: 'POST', url: '/api/nodes',
+      payload: { type: 'shot', title: 'SHOT 01', position: { x: 10, y: 20 } },
+    });
+    expect(res.statusCode).toBe(201);
+    const node = res.json().node;
+    expect(node.version).toBe(1);
+    expect(loadGraph(dir).nodes).toHaveLength(1);
+    expect(listSnapshots(dir)).toHaveLength(1);
+  });
+
+  it('PATCH 更新节点并双写映射文件', async () => {
+    const created = await a.inject({
+      method: 'POST', url: '/api/nodes',
+      payload: { type: 'shot', title: 'SHOT 01', fields: { filename: 'shot_01.md', content: 'v1' } },
+    });
+    const id = created.json().node.id;
+    const res = await a.inject({
+      method: 'PATCH', url: `/api/nodes/${id}`,
+      payload: { patch: { fields: { content: 'v2 新版' } } },
+    });
+    expect(res.json().node.version).toBe(2);
+    expect(res.json().node.fields.content).toBe('v2 新版');
+  });
+
+  it('DELETE 无 confirm 返回 400', async () => {
+    const created = await a.inject({
+      method: 'POST', url: '/api/nodes',
+      payload: { type: 'shot', title: 'S' },
+    });
+    const id = created.json().node.id;
+    const res = await a.inject({ method: 'DELETE', url: `/api/nodes/${id}` });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('CONFIRM_REQUIRED');
+  });
+
+  it('DELETE 带 confirm 删除并连带删边', async () => {
+    const n1 = (await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'A' } })).json().node;
+    const n2 = (await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'B' } })).json().node;
+    await a.inject({ method: 'POST', url: '/api/edges', payload: { kind: 'ref', source: n1.id, target: n2.id } });
+    const res = await a.inject({ method: 'DELETE', url: `/api/nodes/${n1.id}?confirm=true` });
+    expect(res.statusCode).toBe(200);
+    const g = loadGraph(dir);
+    expect(g.nodes).toHaveLength(1);
+    expect(g.edges).toHaveLength(0);
+  });
+});
+
+describe('API 导入与快照', () => {
+  it('POST /api/import 从文件创建节点', async () => {
+    const res = await a.inject({
+      method: 'POST', url: '/api/import',
+      payload: { path: 'mmh3/shot_01.md', type: 'shot', title: 'SHOT 01' },
+    });
+    expect(res.statusCode).toBe(201);
+    const node = res.json().node;
+    expect(node.fields.filename).toBe('mmh3/shot_01.md');
+    expect(node.fields.content).toContain('牵绳慢步');
+  });
+
+  it('POST /api/import 拒绝路径穿越', async () => {
+    const res = await a.inject({
+      method: 'POST', url: '/api/import',
+      payload: { path: '../outside.md', type: 'shot', title: 'X' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('FILE_CONFLICT');
+  });
+
+  it('POST /api/snapshots/rollback 需 confirm 且回滚成功', async () => {
+    await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'A' } });
+    await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'B' } });
+    const noConfirm = await a.inject({
+      method: 'POST', url: '/api/snapshots/rollback',
+      payload: { seq: 1, reason: '撤销 B' },
+    });
+    expect(noConfirm.statusCode).toBe(400);
+    const ok = await a.inject({
+      method: 'POST', url: '/api/snapshots/rollback',
+      payload: { seq: 1, reason: '撤销 B', confirm: true },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(loadGraph(dir).nodes).toHaveLength(1);
+  });
+});
+
+describe('API 工作区', () => {
+  it('GET /api/workspace/list 与 read', async () => {
+    const list = await a.inject({ method: 'GET', url: '/api/workspace/list' });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().paths).toContain('mmh3/');
+    const read = await a.inject({ method: 'GET', url: '/api/workspace/read?path=mmh3%2Fshot_01.md' });
+    expect(read.json().content).toContain('牵绳慢步');
+  });
+
+  it('GET /api/workspace/search 内容检索', async () => {
+    const res = await a.inject({ method: 'GET', url: '/api/workspace/search?q=' + encodeURIComponent('牵绳') });
+    expect(res.json().hits[0].path).toBe('mmh3/shot_01.md');
+  });
+});
+
+describe('API 变更管线（回环与回滚）', () => {
+  it('PATCH 双写不触发回环：快照与 version 恰好 +1', async () => {
+    const created = await a.inject({
+      method: 'POST', url: '/api/nodes',
+      payload: { type: 'shot', title: 'SHOT 01', fields: { filename: 'mmh3/shot_01.md', content: 'v1' } },
+    });
+    const id = created.json().node.id;
+    // POST 创建 = 1 条快照；文件 mmh3/shot_01.md 已存在（beforeEach 建）→ 不落盘
+    expect(listSnapshots(dir)).toHaveLength(1);
+    const res = await a.inject({
+      method: 'PATCH', url: `/api/nodes/${id}`,
+      payload: { patch: { fields: { content: 'v2 新版' } } },
+    });
+    expect(res.json().node.version).toBe(2);
+    // 等待 chokidar 异步事件处理：若回环存在，version 会变 3、快照 +2
+    await new Promise((r) => setTimeout(r, 800));
+    expect(listSnapshots(dir)).toHaveLength(2);
+    expect(loadGraph(dir).nodes.find((n) => n.id === id)?.version).toBe(2);
+  });
+
+  it('外部修改映射文件触发回填（内容不同才回填）', async () => {
+    await (a as unknown as { __wsReady: Promise<void> }).__wsReady; // 等 watcher 初始化完成
+    const created = await a.inject({
+      method: 'POST', url: '/api/nodes',
+      payload: { type: 'shot', title: 'SHOT 01', fields: { filename: 'mmh3/shot_01.md', content: 'v1' } },
+    });
+    const id = created.json().node.id;
+    // 模拟外部工具（vim/pi 技能）修改文件
+    writeFileSync(join(dir, 'mmh3/shot_01.md'), '外部修改的内容', 'utf8');
+    // 轮询等待 chokidar 回填（最多 2s）
+    let node;
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      node = loadGraph(dir).nodes.find((n) => n.id === id);
+      if (node?.fields.content === '外部修改的内容') break;
+    }
+    expect(node?.fields.content).toBe('外部修改的内容');
+    expect(node?.version).toBe(2);
+    expect(listSnapshots(dir)).toHaveLength(2); // 创建 + 外部修改回填
+  });
+
+  it('rollback 走变更管线：追加快照且 reason 含回滚前缀', async () => {
+    await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'A' } });
+    await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'B' } });
+    const ok = await a.inject({
+      method: 'POST', url: '/api/snapshots/rollback',
+      payload: { seq: 1, reason: '撤销 B', confirm: true },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(loadGraph(dir).nodes).toHaveLength(1);
+    const snaps = listSnapshots(dir);
+    expect(snaps).toHaveLength(3); // 创建A + 创建B + 回滚
+    const last = snaps[snaps.length - 1];
+    expect(last?.reason).toContain('回滚至 SN-1');
+    expect(last?.actor).toBe('user');
+  });
+});
+
+describe('API 生成', () => {
+  it('GET /api/comfy/health 返回连接状态', async () => {
+    const res = await a.inject({ method: 'GET', url: '/api/comfy/health' });
+    expect(res.statusCode).toBe(200);
+    expect(typeof res.json().healthy).toBe('boolean');
+  });
+
+  it('POST /api/generation/submit 无 confirm 返回 400', async () => {
+    const res = await a.inject({
+      method: 'POST', url: '/api/generation/submit',
+      payload: { nodeId: 'missing' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('CONFIRM_REQUIRED');
+  });
+
+  it('POST /api/generation/submit 对不存在节点返回 404', async () => {
+    const res = await a.inject({
+      method: 'POST', url: '/api/generation/submit',
+      payload: { nodeId: 'missing', confirm: true },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('POST /api/generation/submit 建图后返回 queued 任务', async () => {
+    // 建 params + generation 节点
+    const p = await a.inject({
+      method: 'POST', url: '/api/nodes',
+      payload: {
+        type: 'params', title: '参数',
+        fields: {
+          template: 'keyframe-video',
+          params: { keyframes: 'KF0,KF1', width: 768, height: 1344, steps: 8, ref_seconds: 4, seam: 'Hard cut', seed: 0, run_id: 't', chain_previous_last: false },
+        },
+      },
+    });
+    const gen = await a.inject({
+      method: 'POST', url: '/api/nodes',
+      payload: { type: 'generation', title: '生成 SEG-01', fields: { paramsNodeId: p.json().node.id } },
+    });
+    const res = await a.inject({
+      method: 'POST', url: '/api/generation/submit',
+      payload: { nodeId: gen.json().node.id, confirm: true },
+    });
+    expect(res.statusCode).toBe(202);
+    // 队列微任务延迟启动 drain：inject 往返后任务可能已进入 running（ComfyUI 不可达时随后 failed）
+    expect(['queued', 'running', 'failed']).toContain(res.json().task.status);
+    // 等队列处理完（真实 ComfyUI 不可达会 failed，但任务状态机必须可查）
+    const st = await a.inject({
+      method: 'GET', url: `/api/generation/status?nodeId=${gen.json().node.id}`,
+    });
+    expect(st.statusCode).toBe(200);
+    expect(['queued', 'running', 'success', 'failed']).toContain(st.json().task.status);
+  });
+
+  it('POST /api/generation/cancel 无 confirm 返回 400', async () => {
+    const res = await a.inject({
+      method: 'POST', url: '/api/generation/cancel',
+      payload: { nodeId: 'x' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('API 素材上传', () => {
+  // 隔离 HOME：assets-store 用 homedir() 函数式求值，不 stub 会污染真实 ~/.director
+  let fakeHome: string;
+  beforeEach(() => {
+    fakeHome = mkdtempSync(join(tmpdir(), 'director-home-api-'));
+    vi.stubEnv('HOME', fakeHome);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(fakeHome, { recursive: true, force: true });
+  });
+
+  it('POST /api/assets/upload 上传 png 入库', async () => {
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' }), 'KF0.png');
+    // Node 18+ 原生 FormData/Blob；fastify inject 对 FormData 的兼容性依赖 light-my-request 版本
+    const res = await a.inject({
+      method: 'POST', url: '/api/assets/upload',
+      payload: form,
+      headers: { 'content-type': 'multipart/form-data' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().asset.kind).toBe('img');
+    expect(res.json().asset.name).toBe('KF0.png');
+  });
+
+  it('POST /api/assets/upload 缺少 file 字段返回 400', async () => {
+    // 非 multipart 请求：req.file() 返回 undefined → 400 INVALID_PATCH
+    const res = await a.inject({ method: 'POST', url: '/api/assets/upload', payload: {} });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('INVALID_PATCH');
+  });
+});
+
+describe('API agent 模型', () => {
+  it('GET /api/agent/models 解析 pi --list-models 表格', async () => {
+    vi.stubEnv('DIRECTOR_PI_LIST_CMD', `node ${join(process.cwd(), 'src/agent/mock-list-models.mjs')}`);
+    const res = await a.inject({ method: 'GET', url: '/api/agent/models' });
+    expect(res.statusCode).toBe(200);
+    const models = res.json().models as Array<{ id: string; provider: string; thinking: boolean; images: boolean }>;
+    expect(models).toHaveLength(3);
+    expect(models[0]?.id).toBe('deepseek/deepseek-v4-flash');
+    expect(models[1]?.thinking).toBe(true);
+    expect(models[2]?.images).toBe(true);
+    vi.unstubAllEnvs();
+  });
+
+  it('POST /api/agent/chat 透传 model 到 pi 命令', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_ECHO_MODEL', '1');
+    const res = await a.inject({
+      method: 'POST', url: '/api/agent/chat',
+      payload: { message: 'hi', model: 'mustore/grok-4.5' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toContain('mustore/grok-4.5');
+    expect(res.payload).toContain('[DONE]');
+    vi.unstubAllEnvs();
+  });
+});
+
+describe('API ComfyUI 配置', () => {
+  it('POST /api/comfy/config 写 project 节点并热切换地址', async () => {
+    const res = await a.inject({
+      method: 'POST', url: '/api/comfy/config',
+      payload: { baseUrl: 'http://127.0.0.1:59999' },
+    });
+    expect(res.statusCode).toBe(200);
+    const graph = loadGraph(dir);
+    const proj = graph.nodes.find((n) => n.type === 'project');
+    expect(proj?.fields.comfyuiUrl).toBe('http://127.0.0.1:59999');
+  });
+
+  it('POST /api/comfy/config 非法地址返回 400', async () => {
+    const res = await a.inject({
+      method: 'POST', url: '/api/comfy/config',
+      payload: { baseUrl: 'not-a-url' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('INVALID_PATCH');
+  });
+});

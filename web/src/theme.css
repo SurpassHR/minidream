@@ -1,0 +1,20 @@
+:root {
+  --bg: #0A0D13;
+  --panel: #10141D;
+  --panel-2: #161B26;
+  --panel-3: #1C2330;
+  --border: #232B3A;
+  --border-2: #2E3849;
+  --text: #C9D2E0;
+  --text-dim: #7C8698;
+  --text-faint: #55606F;
+  --amber: #E8A33D;
+  --amber-soft: #F5C26B;
+  --amber-dim: rgba(232, 163, 61, .14);
+  --rec: #E05252;
+  --ok: #4FAE7E;
+  --blue: #5B8DEF;
+  --blue-dim: rgba(91, 141, 239, .14);
+  --mono: "JetBrains Mono", "SF Mono", "Cascadia Mono", Consolas, "Noto Sans Mono", monospace;
+  --sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", -apple-system, "Segoe UI", sans-serif;
+}

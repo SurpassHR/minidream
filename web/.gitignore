@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.director/
+test-results/
+playwright-report/
+tsconfig.tsbuildinfo
