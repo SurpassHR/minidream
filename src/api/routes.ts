@@ -12,10 +12,22 @@ import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
 import { applyMutation } from './mutations.js';
-import type { GenerationQueue } from '../generation/queue.js';
-import type { ComfyUIClient } from '../comfy/client.js';
+import { GenerationQueue } from '../generation/queue.js';
+import { ComfyUIClient } from '../comfy/client.js';
 import { listAssets, importAssetFile, importAssetText, deleteAsset, readAssetText } from '../assets/assets-store.js';
 import { buildAgentPrompt, runAgentCollect, runAgentStream } from '../agent/bridge.js';
+import {
+  listProjects, resolveSwitchTarget, resolveComfyUrl,
+} from '../projects/projects-store.js';
+import type { WsHandle } from './ws.js';
+
+// 项目上下文：单一可变事实来源，/api/project/switch 热切换时整体替换
+// （projectDir / queue / comfy 三者必须同属一个项目，避免切换后交叉引用旧目录）
+export interface ProjectContext {
+  projectDir: string;
+  queue: GenerationQueue;
+  comfy: ComfyUIClient;
+}
 
 function confirmOf(query: unknown): boolean {
   if (typeof query !== 'object' || query === null) return false;
@@ -26,13 +38,31 @@ function confirmOf(query: unknown): boolean {
 
 export function mountRoutes(
   app: FastifyInstance,
-  projectDir: string,
-  queue: GenerationQueue,
-  comfy: ComfyUIClient,
+  ctx: ProjectContext,
+  ws: WsHandle,
 ): void {
   const actor: Actor = 'user';
 
-  app.get('/api/graph', async () => ({ graph: loadGraph(projectDir) }));
+  app.get('/api/graph', async () => ({ graph: loadGraph(ctx.projectDir) }));
+
+  // —— 项目栏真实数据源：项目发现 + 热切换（计划 4） ——
+  app.get('/api/projects', async () => ({ projects: listProjects(ctx.projectDir) }));
+
+  app.post('/api/project/switch', async (req, reply) => {
+    const body = req.body as { path?: string };
+    const target = resolveSwitchTarget(ctx.projectDir, body.path ?? '');
+    if (!target) {
+      return reply.code(400).send({ code: 'PROJECT_NOT_FOUND', message: `项目目录不存在: ${body.path ?? ''}` });
+    }
+    // 三者整体替换为同一项目，避免交叉引用旧目录：
+    // comfy 按新项目 project 节点地址重建；queue 随之重建；watcher 切换监视目录
+    ctx.projectDir = target;
+    ctx.comfy = new ComfyUIClient(resolveComfyUrl(target));
+    ctx.queue = new GenerationQueue(target, ctx.comfy);
+    await ws.switchDir(target);
+    return { graph: loadGraph(ctx.projectDir), projects: listProjects(ctx.projectDir) };
+  });
+
 
   app.post('/api/nodes', async (req, reply) => {
     const body = req.body as {
@@ -40,18 +70,18 @@ export function mountRoutes(
       position?: { x: number; y: number };
     };
     let nodeId = '';
-    applyMutation(projectDir, actor, `创建节点 ${body.title}`, (g) => {
+    applyMutation(ctx.projectDir, actor, `创建节点 ${body.title}`, (g) => {
       const n = createNode(g, body);
       nodeId = n.id;
     });
-    const graph = loadGraph(projectDir);
+    const graph = loadGraph(ctx.projectDir);
     const node = graph.nodes.find((n) => n.id === nodeId);
     // 创建节点时若指定了映射文件且目标文件尚不存在，则落盘（验收冒烟要求；
     // 文件已存在时不覆盖——遵守“冲突从不静默覆盖”约束，走 PATCH/导入流程同步）
     if (node) {
       const f = node.fields.filename;
-      if (typeof f === 'string' && !existsSync(join(projectDir, f))) {
-        syncNodeToFile(projectDir, node);
+      if (typeof f === 'string' && !existsSync(join(ctx.projectDir, f))) {
+        syncNodeToFile(ctx.projectDir, node);
       }
     }
     reply.code(201);
@@ -62,12 +92,12 @@ export function mountRoutes(
     const { id } = req.params as { id: string };
     const { patch } = req.body as { patch: Record<string, unknown> };
     let updated;
-    applyMutation(projectDir, actor, `更新节点 ${id}`, (g) => {
+    applyMutation(ctx.projectDir, actor, `更新节点 ${id}`, (g) => {
       updated = updateNode(g, id, patch);
       // 内容字段变化时同步映射文件
       const p = patch.fields as Record<string, unknown> | undefined;
       if (p && typeof p.content === 'string') {
-        syncNodeToFile(projectDir, updated);
+        syncNodeToFile(ctx.projectDir, updated);
       }
     });
     return { node: updated };
@@ -78,7 +108,7 @@ export function mountRoutes(
     if (!confirmOf(req.query)) {
       return reply.code(400).send({ code: 'CONFIRM_REQUIRED', message: '删除节点需 confirm=true' });
     }
-    applyMutation(projectDir, actor, `删除节点 ${id}`, (g) => { deleteNode(g, id); });
+    applyMutation(ctx.projectDir, actor, `删除节点 ${id}`, (g) => { deleteNode(g, id); });
     return { ok: true };
   });
 
@@ -86,14 +116,14 @@ export function mountRoutes(
     const { id } = req.params as { id: string };
     const { position } = req.body as { position: { x: number; y: number } };
     let moved;
-    applyMutation(projectDir, actor, `移动节点 ${id}`, (g) => { moved = moveNode(g, id, position); });
+    applyMutation(ctx.projectDir, actor, `移动节点 ${id}`, (g) => { moved = moveNode(g, id, position); });
     return { node: moved };
   });
 
   app.post('/api/edges', async (req, reply) => {
     const body = req.body as { kind: 'ref' | 'chain' | 'exec'; source: string; target: string; label?: string };
     let edge;
-    applyMutation(projectDir, actor, `创建边 ${body.source} -> ${body.target}`, (g) => {
+    applyMutation(ctx.projectDir, actor, `创建边 ${body.source} -> ${body.target}`, (g) => {
       edge = createEdge(g, body);
     });
     reply.code(201);
@@ -105,7 +135,7 @@ export function mountRoutes(
     if (!confirmOf(req.query)) {
       return reply.code(400).send({ code: 'CONFIRM_REQUIRED', message: '删除边需 confirm=true' });
     }
-    applyMutation(projectDir, actor, `删除边 ${id}`, (g) => { deleteEdge(g, id); });
+    applyMutation(ctx.projectDir, actor, `删除边 ${id}`, (g) => { deleteEdge(g, id); });
     return { ok: true };
   });
 
@@ -115,10 +145,10 @@ export function mountRoutes(
       path: string; type: NodeType; title: string;
       filename?: string; position?: { x: number; y: number };
     };
-    const content = readWorkspaceFile(projectDir, body.path);
+    const content = readWorkspaceFile(ctx.projectDir, body.path);
     const filename = body.filename ?? body.path;
     let node;
-    applyMutation(projectDir, actor, `导入文件 ${body.path}`, (g) => {
+    applyMutation(ctx.projectDir, actor, `导入文件 ${body.path}`, (g) => {
       const existing = g.nodes.find((n) => n.fields.filename === filename);
       if (existing) {
         node = updateNode(g, existing.id, { fields: { content } });
@@ -134,7 +164,7 @@ export function mountRoutes(
     return { node };
   });
 
-  app.get('/api/snapshots', async () => ({ snapshots: listSnapshots(projectDir) }));
+  app.get('/api/snapshots', async () => ({ snapshots: listSnapshots(ctx.projectDir) }));
 
   app.post('/api/snapshots/rollback', async (req, reply) => {
     const body = req.body as { seq: number; reason: string; confirm?: boolean };
@@ -143,8 +173,8 @@ export function mountRoutes(
     }
     // 走 applyMutation 管线（唯一写入口）：快照留痕 + WS 广播由管线保证
     let resultGraph;
-    applyMutation(projectDir, actor, `回滚至 SN-${body.seq}: ${body.reason}`, (g) => {
-      const target = graphAtSnapshot(projectDir, body.seq);
+    applyMutation(ctx.projectDir, actor, `回滚至 SN-${body.seq}: ${body.reason}`, (g) => {
+      const target = graphAtSnapshot(ctx.projectDir, body.seq);
       g.nodes = target.nodes;
       g.edges = target.edges;
       g.projectName = target.projectName;
@@ -153,22 +183,22 @@ export function mountRoutes(
     return { graph: resultGraph };
   });
 
-  app.get('/api/workspace/list', async () => ({ paths: listWorkspace(projectDir) }));
+  app.get('/api/workspace/list', async () => ({ paths: listWorkspace(ctx.projectDir) }));
 
   app.get('/api/workspace/search', async (req) => {
     const { q } = req.query as { q: string };
-    return { hits: searchWorkspace(projectDir, q) };
+    return { hits: searchWorkspace(ctx.projectDir, q) };
   });
 
   app.get('/api/workspace/read', async (req) => {
     const { path } = req.query as { path: string };
-    return { content: readWorkspaceFile(projectDir, path) };
+    return { content: readWorkspaceFile(ctx.projectDir, path) };
   });
 
   // —— 生成执行：ComfyUI 状态与生成任务 ——
   app.get('/api/comfy/health', async () => ({
-    healthy: await comfy.health(),
-    baseUrl: comfy.baseUrl,
+    healthy: await ctx.comfy.health(),
+    baseUrl: ctx.comfy.baseUrl,
   }));
 
   // 自定义 ComfyUI 地址：写入 project 节点并热切换客户端
@@ -178,7 +208,7 @@ export function mountRoutes(
     if (!url || !/^https?:\/\//.test(url)) {
       return reply.code(400).send({ code: 'INVALID_PATCH', message: '地址需以 http:// 或 https:// 开头' });
     }
-    applyMutation(projectDir, actor, `配置 ComfyUI 地址 ${url}`, (g) => {
+    applyMutation(ctx.projectDir, actor, `配置 ComfyUI 地址 ${url}`, (g) => {
       const proj = g.nodes.find((n) => n.type === 'project');
       if (proj) {
         proj.fields.comfyuiUrl = url;
@@ -191,9 +221,9 @@ export function mountRoutes(
         });
       }
     });
-    comfy.setBaseUrl(url); // 热切换：后续生成与健康检查立即使用新地址
-    const healthy = await comfy.health();
-    return { ok: true, baseUrl: comfy.baseUrl, healthy };
+    ctx.comfy.setBaseUrl(url); // 热切换：后续生成与健康检查立即使用新地址
+    const healthy = await ctx.comfy.health();
+    return { ok: true, baseUrl: ctx.comfy.baseUrl, healthy };
   });
 
   app.post('/api/generation/submit', async (req, reply) => {
@@ -201,26 +231,26 @@ export function mountRoutes(
     if (!body.confirm) {
       return reply.code(400).send({ code: 'CONFIRM_REQUIRED', message: '提交生成需 confirm=true' });
     }
-    const task = queue.submit(body.nodeId);
+    const task = ctx.queue.submit(body.nodeId);
     reply.code(202);
     return { task };
   });
 
   app.get('/api/generation/status', async (req, reply) => {
     const { nodeId } = req.query as { nodeId: string };
-    const task = queue.status(nodeId);
+    const task = ctx.queue.status(nodeId);
     if (!task) return reply.code(404).send({ code: 'NODE_NOT_FOUND', message: `无任务: ${nodeId}` });
     return { task };
   });
 
-  app.get('/api/generation/queue', async () => ({ tasks: queue.list() }));
+  app.get('/api/generation/queue', async () => ({ tasks: ctx.queue.list() }));
 
   app.post('/api/generation/cancel', async (req, reply) => {
     const body = req.body as { nodeId: string; confirm?: boolean };
     if (!body.confirm) {
       return reply.code(400).send({ code: 'CONFIRM_REQUIRED', message: '取消生成需 confirm=true' });
     }
-    const ok = queue.cancel(body.nodeId);
+    const ok = ctx.queue.cancel(body.nodeId);
     return { ok };
   });
 
@@ -287,7 +317,7 @@ export function mountRoutes(
       model?: string;
     };
     // 画布摘要：节点类型计数（agent 上下文，避免全量图塞爆提示词）
-    const graph = loadGraph(projectDir);
+    const graph = loadGraph(ctx.projectDir);
     const counts = new Map<string, number>();
     for (const n of graph.nodes) counts.set(n.type, (counts.get(n.type) ?? 0) + 1);
     const graphSummary = [...counts.entries()].map(([t, c]) => `${c}×${t}`).join(' · ') || '空画布';
