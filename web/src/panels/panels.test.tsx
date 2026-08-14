@@ -5,23 +5,29 @@ import { AssetLibrary } from './AssetLibrary';
 import type { AssetItem } from './AssetLibrary';
 
 describe('ProjectList', () => {
-  it('渲染项目并高亮当前项', () => {
+  it('渲染项目并高亮当前项（含分镜统计与模式徽章）', () => {
     render(<ProjectList
       projects={[
-        { id: 'p1', name: 'elf_and_goblin', meta: '3 分镜 · 11.25s', mode: 'KEYFRAME' },
-        { id: 'p2', name: 'cat-vs-bunny', meta: '3 分镜 · 9.12s', mode: 'KEYFRAME' },
+        { path: '/p/elf', name: 'elf_and_goblin', current: true, shots: 3, duration: 11.25, mode: 'KEYFRAME' },
+        { path: '/p/pose', name: 'pose-transfer', current: false, shots: -1, duration: -1, mode: 'REF2V' },
       ]}
-      activeId="p1" onSelect={() => {}}
+      activePath="/p/elf" onSelect={() => {}}
     />);
     expect(screen.getByText('elf_and_goblin').closest('.proj')).toHaveClass('active');
-    expect(screen.getByText('cat-vs-bunny').closest('.proj')).not.toHaveClass('active');
+    expect(screen.getByText('pose-transfer').closest('.proj')).not.toHaveClass('active');
+    expect(screen.getByText('3 分镜 · 11.25s')).toBeInTheDocument();
+    // 无图数据项目显示占位文案而不是伪造统计
+    expect(screen.getByText('尚未构建画布')).toBeInTheDocument();
   });
 
-  it('点击项目触发 onSelect', () => {
+  it('点击项目触发 onSelect（传目录路径）', () => {
     const onSelect = vi.fn();
-    render(<ProjectList projects={[{ id: 'p1', name: 'x', meta: 'm', mode: 'M' }]} activeId="" onSelect={onSelect} />);
+    render(<ProjectList
+      projects={[{ path: '/p/x', name: 'x', current: true, shots: 1, duration: 3.75, mode: '' }]}
+      activePath="/p/x" onSelect={onSelect}
+    />);
     fireEvent.click(screen.getByText('x'));
-    expect(onSelect).toHaveBeenCalledWith('p1');
+    expect(onSelect).toHaveBeenCalledWith('/p/x');
   });
 });
 
@@ -63,9 +69,87 @@ describe('AssetLibrary', () => {
     expect(fileInput).not.toBeNull();
   });
 
-  it('空素材列表渲染空态提示', () => {
+  it('空素材列表渲染空态卡片（标题 + 导入引导按钮）', () => {
     render(<AssetLibrary items={[]} onDropToCanvas={() => {}} />);
-    expect(screen.getByText(/暂无素材/)).toBeInTheDocument();
+    expect(screen.getByTestId('asset-empty')).toBeInTheDocument();
+    expect(screen.getByText('素材库是空的')).toBeInTheDocument();
+    expect(screen.getByText(/Ctrl\+V 粘贴剪贴板图像/)).toBeInTheDocument();
+    // 空态按钮可直接打开导入菜单
+    fireEvent.click(screen.getByText('＋ 导入素材'));
+    expect(screen.getByText('文字 / 提示词')).toBeInTheDocument();
+  });
+
+  it('搜索无结果时显示无匹配空态并可清除搜索', () => {
+    render(<AssetLibrary items={[{ kind: 'img', name: 'KF0.png' }]} onDropToCanvas={() => {}} />);
+    fireEvent.change(screen.getByPlaceholderText('搜索素材…'), { target: { value: 'zzz' } });
+    expect(screen.getByText(/没有匹配/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText('清除搜索'));
+    expect(screen.getByText('KF0.png')).toBeInTheDocument();
+  });
+});
+
+describe('AssetLibrary 粘贴与拖入导入', () => {
+  beforeEach(() => {
+    // 上传接口返回成功；onAssetsChanged 触发刷新
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ asset: { id: 'a1', kind: 'img', name: 'pasted.png' } }),
+      { status: 201 },
+    )));
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  function pngFile(name = 'clipboard.png'): File {
+    return new File([new Uint8Array([1, 2, 3])], name, { type: 'image/png' });
+  }
+
+  it('Ctrl+V 粘贴图像文件触发上传', async () => {
+    const onChanged = vi.fn();
+    const { container } = render(<AssetLibrary items={[]} onDropToCanvas={() => {}} onAssetsChanged={onChanged} />);
+    const assets = container.querySelector('.assets')!;
+    const file = pngFile();
+    fireEvent.paste(assets, {
+      clipboardData: {
+        items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }],
+        types: ['Files'],
+      },
+    } as unknown as ClipboardEvent);
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/assets/upload', expect.anything()));
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it('粘贴非图像且不在输入框内时给出提示，不阻止默认行为', () => {
+    const { container } = render(<AssetLibrary items={[]} onDropToCanvas={() => {}} />);
+    const assets = container.querySelector('.assets')!;
+    const prevented = { defaultPrevented: false };
+    const ev = { clipboardData: { items: [], types: [] }, preventDefault: () => { prevented.defaultPrevented = true; } };
+    fireEvent.paste(assets, ev as unknown as ClipboardEvent);
+    expect(prevented.defaultPrevented).toBe(false);
+    expect(screen.getByText(/剪贴板中没有图像/)).toBeInTheDocument();
+  });
+
+  it('拖入图像文件触发上传', async () => {
+    const onChanged = vi.fn();
+    const { container } = render(<AssetLibrary items={[]} onDropToCanvas={() => {}} onAssetsChanged={onChanged} />);
+    const assets = container.querySelector('.assets')!;
+    fireEvent.drop(assets, {
+      dataTransfer: { files: [pngFile('drag.png')], types: ['Files'] },
+    } as unknown as DragEvent);
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/assets/upload', expect.anything()));
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it('拖入 .txt 走文本导入接口', async () => {
+    const { container } = render(<AssetLibrary items={[]} onDropToCanvas={() => {}} />);
+    Object.defineProperty(File.prototype, 'text', {
+      value: async function () { return 'hello'; },
+      configurable: true,
+    });
+    const txt = new File(['hello'], 'note.txt', { type: 'text/plain' });
+    const assets = container.querySelector('.assets')!;
+    fireEvent.drop(assets, {
+      dataTransfer: { files: [txt], types: ['Files'] },
+    } as unknown as DragEvent);
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/assets/import-text', expect.anything()));
   });
 });
 

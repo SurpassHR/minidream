@@ -48,6 +48,16 @@ export interface GenTask {
   result?: { videoPath: string; lastFramePath: string };
 }
 
+// 项目列表项（镜像后端 src/projects/projects-store.ts）
+export interface ProjectInfo {
+  path: string;
+  name: string;
+  current: boolean;
+  shots: number;    // -1 = 未知
+  duration: number; // 秒；-1 = 未知
+  mode: string;     // 'KEYFRAME' | 'REF2V' | ''
+}
+
 export type WsEvent =
   | { type: 'graph'; graph: Graph }
   | { type: 'generation'; task: GenTask }

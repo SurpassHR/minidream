@@ -1,5 +1,5 @@
 import type {
-  DirectorEdge, DirectorNode, EdgeKind, GenTask, Graph, NodeType, SnapshotMeta,
+  DirectorEdge, DirectorNode, EdgeKind, GenTask, Graph, NodeType, ProjectInfo, SnapshotMeta,
 } from '../types';
 
 class ApiError extends Error {
@@ -113,6 +113,19 @@ export const client = {
       method: 'POST', body: JSON.stringify({ baseUrl }),
     });
     return { healthy: r.healthy, baseUrl: r.baseUrl };
+  },
+
+  // 项目列表（当前项目 + 同根项目发现，含分镜/时长统计）
+  async listProjects(): Promise<ProjectInfo[]> {
+    const r = await req<{ projects: ProjectInfo[] }>('/api/projects');
+    return r.projects;
+  },
+
+  // 项目热切换：后端重建图/队列/监视目录，返回新项目图与更新后的项目列表
+  async switchProject(path: string): Promise<{ graph: Graph; projects: ProjectInfo[] }> {
+    return await req<{ graph: Graph; projects: ProjectInfo[] }>('/api/project/switch', {
+      method: 'POST', body: JSON.stringify({ path }),
+    });
   },
 
   async listAssets(): Promise<Array<{ id: string; kind: 'txt' | 'img' | 'vid'; name: string; meta?: string }>> {

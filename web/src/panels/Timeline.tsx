@@ -1,54 +1,104 @@
-import { useEffect, useState } from 'react';
-import { client } from '../api/client';
+import { useMemo } from 'react';
 import { useGraphStore } from '../store/graph';
-import type { SnapshotMeta } from '../types';
 
-// 版本时间线：快照列表 + 选中详情 + 回滚回调
-// 监听画布图变化自动刷新快照列表（回滚后 WS 回推 graph 触发刷新）
-export function Timeline({ onRollback }: { onRollback?: (seq: number) => void } = {}) {
-  const [snaps, setSnaps] = useState<SnapshotMeta[]>([]);
-  const [selected, setSelected] = useState<SnapshotMeta | null>(null);
+// 剧情时间轴（方案 A：与版本快照彻底分离）：
+// 底轨 = 分镜段 SEG 按故事时间（start/时长）铺开，标尺为真实时间码，
+// 播放头 = 当前故事进度（已定义分镜的总时长）。
+// 版本留痕（快照）不再叠加在此轴上，见右侧"版本历史"面板。
+interface Segment { title: string; start: number; duration: number }
+
+function toNum(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return v;
+  if (typeof v === 'string') {
+    const m = v.match(/(\d+(?:\.\d+)?)/);
+    if (m?.[1]) {
+      const n = parseFloat(m[1]);
+      if (Number.isFinite(n) && n >= 0) return n;
+    }
+  }
+  return null;
+}
+
+function fmtTime(sec: number): string {
+  const mm = Math.floor(sec / 60);
+  const s = sec - mm * 60;
+  return `${String(mm).padStart(2, '0')}:${s.toFixed(3).padStart(6, '0')}`;
+}
+
+// 分镜时长：fields.duration（"3.75s"/3.75）或 frames/fps；缺失按 3.75s
+function shotDuration(fields: Record<string, unknown>): number {
+  const d = toNum(fields.duration);
+  if (d !== null) return d;
+  const frames = toNum(fields.frames);
+  if (frames !== null) return frames / (toNum(fields.fps) ?? 24);
+  return 3.75;
+}
+
+export function Timeline() {
   const graph = useGraphStore((s) => s.graph);
 
-  const refresh = () => void client.listSnapshots().then(setSnaps).catch(() => setSnaps([]));
-  useEffect(refresh, [graph]);
+  // 剧情时间轴：shot 节点按 start（或标题序号）排序，累计时长铺轨
+  const { segments, total } = useMemo(() => {
+    const shots = (graph?.nodes ?? []).filter((n) => n.type === 'shot');
+    const segs: Segment[] = [];
+    if (shots.length) {
+      const sorted = [...shots].sort((a, b) => {
+        const sa = toNum(a.fields.start);
+        const sb = toNum(b.fields.start);
+        if (sa !== null && sb !== null) return sa - sb;
+        const ta = Number(String(a.title).match(/(\d+)/)?.[1] ?? NaN);
+        const tb = Number(String(b.title).match(/(\d+)/)?.[1] ?? NaN);
+        if (Number.isFinite(ta) && Number.isFinite(tb)) return ta - tb;
+        return 0;
+      });
+      let t = 0;
+      for (const s of sorted) {
+        const start = toNum(s.fields.start);
+        if (start !== null && start >= t) t = start; // 显式 start 优先（容忍重叠时取最大）
+        const dur = shotDuration(s.fields);
+        segs.push({ title: s.title, start: t, duration: dur });
+        t += dur;
+      }
+    }
+    return { segments: segs, total: segs.reduce((acc, s) => acc + s.duration, 0) };
+  }, [graph]);
+
+  const pct = (t: number) => (total > 0 ? (t / total) * 100 : 0);
+  // 1/3、2/3 用精确分数避免浮点刻度漂移（如 00:07.499 ≠ 00:07.500）
+  const ticks = [0, 1 / 3, 2 / 3, 1].map((f) => (total > 0 ? fmtTime(total * f) : '—'));
 
   return (
     <div className="timeline">
       <div className="tl-head">
-        <span className="tl-title">版本时间线</span>
-        <span className="tl-sub">自动快照 · 点击快照查看详情</span>
+        <span className="tl-title">剧情时间轴</span>
+        <span className="tl-sub">分镜 SEG 按故事时间铺开 · 版本留痕见右侧面板</span>
       </div>
       <div className="tl-ruler">
-        <span className="tick" style={{ left: 0 }}>00:00.000</span>
-        <span className="tick" style={{ left: '50%' }}>00:05.625</span>
-        <span className="tick" style={{ left: '100%' }}>00:11.250</span>
+        <span className="tick" style={{ left: 0 }}>{ticks[0]}</span>
+        <span className="tick" style={{ left: '33.33%' }}>{ticks[1]}</span>
+        <span className="tick" style={{ left: '66.66%' }}>{ticks[2]}</span>
+        <span className="tick" style={{ left: '100%' }}>{ticks[3]}</span>
       </div>
       <div className="tl-track">
-        {snaps.map((s, i) => (
+        {segments.map((seg, i) => (
           <div
-            key={s.seq}
-            className={`snap ${selected?.seq === s.seq ? 'sel' : ''}`}
-            style={{ left: `${8 + (i * 80) / Math.max(snaps.length, 1)}%` }}
-            title={s.reason}
-            onClick={() => setSelected(selected?.seq === s.seq ? null : s)}
+            key={seg.start + seg.title}
+            className={`seg s${(i % 3) + 1}`}
+            style={{ left: `${pct(seg.start)}%`, width: `${Math.max(pct(seg.duration), 2)}%` }}
+            title={`${seg.title} · ${fmtTime(seg.start)} – ${fmtTime(seg.start + seg.duration)}`}
           >
-            <span className="tip">SN-{String(s.seq).padStart(3, '0')} · {s.actor}</span>
+            <span className="seg-label">SEG {String(i + 1).padStart(2, '0')} · {seg.title}</span>
           </div>
         ))}
-        <div className="playhead"><span className="ph-tip">▶</span></div>
+        {segments.length === 0 && (
+          <div className="tl-empty">暂无分镜——在画布创建分镜（shot）节点后显示剧情时间轴</div>
+        )}
+        {total > 0 && (
+          <div className="playhead end" style={{ left: '100%' }} title="当前故事进度 = 全部已定义分镜的总时长">
+            <span className="ph-tip">{fmtTime(total)}</span>
+          </div>
+        )}
       </div>
-      {selected && (
-        <div className="tl-detail">
-          <span>SN-{String(selected.seq).padStart(3, '0')}</span>
-          <span>{selected.actor}</span>
-          <span>{new Date(selected.ts).toLocaleString('zh-CN')}</span>
-          <span className="tl-reason">{selected.reason}</span>
-          {onRollback && (
-            <button className="btn-ghost" onClick={() => onRollback(selected.seq)}>回滚到此</button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

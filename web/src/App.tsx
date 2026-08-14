@@ -1,24 +1,19 @@
 import './App.css';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import CanvasView from './canvas/CanvasView';
-import { ProjectList, type ProjectInfo } from './panels/ProjectList';
+import { ProjectList } from './panels/ProjectList';
+import type { ProjectInfo } from './types';
 import { AssetLibrary, type AssetItem } from './panels/AssetLibrary';
 import { ImportDialog } from './panels/ImportDialog';
 import { AgentPanel, type ChatMsg } from './panels/AgentPanel';
 import { ConfirmDialog } from './panels/ConfirmDialog';
 import { Timeline } from './panels/Timeline';
+import { VersionsList } from './panels/VersionsList';
 import { GenQueue } from './panels/GenQueue';
 import { useGraphStore } from './store/graph';
 import { client } from './api/client';
 import { agentChat } from './api/agent';
 import { connectWs } from './api/ws';
-
-// 项目列表（计划 4 换真实数据源）
-const MOCK_PROJECTS: ProjectInfo[] = [
-  { id: 'p1', name: 'elf_and_goblin', meta: '3 分镜 · 11.25s', mode: 'KEYFRAME' },
-  { id: 'p2', name: 'cat-vs-bunny', meta: '3 分镜 · 9.12s', mode: 'KEYFRAME' },
-  { id: 'p3', name: 'pose-transfer', meta: '参考视频编辑', mode: 'REF2V' },
-];
 
 // 五区布局骨架：各面板在后续任务替换为真实组件
 export default function App() {
@@ -35,6 +30,61 @@ export default function App() {
   // 内置 agent 模型：空字符串 = pi 默认模型；列表来自 /api/agent/models
   const [agentModels, setAgentModels] = useState<Array<{ id: string; provider: string; thinking: boolean }>>([]);
   const [agentModel, setAgentModel] = useState('');
+
+  // —— 面板尺寸：分割条拖拽调整，localStorage 持久化；双击分割条恢复默认 ——
+  const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
+  const stored = (key: string, def: number, min: number, max: number) => {
+    const v = Number(localStorage.getItem(key));
+    return Number.isFinite(v) && v > 0 ? clamp(v, min, max) : def;
+  };
+  const PANEL_DEFAULTS = { left: 232, right: 300, footer: 148 } as const;
+  const [leftW, setLeftW] = useState(() => stored('dw:leftW', 232, 160, 420));
+  const [rightW, setRightW] = useState(() => stored('dw:rightW', 300, 240, 520));
+  const [footerH, setFooterH] = useState(() => stored('dw:footerH', 148, 120, 360));
+  const [dragging, setDragging] = useState<'left' | 'right' | 'footer' | null>(null);
+  const dragRef = useRef<{ kind: 'left' | 'right' | 'footer'; start: number; val: number } | null>(null);
+
+  const onSplitterDown = (kind: 'left' | 'right' | 'footer') => (e: React.MouseEvent) => {
+    e.preventDefault();
+    const val = kind === 'left' ? leftW : kind === 'right' ? rightW : footerH;
+    dragRef.current = { kind, start: kind === 'footer' ? e.clientY : e.clientX, val };
+    setDragging(kind);
+  };
+
+  // 拖拽期间在 window 上监听移动/抬起：分割条只负责触发，避免鼠标移出元素后丢失
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const delta = (d.kind === 'footer' ? e.clientY : e.clientX) - d.start;
+      if (d.kind === 'left') setLeftW(clamp(d.val + delta, 160, 420));
+      else if (d.kind === 'right') setRightW(clamp(d.val - delta, 240, 520));
+      else setFooterH(clamp(d.val - delta, 120, 360));
+    };
+    const up = () => {
+      const d = dragRef.current;
+      if (d) {
+        const v = d.kind === 'left' ? leftW : d.kind === 'right' ? rightW : footerH;
+        localStorage.setItem(`dw:${d.kind}W`, String(v));
+      }
+      dragRef.current = null;
+      setDragging(null);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    return () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+  }, [leftW, rightW, footerH]);
+
+  const onSplitterReset = (kind: 'left' | 'right' | 'footer') => () => {
+    const def = PANEL_DEFAULTS[kind];
+    if (kind === 'left') setLeftW(def);
+    else if (kind === 'right') setRightW(def);
+    else setFooterH(def);
+    localStorage.removeItem(`dw:${kind}W`);
+  };
 
   // 拉取 pi 可用模型列表（内置面板模型下拉数据源）
   useEffect(() => {
@@ -101,6 +151,27 @@ export default function App() {
 
   useEffect(() => { refreshAssets(); }, [refreshAssets]);
 
+  // 项目列表（真实数据源 /api/projects：当前项目 + 同根项目发现）
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
+
+  const refreshProjects = useCallback(() => {
+    void client.listProjects().then(setProjects).catch(() => setProjects([]));
+  }, []);
+
+  useEffect(() => { refreshProjects(); }, [refreshProjects]);
+
+  // 点击项目 → 后端热切换（重建图/生成队列/文件监视），前端应用新图并刷新素材
+  const handleProjectSelect = useCallback(async (path: string) => {
+    try {
+      const r = await client.switchProject(path);
+      applyGraph(r.graph);
+      setProjects(r.projects);
+      refreshAssets();
+    } catch (err) {
+      console.error('切换项目失败', err);
+    }
+  }, [applyGraph, refreshAssets]);
+
   // 真实 agent 流式发送：chips 是显示名（@xxx），发送时从画布查找节点内容注入上下文
   const handleAgentSend = (text: string, _chipRefs: string[]): ChatMsg[] => [
     { who: 'user', text },
@@ -160,7 +231,7 @@ export default function App() {
           </div>
         </div>
         <div className="header-div" />
-        <div className="project-name" data-testid="project-name">elf_and_goblin</div>
+        <div className="project-name" data-testid="project-name" title={graph?.projectName}>{graph?.projectName ?? '加载中…'}</div>
         {comfyHealthy === null ? (
           <div className="badge"><span className="dot" style={{ background: 'var(--text-faint)' }} />COMFYUI&nbsp;检测中</div>
         ) : comfyHealthy ? (
@@ -173,12 +244,23 @@ export default function App() {
         <button className="run-btn"><span className="tri">▶</span>运行流水线</button>
       </header>
       <main className="main">
-        <aside className="left" data-testid="left-panel">
-          <div className="panel-title">项目 <span className="mini">工作区</span></div>
-          <ProjectList projects={MOCK_PROJECTS} activeId="p1" onSelect={() => {}} />
+        <aside className="left" style={{ flexBasis: leftW }} data-testid="left-panel">
+          <div className="panel-title">项目 <span className="mini">工作区 · 点击切换</span></div>
+          <ProjectList
+            projects={projects}
+            activePath={projects.find((p) => p.current)?.path ?? ''}
+            onSelect={handleProjectSelect}
+          />
           <div className="panel-title">素材库 <span className="mini">全局 · 跨项目</span></div>
           <AssetLibrary items={assets ?? []} onDropToCanvas={handleDropToCanvas} onAssetsChanged={refreshAssets} />
         </aside>
+        <div
+          className={`splitter splitter-v ${dragging === 'left' ? 'active' : ''}`}
+          data-testid="splitter-left"
+          title="拖拽调整宽度 · 双击恢复默认"
+          onMouseDown={onSplitterDown('left')}
+          onDoubleClick={onSplitterReset('left')}
+        />
         <section
           className="canvas" data-testid="canvas"
           onDragOver={(e) => e.preventDefault()}
@@ -193,13 +275,28 @@ export default function App() {
         >
           <CanvasView onNodeSubmit={askSubmitGeneration} />
         </section>
-        <aside className="right" data-testid="agent-panel">
+        <div
+          className={`splitter splitter-v ${dragging === 'right' ? 'active' : ''}`}
+          data-testid="splitter-right"
+          title="拖拽调整宽度 · 双击恢复默认"
+          onMouseDown={onSplitterDown('right')}
+          onDoubleClick={onSplitterReset('right')}
+        />
+        <aside className="right" style={{ flexBasis: rightW }} data-testid="agent-panel">
           <div className="panel-title">AGENT · pi <span className="mini">mmh3 skills</span></div>
           <AgentPanel chips={chips} onChipsChange={handleChipsChange} onSend={handleAgentSend} onStream={handleAgentStream} models={agentModels} selectedModel={agentModel} onModelChange={setAgentModel} />
         </aside>
       </main>
-      <footer className="footer">
-        <div className="timeline-wrap" data-testid="timeline"><Timeline onRollback={askRollback} /></div>
+      <div
+        className={`splitter splitter-h ${dragging === 'footer' ? 'active' : ''}`}
+        data-testid="splitter-footer"
+        title="拖拽调整高度 · 双击恢复默认"
+        onMouseDown={onSplitterDown('footer')}
+        onDoubleClick={onSplitterReset('footer')}
+      />
+      <footer className="footer" style={{ height: footerH }}>
+        <div className="timeline-wrap" data-testid="timeline"><Timeline /></div>
+        <div className="versions-wrap" data-testid="versions"><VersionsList onRollback={askRollback} /></div>
         <div className="queue-wrap" data-testid="queue"><GenQueue tasks={[...tasks.values()]} /></div>
       </footer>
       <ConfirmDialog

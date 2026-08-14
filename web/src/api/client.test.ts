@@ -32,4 +32,27 @@ describe('API client', () => {
       expect.objectContaining({ code: 'NODE_NOT_FOUND' }),
     );
   });
+
+  it('listProjects 拉取 /api/projects', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ projects: [
+      { path: '/p/a', name: 'a', current: true, shots: 2, duration: 7.5, mode: 'KEYFRAME' },
+    ] }), { status: 200 }));
+    const projects = await client.listProjects();
+    expect(projects[0]?.name).toBe('a');
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe('/api/projects');
+  });
+
+  it('switchProject 发 POST /api/project/switch 并返回新图', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      graph: { projectName: 'b', nodes: [], edges: [] },
+      projects: [],
+    }), { status: 200 }));
+    const r = await client.switchProject('/p/b');
+    expect(r.graph.projectName).toBe('b');
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/project/switch');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string).path).toBe('/p/b');
+  });
 });
