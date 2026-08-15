@@ -61,4 +61,6 @@ export interface ProjectInfo {
 export type WsEvent =
   | { type: 'graph'; graph: Graph }
   | { type: 'generation'; task: GenTask }
-  | { type: 'file-changed'; path: string };
+  | { type: 'file-changed'; path: string }
+  // agent 活动回传（借鉴 kanban hooks：agent 工具调用即活动，前端实时展示）
+  | { type: 'agent-activity'; text: string; at: number };

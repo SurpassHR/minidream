@@ -150,6 +150,12 @@ export const client = {
     return r.assets;
   },
 
+  // 项目聊天历史（按项目持久化在 .director/chat.json，重启/刷新不丢）
+  async listChatHistory(): Promise<Array<{ who: 'user' | 'agent'; text: string; at: number }>> {
+    const r = await req<{ messages: Array<{ who: 'user' | 'agent'; text: string; at: number }> }>('/api/agent/history');
+    return r.messages ?? [];
+  },
+
   async cancelGeneration(nodeId: string): Promise<void> {
     await req('/api/generation/cancel', { method: 'POST', body: JSON.stringify({ nodeId, confirm: true }) });
   },

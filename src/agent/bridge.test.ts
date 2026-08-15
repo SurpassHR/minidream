@@ -27,7 +27,7 @@ describe('runAgentStream', () => {
     vi.stubEnv('MOCK_REPLY', 'hello world from mock');
     const mockScript = resolve('src/agent/mock-agent.mjs');
     const chunks: string[] = [];
-    const r = await runAgentStream(['node', mockScript], 'anything', (c) => chunks.push(c));
+    const r = await runAgentStream(['node', mockScript], 'anything', (c) => { chunks.push(c); });
     expect(r.exitCode).toBe(0);
     expect(chunks.join('')).toBe('hello world from mock');
     expect(chunks.length).toBeGreaterThan(1); // 分段流式

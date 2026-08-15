@@ -28,9 +28,15 @@ export default function App() {
   const [confirm, setConfirm] = useState<{ title: string; body: string; action: () => void } | null>(null);
   // 项目导入对话框开关
   const [importOpen, setImportOpen] = useState(false);
+  // 项目栏添加对话框开关
+  const [addProjectOpen, setAddProjectOpen] = useState(false);
   // 内置 agent 模型：空字符串 = pi 默认模型；列表来自 /api/agent/models
   const [agentModels, setAgentModels] = useState<Array<{ id: string; provider: string; thinking: boolean }>>([]);
   const [agentModel, setAgentModel] = useState('');
+  // 思考强度（pi --thinking）：空字符串 = pi 默认；localStorage 持久化
+  const [thinkingLevel, setThinkingLevel] = useState(() => localStorage.getItem('dw:agentThinking') ?? '');
+  // agent 活动回传（MCP 工具调用 → WS agent-activity）：显示在 AGENT 面板顶部
+  const [agentActivity, setAgentActivity] = useState<{ text: string; at: number } | null>(null);
 
   // —— 面板尺寸：分割条拖拽调整，localStorage 持久化；双击分割条恢复默认 ——
   const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
@@ -119,6 +125,7 @@ export default function App() {
     const disconnect = connectWs((ev) => {
       if (ev.type === 'graph') { applyGraph(ev.graph); setConnected(true); }
       else if (ev.type === 'generation') { upsertTask(ev.task); }
+      else if (ev.type === 'agent-activity') { setAgentActivity({ text: ev.text, at: ev.at }); }
       // file-changed：图已由后端回填，等下一个 graph 事件即可
     }, {
       onOpen: () => setConnected(true),
@@ -208,8 +215,9 @@ export default function App() {
       const node = useGraphStore.getState().graph?.nodes.find((n) => n.title === name.slice(2));
       return { name, content: JSON.stringify(node?.fields ?? {}) };
     });
-    void agentChat(text, payload, push, agentModel || undefined).catch(() => push('\n（agent 连接失败）'));
-  }, [agentModel]);
+    void agentChat(text, payload, push, agentModel || undefined, thinkingLevel || undefined)
+      .catch(() => push('\n（agent 连接失败）'));
+  }, [agentModel, thinkingLevel]);
 
   // 破坏性操作走确认对话框（示例：时间线回滚）
   const askRollback = (seq: number) => setConfirm({
@@ -320,7 +328,7 @@ export default function App() {
         />
         <aside className="right" style={{ flexBasis: rightW }} data-testid="agent-panel">
           <div className="panel-title">AGENT · pi <span className="mini">mmh3 skills</span></div>
-          <AgentPanel chips={chips} onChipsChange={handleChipsChange} onSend={handleAgentSend} onStream={handleAgentStream} models={agentModels} selectedModel={agentModel} onModelChange={setAgentModel} />
+          <AgentPanel chips={chips} onChipsChange={handleChipsChange} onSend={handleAgentSend} onStream={handleAgentStream} models={agentModels} selectedModel={agentModel} onModelChange={setAgentModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={(v) => { setThinkingLevel(v); localStorage.setItem('dw:agentThinking', v); }} historyKey={graph?.projectName ?? 'none'} activity={agentActivity} />
         </aside>
       </main>
       <div

@@ -35,7 +35,12 @@ export function buildApp(opts: BuildOptions) {
   app.addHook('onClose', async () => { await wsHandle.close(); });
   // 显式传入 mcpPort 才启动 MCP server（CLI 入口传；测试不传避免固定端口冲突）
   if (opts.mcpPort !== undefined) {
-    const mcpPromise = startMcpServer({ projectDir: ctx.projectDir, queue: ctx.queue, port: opts.mcpPort });
+    const mcpPromise = startMcpServer({
+      ctx,
+      port: opts.mcpPort,
+      // agent 活动回传：MCP 工具调用 → WS 广播（kanban hooks 语义，best-effort 由 ws 层保证）
+      onActivity: (text) => wsHandle.broadcastActivity(text),
+    });
     mcpPromise.then((h) => console.log(`MCP Server: ${h.url}`));
     app.addHook('onClose', async () => { (await mcpPromise).close(); });
     // 暴露给调用方（测试/CLI 可查）

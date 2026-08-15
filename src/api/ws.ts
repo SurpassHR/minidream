@@ -14,6 +14,8 @@ export interface WsHandle {
   ready: Promise<void>; // chokidar 初始扫描完成（避免初始化前变更丢失）
   // 切换监视目录（项目热切换）：关闭旧 watcher → 以新目录重建 → 等初始扫描完成
   switchDir: (dir: string) => Promise<void>;
+  // agent 活动回传（kanban hooks notify 语义）：best-effort，失败静默不反噬调用方
+  broadcastActivity: (text: string) => void;
 }
 
 // 项目热切换后 watcher 需要跟随新的 projectDir；用 getProjectDir 访问器保持
@@ -39,6 +41,18 @@ export function registerWs(server: http.Server, getProjectDir: () => string): Ws
       if (ws.readyState === WebSocket.OPEN) ws.send(payload);
     }
   });
+
+  // agent 活动回传：MCP 工具调用时触发（PreToolUse 语义）；失败静默（notify 语义）
+  const broadcastActivity = (text: string) => {
+    try {
+      const payload = JSON.stringify({ type: 'agent-activity', text, at: Date.now() });
+      for (const ws of clients) {
+        if (ws.readyState === WebSocket.OPEN) ws.send(payload);
+      }
+    } catch {
+      // best-effort：广播失败不影响 agent 主流程
+    }
+  };
 
   let projectDir = getProjectDir();
   let resolveReady: () => void;
@@ -109,5 +123,6 @@ export function registerWs(server: http.Server, getProjectDir: () => string): Ws
         next.on('ready', () => resolve());
       });
     },
+    broadcastActivity,
   };
 }

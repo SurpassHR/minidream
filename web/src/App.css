@@ -183,10 +183,41 @@
 .msg.user .bubble { background: var(--panel-3); border: 1px solid var(--border-2); border-radius: 10px 10px 3px 10px; padding: 7px 10px; }
 .msg.agent { align-self: flex-start; }
 .msg.agent .bubble { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px 10px 10px 3px; padding: 7px 10px; }
-.agent-input { border-top: 1px solid var(--border); padding: 9px; display: flex; gap: 7px; }
-.agent-input input { flex: 1; background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 6px; color: var(--text); padding: 7px 10px; font-size: 12px; outline: none; }
-.agent-input input:focus { border-color: var(--amber); }
-.agent-input button { background: var(--amber); border: none; border-radius: 6px; color: #171310; font-weight: 600; padding: 0 12px; cursor: pointer; }
+/* —— agent 回复 Markdown 渲染样式（暗色主题适配）—— */
+.bubble > *:first-child { margin-top: 0; }
+.bubble > *:last-child { margin-bottom: 0; }
+.bubble p { margin: 4px 0; }
+.bubble ul, .bubble ol { margin: 4px 0; padding-left: 18px; }
+.bubble li { margin: 2px 0; }
+.bubble code {
+  background: var(--panel-3); border: 1px solid var(--border-2); border-radius: 4px;
+  padding: 1px 5px; font-family: var(--mono); font-size: 11px;
+}
+.bubble pre {
+  background: #0d131d; border: 1px solid var(--border-2); border-radius: 6px;
+  padding: 8px 10px; overflow-x: auto; margin: 6px 0;
+}
+.bubble pre code { background: none; border: none; padding: 0; font-size: 11px; line-height: 1.55; }
+.bubble h1, .bubble h2, .bubble h3, .bubble h4 { margin: 8px 0 4px; font-size: 13px; color: var(--amber-soft); }
+.bubble h1 { font-size: 15px; } .bubble h2 { font-size: 14px; } .bubble h3 { font-size: 13px; }
+.bubble blockquote {
+  margin: 5px 0; padding: 3px 10px; border-left: 3px solid var(--amber);
+  background: var(--panel-3); border-radius: 0 5px 5px 0; color: var(--text-dim);
+}
+.bubble table { border-collapse: collapse; margin: 6px 0; font-size: 11px; width: 100%; }
+.bubble th, .bubble td { border: 1px solid var(--border-2); padding: 4px 8px; text-align: left; }
+.bubble th { background: var(--panel-3); color: var(--amber-soft); font-weight: 600; }
+.bubble a { color: var(--amber-soft); text-decoration: underline; }
+.bubble hr { border: none; border-top: 1px solid var(--border-2); margin: 8px 0; }
+.bubble input[type='checkbox'] { accent-color: var(--amber); margin-right: 5px; }
+.agent-input { border-top: 1px solid var(--border); padding: 9px; display: flex; gap: 7px; align-items: flex-end; }
+.agent-input textarea {
+  flex: 1; min-height: 34px; max-height: 140px; resize: none; line-height: 1.5;
+  background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 6px;
+  color: var(--text); padding: 7px 10px; font-size: 12px; outline: none; font-family: var(--sans);
+}
+.agent-input textarea:focus { border-color: var(--amber); }
+.agent-input button { background: var(--amber); border: none; border-radius: 6px; color: #171310; font-weight: 600; padding: 0 12px; cursor: pointer; height: 34px; }
 
 .timeline-wrap { flex: 1; display: flex; flex-direction: column; padding: 8px 14px 10px; border-right: 1px solid var(--border); }
 .tl-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
@@ -251,9 +282,15 @@
 .push:hover { background: rgba(91, 141, 239, .28); }
 
 /* 内置 agent 模型下拉 */
-.agent-model-bar { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.agent-model-bar { display: flex; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+/* agent 活动回传行（MCP 工具调用实时显示） */
+.agent-activity {
+  padding: 4px 10px; font-size: 10px; color: var(--amber-soft); font-family: var(--mono);
+  background: rgba(232, 163, 61, .07); border-bottom: 1px solid var(--border);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .agent-model-select {
-  width: 100%; background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 5px;
+  flex: 1; min-width: 0; background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 5px;
   color: var(--text-dim); padding: 4px 6px; font-size: 10.5px; font-family: var(--mono); outline: none;
 }
 .agent-model-select:focus { border-color: var(--amber); }

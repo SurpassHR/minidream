@@ -5,17 +5,19 @@ export interface AgentChip {
 }
 
 // 读取 text/event-stream，逐帧解析 `data: {...}`，`data: [DONE]` 结束
-// model 可选：透传给 pi --model（如 "mustore/grok-4.5"）
+// model 可选：透传给 pi --model（如 "mustore/grok-4.5"）；thinking 可选：透传给 pi --thinking
+// （off/minimal/low/medium/high/xhigh/max）
 export async function agentChat(
   message: string,
   chips: AgentChip[],
   onChunk: (text: string) => void,
   model?: string,
+  thinking?: string,
 ): Promise<void> {
   const res = await fetch('/api/agent/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ message, chips, model }),
+    body: JSON.stringify({ message, chips, model, thinking }),
   });
   if (!res.ok || !res.body) throw new Error(`agent 请求失败: ${res.status}`);
   const reader = res.body.getReader();

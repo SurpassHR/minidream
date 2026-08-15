@@ -13,7 +13,7 @@ import { listWorkspace, readWorkspaceFile, searchWorkspace } from '../workspace/
 import { listSnapshots, graphAtSnapshot } from '../snapshots/snapshot-store.js';
 import { listAssets, importAssetFile, importAssetText } from '../assets/assets-store.js';
 import { applyMutation } from '../api/mutations.js';
-import type { GenerationQueue } from '../generation/queue.js';
+import type { ProjectContext } from '../api/routes.js';
 import type { EdgeKind, NodeType } from '../types.js';
 
 export interface McpHandle { url: string; close: () => Promise<void> }
@@ -21,12 +21,39 @@ export interface McpHandle { url: string; close: () => Promise<void> }
 // 创建已注册全部 17 个工具的 McpServer 实例。
 // 说明：McpServer.connect() 仅允许一次（SDK 1.30 限制），且 stateless transport 不可跨请求复用，
 // 因此采用官方 stateful 多 session 模式：每个客户端 session 对应一个 transport + 一个 server 实例。
-function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer {
+// onActivity：agent 活动回传（借鉴 kanban hooks 的 PreToolUse 语义）——每个工具调用前触发，
+// 由调用方（index.ts → WS 广播）负责 best-effort 投递，回传失败不影响工具执行。
+// 持有 ProjectContext 可变引用（与 REST 路由同一对象）：项目热切换后 MCP 工具自动跟随新项目，
+// 避免 agent 通过 MCP 操作旧项目画布（projectDir/queue 均为 ctx 上的最新值）。
+function createMcpServer(
+  ctx: ProjectContext,
+  onActivity?: (text: string) => void,
+): McpServer {
   const server = new McpServer({ name: 'director-workbench', version: '0.1.0' });
   const actor = 'agent' as const;
 
+  // 包装 registerTool：工具调用前回传活动（agent → 工具名 + 标识字段），失败静默。
+  // monkey-patch 场景用宽松签名（SDK 重载类型与包装不匹配，运行时行为不受影响）
+  const origRegister = server.registerTool.bind(server) as unknown as (
+    name: string,
+    def: Record<string, unknown>,
+    handler: (args: Record<string, unknown>) => Promise<Record<string, unknown>>,
+  ) => unknown;
+  (server as unknown as { registerTool: typeof origRegister }).registerTool = (name, def, handler) => {
+    return origRegister(name, def, async (args) => {
+      try {
+        const id = args.id ?? args.nodeId ?? args.title ?? args.name ?? args.path ?? args.seq;
+        const detail = typeof id === 'string' && id ? ` ${id}` : '';
+        onActivity?.(`agent → ${name}${detail}`);
+      } catch {
+        // best-effort：活动回传失败不影响 agent 主流程（kanban hooks notify 语义）
+      }
+      return handler(args);
+    });
+  };
+
   server.registerTool('canvas.get_graph', { description: '读取当前画布图（节点+边）' }, async () => ({
-    content: [{ type: 'text', text: JSON.stringify(loadGraph(projectDir)) }],
+    content: [{ type: 'text', text: JSON.stringify(loadGraph(ctx.projectDir)) }],
   }));
 
   server.registerTool('node.create', {
@@ -39,7 +66,7 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
     },
   }, async (args) => {
     let nodeId = '';
-    applyMutation(projectDir, actor, `agent 创建节点 ${args.title}`, (g) => {
+    applyMutation(ctx.projectDir, actor, `agent 创建节点 ${args.title}`, (g) => {
       const n = createNode(g, {
         type: args.type as NodeType, title: String(args.title),
         fields: (args.fields as Record<string, unknown>) ?? {},
@@ -47,7 +74,7 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
       });
       nodeId = n.id;
     });
-    const node = loadGraph(projectDir).nodes.find((n) => n.id === nodeId);
+    const node = loadGraph(ctx.projectDir).nodes.find((n) => n.id === nodeId);
     return { content: [{ type: 'text', text: JSON.stringify(node) }] };
   });
 
@@ -59,7 +86,7 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
     },
   }, async (args) => {
     let node;
-    applyMutation(projectDir, actor, `agent 更新节点 ${args.id}`, (g) => {
+    applyMutation(ctx.projectDir, actor, `agent 更新节点 ${args.id}`, (g) => {
       node = updateNode(g, String(args.id), args.patch as Record<string, unknown>);
     });
     return { content: [{ type: 'text', text: JSON.stringify(node) }] };
@@ -75,7 +102,7 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
     if (args.confirm !== true) {
       return { content: [{ type: 'text', text: '错误：删除节点需 confirm=true' }], isError: true };
     }
-    applyMutation(projectDir, actor, `agent 删除节点 ${args.id}`, (g) => { deleteNode(g, String(args.id)); });
+    applyMutation(ctx.projectDir, actor, `agent 删除节点 ${args.id}`, (g) => { deleteNode(g, String(args.id)); });
     return { content: [{ type: 'text', text: 'ok' }] };
   });
 
@@ -88,7 +115,7 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
     },
   }, async (args) => {
     let node;
-    applyMutation(projectDir, actor, `agent 移动节点 ${args.id}`, (g) => {
+    applyMutation(ctx.projectDir, actor, `agent 移动节点 ${args.id}`, (g) => {
       node = moveNode(g, String(args.id), { x: Number(args.x), y: Number(args.y) });
     });
     return { content: [{ type: 'text', text: JSON.stringify(node) }] };
@@ -104,7 +131,7 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
     },
   }, async (args) => {
     let edge;
-    applyMutation(projectDir, actor, `agent 创建边 ${args.source}->${args.target}`, (g) => {
+    applyMutation(ctx.projectDir, actor, `agent 创建边 ${args.source}->${args.target}`, (g) => {
       edge = createEdge(g, {
         kind: args.kind as EdgeKind, source: String(args.source),
         target: String(args.target), label: args.label ? String(args.label) : undefined,
@@ -123,12 +150,12 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
     if (args.confirm !== true) {
       return { content: [{ type: 'text', text: '错误：删除连线需 confirm=true' }], isError: true };
     }
-    applyMutation(projectDir, actor, `agent 删除边 ${args.id}`, (g) => { deleteEdge(g, String(args.id)); });
+    applyMutation(ctx.projectDir, actor, `agent 删除边 ${args.id}`, (g) => { deleteEdge(g, String(args.id)); });
     return { content: [{ type: 'text', text: 'ok' }] };
   });
 
   server.registerTool('workspace.list', { description: '列举工作区文件（排除 .director/out/node_modules/.git）' }, async () => ({
-    content: [{ type: 'text', text: JSON.stringify(listWorkspace(projectDir)) }],
+    content: [{ type: 'text', text: JSON.stringify(listWorkspace(ctx.projectDir)) }],
   }));
 
   server.registerTool('workspace.search', {
@@ -137,7 +164,7 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
       q: z.string(),
     },
   }, async (args) => ({
-    content: [{ type: 'text', text: JSON.stringify(searchWorkspace(projectDir, String(args.q)))}],
+    content: [{ type: 'text', text: JSON.stringify(searchWorkspace(ctx.projectDir, String(args.q)))}],
   }));
 
   server.registerTool('workspace.read', {
@@ -146,7 +173,7 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
       path: z.string(),
     },
   }, async (args) => ({
-    content: [{ type: 'text', text: readWorkspaceFile(projectDir, String(args.path)) }],
+    content: [{ type: 'text', text: readWorkspaceFile(ctx.projectDir, String(args.path)) }],
   }));
 
   server.registerTool('generation.submit', {
@@ -159,7 +186,7 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
     if (args.confirm !== true) {
       return { content: [{ type: 'text', text: '错误：提交生成需 confirm=true' }], isError: true };
     }
-    return { content: [{ type: 'text', text: JSON.stringify(queue.submit(String(args.nodeId))) }] };
+    return { content: [{ type: 'text', text: JSON.stringify(ctx.queue.submit(String(args.nodeId))) }] };
   });
 
   server.registerTool('generation.status', {
@@ -168,7 +195,7 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
       nodeId: z.string(),
     },
   }, async (args) => ({
-    content: [{ type: 'text', text: JSON.stringify(queue.status(String(args.nodeId)) ?? null) }],
+    content: [{ type: 'text', text: JSON.stringify(ctx.queue.status(String(args.nodeId)) ?? null) }],
   }));
 
   server.registerTool('generation.cancel', {
@@ -181,11 +208,11 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
     if (args.confirm !== true) {
       return { content: [{ type: 'text', text: '错误：取消生成需 confirm=true' }], isError: true };
     }
-    return { content: [{ type: 'text', text: String(queue.cancel(String(args.nodeId))) }] };
+    return { content: [{ type: 'text', text: String(ctx.queue.cancel(String(args.nodeId))) }] };
   });
 
   server.registerTool('snapshot.list', { description: '列出版本快照（seq/时间/actor/原因）' }, async () => ({
-    content: [{ type: 'text', text: JSON.stringify(listSnapshots(projectDir)) }],
+    content: [{ type: 'text', text: JSON.stringify(listSnapshots(ctx.projectDir)) }],
   }));
 
   server.registerTool('snapshot.diff', {
@@ -194,7 +221,7 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
       seq: z.number(),
     },
   }, async (args) => ({
-    content: [{ type: 'text', text: JSON.stringify(graphAtSnapshot(projectDir, Number(args.seq))) }],
+    content: [{ type: 'text', text: JSON.stringify(graphAtSnapshot(ctx.projectDir, Number(args.seq))) }],
   }));
 
   server.registerTool('snapshot.rollback', {
@@ -210,8 +237,8 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
     }
     // 走 applyMutation 管线（唯一写入口）：快照留痕 + WS 广播由管线保证，与 REST 通道一致
     let resultGraph;
-    applyMutation(projectDir, actor, `回滚至 SN-${args.seq}: ${String(args.reason)}`, (g) => {
-      const target = graphAtSnapshot(projectDir, Number(args.seq));
+    applyMutation(ctx.projectDir, actor, `回滚至 SN-${args.seq}: ${String(args.reason)}`, (g) => {
+      const target = graphAtSnapshot(ctx.projectDir, Number(args.seq));
       g.nodes = target.nodes;
       g.edges = target.edges;
       g.projectName = target.projectName;
@@ -247,11 +274,11 @@ function createMcpServer(projectDir: string, queue: GenerationQueue): McpServer 
 }
 
 export async function startMcpServer(opts: {
-  projectDir: string;
-  queue: GenerationQueue;
+  ctx: ProjectContext;
   port: number;
+  onActivity?: (text: string) => void;
 }): Promise<McpHandle> {
-  const { projectDir, queue } = opts;
+  const { ctx, onActivity } = opts;
   const app = createMcpExpressApp(); // 内置 express.json() 预解析 body + 本机 DNS 防重绑
   const transports = new Map<string, StreamableHTTPServerTransport>();
   const servers = new Map<string, McpServer>();
@@ -264,7 +291,7 @@ export async function startMcpServer(opts: {
       if (sessionId && transport) {
         await transport.handleRequest(req, res, req.body);
       } else if (!sessionId && isInitializeRequest(req.body)) {
-        const server = createMcpServer(projectDir, queue);
+        const server = createMcpServer(ctx, onActivity);
         let t: StreamableHTTPServerTransport;
         t = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),

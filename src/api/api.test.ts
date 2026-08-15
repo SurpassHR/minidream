@@ -302,8 +302,102 @@ describe('API agent 模型', () => {
       payload: { message: 'hi', model: 'mustore/grok-4.5' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.payload).toContain('mustore/grok-4.5');
+    expect(res.payload).toContain('mustore/grok-4.5|none'); // model 透传、未传 thinking
     expect(res.payload).toContain('[DONE]');
+    vi.unstubAllEnvs();
+  });
+
+  it('POST /api/agent/chat 透传 thinking 到 pi 命令；非法级别忽略', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_ECHO_MODEL', '1');
+    const ok = await a.inject({
+      method: 'POST', url: '/api/agent/chat',
+      payload: { message: 'hi', model: 'mustore/grok-4.5', thinking: 'high' },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.payload).toContain('mustore/grok-4.5|high');
+    // 非法级别不拼进命令（回显应为 none）
+    const bad = await a.inject({
+      method: 'POST', url: '/api/agent/chat',
+      payload: { message: 'hi', thinking: 'extreme' },
+    });
+    expect(bad.statusCode).toBe(200);
+    expect(bad.payload).toContain('none|none');
+    vi.unstubAllEnvs();
+  });
+
+  it('GET /api/agent/history：初始为空，chat 结束后写入 user + agent 消息', async () => {
+    // 初始空
+    const empty = await a.inject({ method: 'GET', url: '/api/agent/history' });
+    expect(empty.json().messages).toEqual([]);
+    // chat 一次（mock 回显 model|thinking）
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_ECHO_MODEL', '1');
+    const chat = await a.inject({
+      method: 'POST', url: '/api/agent/chat',
+      payload: { message: '历史测试', model: 'mustore/grok-4.5' },
+    });
+    expect(chat.statusCode).toBe(200);
+    // 历史含 user 原文 + agent 完整输出
+    const res = await a.inject({ method: 'GET', url: '/api/agent/history' });
+    const messages = res.json().messages as Array<{ who: string; text: string }>;
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({ who: 'user', text: '历史测试' });
+    expect(messages[1]).toMatchObject({ who: 'agent', text: 'mustore/grok-4.5|none' });
+    vi.unstubAllEnvs();
+  });
+
+  it('POST /api/agent/chat：agent 挂起时空闲超时兜底，[DONE] 与历史照常落盘', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_HANG', '1');
+    vi.stubEnv('DIRECTOR_AGENT_IDLE_MS', '300');
+    const res = await a.inject({
+      method: 'POST', url: '/api/agent/chat',
+      payload: { message: '挂起测试' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toContain('partial reply');
+    expect(res.payload).toContain('[DONE]');
+    // 用户消息在请求开始时已落盘；agent 部分文本在超时后落盘
+    const hist = await a.inject({ method: 'GET', url: '/api/agent/history' });
+    const messages = hist.json().messages as Array<{ who: string; text: string }>;
+    expect(messages.some((m) => m.who === 'user' && m.text === '挂起测试')).toBe(true);
+    expect(messages.some((m) => m.who === 'agent' && m.text.includes('partial reply'))).toBe(true);
+    vi.unstubAllEnvs();
+  });
+
+  it('POST /api/agent/chat 注入项目上下文环境变量（kanban KANBAN_TASK_ID 语义）', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_ECHO_ENV', '1');
+    const res = await a.inject({
+      method: 'POST', url: '/api/agent/chat',
+      payload: { message: 'env 测试' },
+    });
+    expect(res.statusCode).toBe(200);
+    // mock 回显 DIRECTOR_PROJECT_NAME；项目目录是测试临时目录，projectName = 目录 basename
+    expect(res.payload).toMatch(/data: \{"chunk":".+"\}/);
+    expect(res.payload).toContain('[DONE]');
+    const projectName = res.payload.match(/chunk":"([^"]+)"/)?.[1];
+    expect(projectName).toBeTruthy();
+    expect(projectName).not.toBe('no-env'); // 确认注入生效而非缺省
+    vi.unstubAllEnvs();
+  });
+
+  it('POST /api/agent/chat 解析 pi --mode json 的 text_delta 流式增量', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_JSON_EVENTS', '1');
+    const res = await a.inject({
+      method: 'POST', url: '/api/agent/chat',
+      payload: { message: 'json 流式' },
+    });
+    expect(res.statusCode).toBe(200);
+    // 三个 delta 拼接成完整文本；事件行本身不转发
+    expect(res.payload).toContain('第一段流式输出');
+    expect(res.payload).toContain('[DONE]');
+    // 历史落盘为拼接后的完整文本
+    const hist = await a.inject({ method: 'GET', url: '/api/agent/history' });
+    const messages = hist.json().messages as Array<{ who: string; text: string }>;
+    expect(messages.some((m) => m.who === 'agent' && m.text === '第一段流式输出')).toBe(true);
     vi.unstubAllEnvs();
   });
 });

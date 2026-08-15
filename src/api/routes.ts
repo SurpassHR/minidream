@@ -6,7 +6,7 @@ import {
 import { syncNodeToFile } from '../sync/dual-writer.js';
 import { listSnapshots, graphAtSnapshot } from '../snapshots/snapshot-store.js';
 import { listWorkspace, readWorkspaceFile, searchWorkspace } from '../workspace/accessor.js';
-import { readFileSync, existsSync, mkdtempSync, createWriteStream, rmSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, createWriteStream, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
@@ -16,6 +16,7 @@ import { GenerationQueue } from '../generation/queue.js';
 import { ComfyUIClient } from '../comfy/client.js';
 import { listAssets, importAssetFile, importAssetText, deleteAsset, readAssetText } from '../assets/assets-store.js';
 import { buildAgentPrompt, runAgentCollect, runAgentStream } from '../agent/bridge.js';
+import { appendChatMessage, readChatHistory } from '../agent/chat-history.js';
 import {
   addProject, listProjects, removeProject, resolveSwitchTarget, resolveComfyUrl,
 } from '../projects/projects-store.js';
@@ -35,6 +36,34 @@ function confirmOf(query: unknown): boolean {
   const c = (query as Record<string, unknown>).confirm;
   return c === true || c === 'true';
 }
+
+
+// pi --thinking 合法级别（侧栏思考强度下拉的数据源）
+const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+// 生成 chat 专用 MCP 配置：只含 director-workbench 自身（type: http）。
+// 目的：pi 默认会加载用户 ~/.pi/agent/mcp.json 的全部 MCP server（如 openreel-studio）——
+// ① 初始化慢（等待外部 API 起来）导致 45s 空闲超时前零输出；
+// ② agent 会用 openreel 工具误操作 OpenReel 画布而非本工作台画布。
+// 替换配置后 pi 只认工作台自己的画布工具。失败返回 null（不传 --mcp-config，保持原行为）。
+export function writeAgentMcpConfig(mcpPort: number): string | null {
+  try {
+    const file = join(tmpdir(), `director-agent-mcp-${mcpPort}.json`);
+    writeFileSync(file, JSON.stringify({
+      mcpServers: {
+        'director-workbench': {
+          type: 'http',
+          url: `http://127.0.0.1:${mcpPort}/mcp`,
+          directTools: true,
+        },
+      },
+    }, null, 2), 'utf8');
+    return file;
+  } catch {
+    return null;
+  }
+}
+
 
 export function mountRoutes(
   app: FastifyInstance,
@@ -319,12 +348,16 @@ export function mountRoutes(
     return { content: readAssetText(id) };
   });
 
-  // —— 计划 4 Task 3：pi 桥 SSE 流式对话 ——
+// 项目聊天历史：按项目持久化（.director/chat.json），重启不丢；切换项目随项目加载
+app.get('/api/agent/history', async () => ({ messages: readChatHistory(ctx.projectDir) }));
+
+// —— 计划 4 Task 3：pi 桥 SSE 流式对话 ——
   app.post('/api/agent/chat', async (req, reply) => {
     const body = req.body as {
       message: string;
       chips?: Array<{ name: string; content: string }>;
       model?: string;
+      thinking?: string;
     };
     // 画布摘要：节点类型计数（agent 上下文，避免全量图塞爆提示词）
     const graph = loadGraph(ctx.projectDir);
@@ -332,9 +365,20 @@ export function mountRoutes(
     for (const n of graph.nodes) counts.set(n.type, (counts.get(n.type) ?? 0) + 1);
     const graphSummary = [...counts.entries()].map(([t, c]) => `${c}×${t}`).join(' · ') || '空画布';
 
-    const cmd = (process.env.DIRECTOR_PI_CMD ?? 'pi --print').split(' ').filter(Boolean);
+    const cmd = (process.env.DIRECTOR_PI_CMD ?? 'pi --mode json').split(' ').filter(Boolean);
+    // 默认 pi 命令时注入 chat 专用 MCP 配置（只含 director-workbench，避免 openreel 等
+    // 无关 MCP 拖慢启动/误操作其他画布）；自定义命令（mock/测试）不加参数
+    if (!process.env.DIRECTOR_PI_CMD) {
+      const mcpPort = Number(process.env.DIRECTOR_MCP_PORT ?? 4778);
+      const mcpFile = writeAgentMcpConfig(mcpPort);
+      if (mcpFile) cmd.push('--mcp-config', mcpFile);
+    }
     // 模型透传（pi --model 支持 "provider/id" 形式）；不经过 shell，无注入风险
     if (body.model) cmd.push('--model', body.model);
+    // 思考强度透传（pi --thinking）；非法级别忽略（防御式：意外值不生效）
+    if (body.thinking && THINKING_LEVELS.includes(body.thinking)) {
+      cmd.push('--thinking', body.thinking);
+    }
     const prompt = buildAgentPrompt({
       message: body.message,
       chips: body.chips ?? [],
@@ -347,8 +391,61 @@ export function mountRoutes(
       connection: 'keep-alive',
     });
     const send = (text: string) => reply.raw.write(`data: ${JSON.stringify({ chunk: text })}\n\n`);
+    // 用户消息先落盘（不依赖 pi 是否正常退出）；agent 全文在流结束后落盘
+    appendChatMessage(ctx.projectDir, 'user', body.message);
+    // 流式累积 agent 全文（pi --mode json 的 text_delta 增量拼接）；
+    // 节流合并：delta 按 60ms/120 字符成块发送——逐 token 全量转发会让前端
+    // 每次重渲染 ReactMarkdown，块级转发兼顾流式观感与渲染性能。
+    let agentText = '';
+    let pending = '';
+    let flushTimer: NodeJS.Timeout | null = null;
+    const flushPending = () => {
+      if (pending) { send(pending); pending = ''; }
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    };
+    const pushDelta = (delta: string) => {
+      agentText += delta;
+      pending += delta;
+      if (pending.length >= 120) flushPending();
+      else if (!flushTimer) flushTimer = setTimeout(flushPending, 60);
+    };
+    // 行回调：json 模式解析 message_update/text_delta 增量；agent_end 表示输出完成
+    // （提前终止进程，不等 pi 自然退出）；其他事件忽略；非 JSON 行（自定义命令/mock）
+    // 按原行转发（兼容旧行为）。返回 true 时 runAgentStream 会 kill 子进程。
+    const sendCollect = (line: string): boolean => {
+      const t = line.trim();
+      if (t.startsWith('{')) {
+        try {
+          const ev = JSON.parse(t) as {
+            type?: string;
+            assistantMessageEvent?: { type?: string; delta?: string };
+          };
+          if (ev.type === 'message_update' && ev.assistantMessageEvent?.type === 'text_delta') {
+            const delta = ev.assistantMessageEvent.delta ?? '';
+            if (delta) pushDelta(delta);
+          }
+          return ev.type === 'agent_end';
+        } catch {
+          // 解析失败按文本行处理
+        }
+      }
+      agentText += t + '\n';
+      send(t);
+      return false;
+    };
     try {
-      await runAgentStream(cmd, prompt, send);
+      const idleMs = Number(process.env.DIRECTOR_AGENT_IDLE_MS) || 45_000;
+      // 注入项目上下文（kanban KANBAN_TASK_ID 语义）：agent 进程内可感知当前项目
+      const { idleKilled } = await runAgentStream(cmd, prompt, sendCollect, {
+        idleTimeoutMs: idleMs,
+        env: {
+          DIRECTOR_PROJECT_DIR: ctx.projectDir,
+          DIRECTOR_PROJECT_NAME: graph.projectName,
+        },
+      });
+      flushPending();
+      appendChatMessage(ctx.projectDir, 'agent', agentText);
+      if (idleKilled) send('\n\n（输出已空闲停止）');
       reply.raw.write('data: [DONE]\n\n');
     } catch (err) {
       send(`（agent 启动失败：${err instanceof Error ? err.message : String(err)}）`);
