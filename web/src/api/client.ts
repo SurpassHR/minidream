@@ -10,16 +10,20 @@ class ApiError extends Error {
 }
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    headers: { 'content-type': 'application/json' },
-    ...init,
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new ApiError((body as { code?: string }).code ?? 'HTTP_' + res.status,
-      (body as { message?: string }).message ?? res.statusText);
+  const body = init?.body;
+  const headers: Record<string, string> = {};
+  // 仅在有 body 时声明 JSON 类型：无 body 的 DELETE/GET 若带上
+  // content-type: application/json，Fastify 会因空 body 解析失败返回 500
+  if (body !== undefined && body !== null && body !== '') {
+    headers['content-type'] = 'application/json';
   }
-  return body as T;
+  const res = await fetch(url, { ...init, headers: { ...headers, ...init?.headers } });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ApiError((payload as { code?: string }).code ?? 'HTTP_' + res.status,
+      (payload as { message?: string }).message ?? res.statusText);
+  }
+  return payload as T;
 }
 
 export const client = {
