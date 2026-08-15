@@ -213,6 +213,15 @@ export default function App() {
     });
   }, []);
 
+  // 右键菜单删除节点确认门：删除写入快照，可回滚
+  const askDeleteNode = useCallback((nodeId: string, title: string) => {
+    setConfirm({
+      title: '删除节点',
+      body: '删除节点「' + title + '」？其连边将一并移除，改动会写入新快照。',
+      action: () => void client.deleteNode(nodeId),
+    });
+  }, []);
+
   // 素材拖到画布 → 创建 asset 节点（计划 4 换素材库 API）
   const handleDropToCanvas = (item: AssetItem, position: { x: number; y: number }) => {
     void client.createNode({
@@ -283,7 +292,7 @@ export default function App() {
             handleDropToCanvas(item, { x: e.clientX - rect.left, y: e.clientY - rect.top });
           }}
         >
-          <CanvasView onNodeSubmit={askSubmitGeneration} />
+          <CanvasView onNodeSubmit={askSubmitGeneration} onDeleteNode={askDeleteNode} />
         </section>
         <div
           className={`splitter splitter-v ${dragging === 'right' ? 'active' : ''}`}

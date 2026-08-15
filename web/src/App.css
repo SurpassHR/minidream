@@ -342,3 +342,19 @@
 .asset-empty.slim { gap: 6px; padding: 20px 14px; }
 .link-btn { background: none; border: none; color: var(--amber-soft); cursor: pointer; font-size: 11px; text-decoration: underline; padding: 2px; }
 .link-btn:hover { color: var(--amber); }
+/* —— 画布右键菜单（画布 / 节点）—— */
+.ctx-menu {
+  position: fixed; z-index: 60; min-width: 182px;
+  background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 8px;
+  padding: 5px; box-shadow: 0 10px 30px rgba(0,0,0,.6);
+  display: flex; flex-direction: column;
+}
+.ctx-item {
+  display: flex; align-items: center; gap: 7px; text-align: left;
+  background: none; border: none; border-radius: 5px; color: var(--text);
+  font-size: 12px; padding: 6px 9px; cursor: pointer; font-family: var(--sans);
+}
+.ctx-item:hover { background: var(--panel-3); color: var(--amber-soft); }
+.ctx-item.danger:hover { background: rgba(224,82,82,.14); color: var(--rec); }
+.ctx-sep { height: 1px; background: var(--border); margin: 4px 2px; }
+

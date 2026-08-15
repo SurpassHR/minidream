@@ -3,3 +3,4 @@ dist/
 .director/
 .playwright-cli/
 *.tsbuildinfo
+.codegraph/
