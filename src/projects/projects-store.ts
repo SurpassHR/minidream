@@ -142,7 +142,9 @@ export function listProjects(projectDir: string): ProjectInfo[] {
       }
     }
   }
-  return out.sort((a, b) => Number(b.current) - Number(a.current) || a.name.localeCompare(b.name));
+  // 固定按名称排序：切换项目只更新 current 高亮，不把当前项目挪到最上方
+  // （项目栏顺序稳定，用户点击哪个就高亮哪个）
+  return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // 切换目标校验：接受已发现项目的绝对路径，或其他存在的目录；相对路径按 projectDir 父目录解析

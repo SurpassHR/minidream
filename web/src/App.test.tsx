@@ -13,9 +13,20 @@ beforeEach(() => {
     if (String(url).includes('/api/comfy/health')) {
       return new Response(JSON.stringify({ healthy: true }), { status: 200 });
     }
+    if (String(url).includes('/api/project/switch')) {
+      return new Response(JSON.stringify({
+        graph: { projectName: 'b', nodes: [], edges: [] },
+        // 后端已不按 current 重排：固定名称顺序 t → b，current 只标记高亮
+        projects: [
+          { path: '/p/t', name: 't', current: false, shots: 2, duration: 7.5, mode: 'KEYFRAME' },
+          { path: '/p/b', name: 'b', current: true, shots: 1, duration: 3.75, mode: '' },
+        ],
+      }), { status: 200 });
+    }
     if (String(url).includes('/api/projects')) {
       return new Response(JSON.stringify({ projects: [
         { path: '/p/t', name: 't', current: true, shots: 2, duration: 7.5, mode: 'KEYFRAME' },
+        { path: '/p/b', name: 'b', current: false, shots: 1, duration: 3.75, mode: '' },
       ] }), { status: 200 });
     }
     if (String(url).includes('/api/agent/models')) {
@@ -65,6 +76,23 @@ describe('App 布局骨架', () => {
     render(<App />);
     expect(await screen.findByText(/COMFYUI/)).toBeInTheDocument();
     expect(await screen.findByText(/已连接/)).toBeInTheDocument();
+  });
+});
+
+describe('项目栏高亮', () => {
+  it('点击项目只切换高亮，不调整列表顺序', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('project-t')).toBeInTheDocument());
+    const items = () => Array.from(document.querySelectorAll('.proj'));
+    expect(items()).toHaveLength(2);
+    expect(items()[0]!.classList.contains('active')).toBe(true); // t 首位高亮
+    // 点击 b：只移动高亮，t 仍在首位
+    fireEvent.click(screen.getByTestId('project-b'));
+    await waitFor(() => expect(screen.getByTestId('project-name')).toHaveTextContent('b'));
+    expect(items()[0]!.querySelector('.pname')?.textContent).toBe('t');
+    expect(items()[0]!.classList.contains('active')).toBe(false);
+    expect(items()[1]!.querySelector('.pname')?.textContent).toBe('b');
+    expect(items()[1]!.classList.contains('active')).toBe(true);
   });
 });
 

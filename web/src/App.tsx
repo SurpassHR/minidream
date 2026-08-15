@@ -160,12 +160,22 @@ export default function App() {
 
   useEffect(() => { refreshProjects(); }, [refreshProjects]);
 
-  // 点击项目 → 后端热切换（重建图/生成队列/文件监视），前端应用新图并刷新素材
+  // 点击项目 → 后端热切换（重建图/生成队列/文件监视），前端应用新图并刷新素材。
+  // 列表保持原有顺序（仅更新 current 高亮），不把当前项目挪到最上方；
+  // 后端返回的新发现项目追加到末尾。
   const handleProjectSelect = useCallback(async (path: string) => {
     try {
       const r = await client.switchProject(path);
       applyGraph(r.graph);
-      setProjects(r.projects);
+      setProjects((prev) => {
+        const merged = prev.map((p) => ({ ...p, current: p.path === path }));
+        for (const p of r.projects) {
+          if (!merged.some((m) => m.path === p.path)) {
+            merged.push({ ...p, current: p.path === path });
+          }
+        }
+        return merged;
+      });
       refreshAssets();
     } catch (err) {
       console.error('切换项目失败', err);

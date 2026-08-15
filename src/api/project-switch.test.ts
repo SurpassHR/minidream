@@ -65,4 +65,20 @@ describe('API 项目发现与热切换', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().code).toBe('PROJECT_NOT_FOUND');
   });
+
+  it('项目列表保持固定顺序：切换只更新 current 高亮，不把当前项目挪到最上方', async () => {
+    const before = await b.inject({ method: 'GET', url: '/api/projects' });
+    const beforeList = before.json().projects as Array<{ name: string; current: boolean }>;
+    const namesBefore = beforeList.map((p) => p.name);
+    const posBefore = namesBefore.indexOf('proj-b');
+    expect(posBefore).toBeGreaterThan(-1);
+    // 切换到 proj-b 后：列表顺序完全不变，仅 current 标记移动到 proj-b
+    await b.inject({ method: 'POST', url: '/api/project/switch', payload: { path: projB } });
+    const after = await b.inject({ method: 'GET', url: '/api/projects' });
+    const afterList = after.json().projects as Array<{ name: string; current: boolean }>;
+    expect(afterList.map((p) => p.name)).toEqual(namesBefore);
+    expect(afterList.indexOf(afterList.find((p) => p.name === 'proj-b')!)).toBe(posBefore); // 位置不动
+    expect(afterList.find((p) => p.name === 'proj-b')?.current).toBe(true);
+    expect(afterList.find((p) => p.name === 'proj-a')?.current).toBe(false);
+  });
 });
