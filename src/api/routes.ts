@@ -19,6 +19,7 @@ import { ComfyUIClient } from '../comfy/client.js';
 import { listAssets, importAssetFile, importAssetText, deleteAsset, readAssetText } from '../assets/assets-store.js';
 import { buildAgentPrompt, runAgentCollect, runAgentStream } from '../agent/bridge.js';
 import { appendChatMessage, readChatHistory } from '../agent/chat-history.js';
+import { readStory, saveStory, completeStory, buildStoryMarkdown } from '../story/store.js';
 import {
   addProject, listProjects, removeProject, resolveSwitchTarget, resolveComfyUrl,
 } from '../projects/projects-store.js';
@@ -399,6 +400,31 @@ export function mountRoutes(
 
 // 项目聊天历史：按项目持久化（.director/chat.json），重启不丢；切换项目随项目加载
 app.get('/api/agent/history', async () => ({ messages: readChatHistory(ctx.projectDir) }));
+
+// —— 故事向导（story-teller 角色页）——
+// 进度存 .director/story.json；complete 时组装 Markdown 入库为 story_<项目名>.md 素材
+app.get('/api/story', async () => ({ story: readStory(ctx.projectDir) }));
+
+app.put('/api/story', async (req) => {
+  const body = req.body as { step?: number; answers?: Record<string, string> };
+  return { story: saveStory(ctx.projectDir, {
+    step: typeof body.step === 'number' ? body.step : undefined,
+    answers: body.answers && typeof body.answers === 'object' ? body.answers : undefined,
+  }) };
+});
+
+app.post('/api/story/complete', async (req, reply) => {
+  const story = readStory(ctx.projectDir);
+  if (story.completedAt) {
+    return reply.code(409).send({ code: 'STORY_ALREADY_COMPLETED', message: '故事已完成，如需重新生成请先重置' });
+  }
+  const projectName = loadGraph(ctx.projectDir).projectName || '未命名项目';
+  const md = buildStoryMarkdown(projectName, story.answers);
+  const asset = importAssetText(`story_${projectName}.md`, md);
+  completeStory(ctx.projectDir, new Date().toISOString());
+  reply.code(201);
+  return { asset, story: readStory(ctx.projectDir) };
+});
 
 // —— 计划 4 Task 3：pi 桥 SSE 流式对话 ——
   app.post('/api/agent/chat', async (req, reply) => {
