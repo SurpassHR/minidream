@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { DirectorError, type Actor, type NodeType } from '../types.js';
 import {
-  createNode, updateNode, deleteNode, moveNode, createEdge, deleteEdge, loadGraph,
+  createNode, updateNode, deleteNode, moveNode,
+  createEdge, updateEdge, deleteEdge, loadGraph,
 } from '../graph/graph-store.js';
 import { syncNodeToFile } from '../sync/dual-writer.js';
 import { listSnapshots, graphAtSnapshot } from '../snapshots/snapshot-store.js';
@@ -12,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
 import { applyMutation } from './mutations.js';
+import { graphToPromptYaml } from '../prompt/export.js';
 import { GenerationQueue } from '../generation/queue.js';
 import { ComfyUIClient } from '../comfy/client.js';
 import { listAssets, importAssetFile, importAssetText, deleteAsset, readAssetText } from '../assets/assets-store.js';
@@ -73,6 +75,11 @@ export function mountRoutes(
   const actor: Actor = 'user';
 
   app.get('/api/graph', async () => ({ graph: loadGraph(ctx.projectDir) }));
+
+  // 画布 → MMH3 Prompt YAML 导出（chain 拓扑序 = 剧情顺序；结构性错误抛 YAML_EXPORT_FAILED）
+  app.post('/api/yaml/export', async () => ({
+    ...graphToPromptYaml(loadGraph(ctx.projectDir)),
+  }));
 
   // —— 项目栏：手动添加的项目注册表（默认不自动发现） ——
   app.get('/api/projects', async () => ({ projects: listProjects(ctx.projectDir) }));
@@ -176,6 +183,17 @@ export function mountRoutes(
     }
     applyMutation(ctx.projectDir, actor, `删除边 ${id}`, (g) => { deleteEdge(g, id); });
     return { ok: true };
+  });
+
+  // 修改边：改类型（ref/chain/exec）或标签；改为 chain 时重新校验线性约束
+  app.patch('/api/edges/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as { patch: { kind?: 'ref' | 'chain' | 'exec'; label?: string } };
+    let edge;
+    applyMutation(ctx.projectDir, actor, `修改边 ${id}`, (g) => {
+      edge = updateEdge(g, id, body.patch ?? {});
+    });
+    return { edge };
   });
 
   // 从工作区文件导入节点

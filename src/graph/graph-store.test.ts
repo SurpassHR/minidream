@@ -5,7 +5,7 @@ import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 import { DirectorError, type Graph } from '../types.js';
 import {
   createNode, deleteNode, updateNode, moveNode,
-  createEdge, deleteEdge, loadGraph, saveGraph,
+  createEdge, updateEdge, deleteEdge, loadGraph, saveGraph,
 } from './graph-store.js';
 
 let dir: string;
@@ -101,5 +101,75 @@ describe('GraphStore 持久化', () => {
     const loaded = loadGraph(dir);
     expect(loaded.nodes).toHaveLength(1);
     expect(loaded.nodes[0]?.title).toBe('SHOT 01');
+  });
+});
+
+describe('createEdge chain 线性约束', () => {
+  function shots(...titles: string[]): { g: Graph; ids: string[] } {
+    const g = emptyGraph();
+    const ids = titles.map((t) => createNode(g, { type: 'shot', title: t }).id);
+    return { g, ids };
+  }
+
+  it('chain 允许 shot→shot；非 shot 端点拒绝', () => {
+    const g = emptyGraph();
+    const s = createNode(g, { type: 'shot', title: 'S' });
+    const p = createNode(g, { type: 'prompt', title: 'P' });
+    expect(() => createEdge(g, { kind: 'chain', source: s.id, target: p.id }))
+      .toThrowError(expect.objectContaining({ code: 'EDGE_INVALID' }));
+  });
+
+  it('一个分镜至多一个入链/出链（分支拒绝）', () => {
+    const { g, ids } = shots('A', 'B', 'C');
+    createEdge(g, { kind: 'chain', source: ids[0]!, target: ids[1]! });
+    expect(() => createEdge(g, { kind: 'chain', source: ids[0]!, target: ids[2]! }))
+      .toThrowError(expect.objectContaining({ code: 'EDGE_INVALID' }));
+    expect(() => createEdge(g, { kind: 'chain', source: ids[2]!, target: ids[1]! }))
+      .toThrowError(expect.objectContaining({ code: 'EDGE_INVALID' }));
+  });
+
+  it('chain 成环拒绝', () => {
+    const { g, ids } = shots('A', 'B', 'C');
+    createEdge(g, { kind: 'chain', source: ids[0]!, target: ids[1]! });
+    createEdge(g, { kind: 'chain', source: ids[1]!, target: ids[2]! });
+    expect(() => createEdge(g, { kind: 'chain', source: ids[2]!, target: ids[0]! }))
+      .toThrowError(expect.objectContaining({ code: 'EDGE_INVALID' }));
+  });
+
+  it('ref/exec 不受 chain 约束', () => {
+    const g = emptyGraph();
+    const s = createNode(g, { type: 'shot', title: 'S' });
+    const p = createNode(g, { type: 'prompt', title: 'P' });
+    const e = createEdge(g, { kind: 'ref', source: p.id, target: s.id });
+    expect(e.kind).toBe('ref');
+  });
+});
+
+describe('updateEdge 类型修改', () => {
+  it('ref 改为 chain 时校验线性约束（分支拒绝）', () => {
+    const g = emptyGraph();
+    const a = createNode(g, { type: 'shot', title: 'A' });
+    const b = createNode(g, { type: 'shot', title: 'B' });
+    const c = createNode(g, { type: 'shot', title: 'C' });
+    createEdge(g, { kind: 'chain', source: a.id, target: b.id });
+    const e2 = createEdge(g, { kind: 'ref', source: a.id, target: c.id });
+    // a 已有出链 → ref 改 chain 必须拒绝
+    expect(() => updateEdge(g, e2.id, { kind: 'chain' }))
+      .toThrowError(expect.objectContaining({ code: 'EDGE_INVALID' }));
+    // 改 label 不受限
+    const e3 = updateEdge(g, e2.id, { label: '备注' });
+    expect(e3.label).toBe('备注');
+    expect(e3.kind).toBe('ref');
+  });
+
+  it('ref 改为 chain 合法场景（线性延伸）', () => {
+    const g = emptyGraph();
+    const a = createNode(g, { type: 'shot', title: 'A' });
+    const b = createNode(g, { type: 'shot', title: 'B' });
+    createEdge(g, { kind: 'chain', source: a.id, target: b.id });
+    const c = createNode(g, { type: 'shot', title: 'C' });
+    const e = createEdge(g, { kind: 'ref', source: b.id, target: c.id });
+    const u = updateEdge(g, e.id, { kind: 'chain' });
+    expect(u.kind).toBe('chain');
   });
 });

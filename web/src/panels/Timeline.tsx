@@ -37,22 +37,44 @@ function shotDuration(fields: Record<string, unknown>): number {
 export function Timeline() {
   const graph = useGraphStore((s) => s.graph);
 
+  // 剧情时间轴：shot 节点按 chain 边（链式参考）拓扑序排列——与 YAML segments 顺序一致；
+  // 无 chain 时按 fields.start（或标题序号）排序（原有逻辑）；孤立分镜排在链后。
+  const sortedShots = useMemo(() => {
+    const shots = (graph?.nodes ?? []).filter((n) => n.type === 'shot');
+    const chains = (graph?.edges ?? []).filter((e) => e.kind === 'chain');
+    const bySource = new Map(chains.map((e) => [e.source, e.target]));
+    const byTarget = new Map(chains.map((e) => [e.target, e.source]));
+    const fallback = (list: typeof shots) => [...list].sort((a, b) => {
+      const sa = toNum(a.fields.start);
+      const sb = toNum(b.fields.start);
+      if (sa !== null && sb !== null) return sa - sb;
+      const ta = Number(String(a.title).match(/(\d+)/)?.[1] ?? NaN);
+      const tb = Number(String(b.title).match(/(\d+)/)?.[1] ?? NaN);
+      if (Number.isFinite(ta) && Number.isFinite(tb)) return ta - tb;
+      return 0;
+    });
+    if (chains.length === 0) return fallback(shots);
+    const heads = shots.filter((s) => !byTarget.has(s.id));
+    const ordered: typeof shots = [];
+    for (const h of fallback(heads)) {
+      let cur = h.id;
+      while (cur) {
+        const n = shots.find((s) => s.id === cur);
+        if (n && !ordered.includes(n)) ordered.push(n);
+        cur = bySource.get(cur) ?? '';
+      }
+    }
+    const inChain = new Set(ordered.map((n) => n.id));
+    ordered.push(...fallback(shots.filter((s) => !inChain.has(s.id))));
+    return ordered;
+  }, [graph]);
+
   // 剧情时间轴：shot 节点按 start（或标题序号）排序，累计时长铺轨
   const { segments, total } = useMemo(() => {
-    const shots = (graph?.nodes ?? []).filter((n) => n.type === 'shot');
     const segs: Segment[] = [];
-    if (shots.length) {
-      const sorted = [...shots].sort((a, b) => {
-        const sa = toNum(a.fields.start);
-        const sb = toNum(b.fields.start);
-        if (sa !== null && sb !== null) return sa - sb;
-        const ta = Number(String(a.title).match(/(\d+)/)?.[1] ?? NaN);
-        const tb = Number(String(b.title).match(/(\d+)/)?.[1] ?? NaN);
-        if (Number.isFinite(ta) && Number.isFinite(tb)) return ta - tb;
-        return 0;
-      });
+    if (sortedShots.length) {
       let t = 0;
-      for (const s of sorted) {
+      for (const s of sortedShots) {
         const start = toNum(s.fields.start);
         if (start !== null && start >= t) t = start; // 显式 start 优先（容忍重叠时取最大）
         const dur = shotDuration(s.fields);
@@ -61,7 +83,7 @@ export function Timeline() {
       }
     }
     return { segments: segs, total: segs.reduce((acc, s) => acc + s.duration, 0) };
-  }, [graph]);
+  }, [sortedShots]);
 
   const pct = (t: number) => (total > 0 ? (t / total) * 100 : 0);
   // 1/3、2/3 用精确分数避免浮点刻度漂移（如 00:07.499 ≠ 00:07.500）

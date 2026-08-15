@@ -67,6 +67,18 @@ export const client = {
     return r.edge;
   },
 
+  // 修改边（改类型/标签）；改为 chain 时后端重新校验线性约束
+  async updateEdge(id: string, patch: { kind?: EdgeKind; label?: string }): Promise<DirectorEdge> {
+    const r = await req<{ edge: DirectorEdge }>(`/api/edges/${id}`, {
+      method: 'PATCH', body: JSON.stringify({ patch }),
+    });
+    return r.edge;
+  },
+
+  async deleteEdge(id: string): Promise<void> {
+    await req(`/api/edges/${id}?confirm=true`, { method: 'DELETE' });
+  },
+
   async listSnapshots(): Promise<SnapshotMeta[]> {
     const r = await req<{ snapshots: SnapshotMeta[] }>('/api/snapshots');
     return r.snapshots;
@@ -158,6 +170,13 @@ export const client = {
   async listChatHistory(): Promise<Array<{ who: 'user' | 'agent'; text: string; at: number }>> {
     const r = await req<{ messages: Array<{ who: 'user' | 'agent'; text: string; at: number }> }>('/api/agent/history');
     return r.messages ?? [];
+  },
+
+  // 画布 → MMH3 Prompt YAML 导出（chain 拓扑序 = 剧情顺序；错误抛 YAML_EXPORT_FAILED）
+  async exportPromptYaml(): Promise<{ yaml: string; segments: number }> {
+    return await req<{ yaml: string; segments: number }>('/api/yaml/export', {
+      method: 'POST', body: JSON.stringify({}),
+    });
   },
 
   async cancelGeneration(nodeId: string): Promise<void> {

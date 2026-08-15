@@ -10,6 +10,7 @@ export interface PromptSegment {
   title?: string;
   keyframes?: string[];
   duration?: number; // 秒；全有或全无
+  seed?: number;     // 随机种子；可选覆盖（无需全有或全无），缺省沿用节点设置
   prompt: string;    // 必填：本段英文 H3 提示词
 }
 
@@ -93,6 +94,13 @@ export function validatePromptProtocol(doc: unknown): ProtocolValidation {
         durations.push(dur);
       }
     }
+    const seed = s.seed;
+    if (seed !== undefined && seed !== null) {
+      if (typeof seed !== 'number' || !Number.isInteger(seed) || seed < 0) {
+        res.ok = false;
+        res.errors.push('分段 ' + (i + 1) + ' 的 seed 必须是非负整数');
+      }
+    }
   }
   res.hasDurations = durations.length > 0;
   if (res.hasDurations && durations.length !== res.segments) {
@@ -146,6 +154,7 @@ export function promptYamlFromSegments(input: {
         keys.push(['keyframes', '[' + s.keyframes.map(yamlQuote).join(', ') + ']']);
       }
       if (s.duration !== undefined) keys.push(['duration', String(s.duration)]);
+      if (s.seed !== undefined) keys.push(['seed', String(s.seed)]);
       keys.push(['prompt', blockScalar(s.prompt, 6)]);
       const first = keys[0];
       if (first) {
