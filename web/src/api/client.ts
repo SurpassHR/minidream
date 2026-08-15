@@ -1,6 +1,6 @@
 import type {
   DirectorEdge, DirectorNode, EdgeKind, GenTask, Graph, NodeType, ProjectInfo, SnapshotMeta,
-  StoryProgress, AssetRecord,
+  StoryProgress, AssetRecord, DesignKind, DesignObject,
 } from '../types';
 
 class ApiError extends Error {
@@ -268,5 +268,41 @@ export const client = {
     return await req<{ asset: AssetRecord; story: StoryProgress }>('/api/story/complete', {
       method: 'POST', body: JSON.stringify({}),
     });
+  },
+
+  // —— object-designer 设计器 ——
+  async listDesigns(): Promise<DesignObject[]> {
+    const r = await req<{ designs: DesignObject[] }>('/api/designs');
+    return r.designs;
+  },
+
+  async createDesign(input: { kind: DesignKind; name: string }): Promise<DesignObject> {
+    const r = await req<{ design: DesignObject }>('/api/designs', {
+      method: 'POST', body: JSON.stringify(input),
+    });
+    return r.design;
+  },
+
+  async updateDesign(id: string, patch: Partial<Pick<DesignObject, 'name' | 'description' | 'style' | 'template'>>): Promise<DesignObject> {
+    const r = await req<{ design: DesignObject }>(`/api/designs/${id}`, {
+      method: 'PUT', body: JSON.stringify({ patch }),
+    });
+    return r.design;
+  },
+
+  async deleteDesign(id: string): Promise<void> {
+    await req(`/api/designs/${id}?confirm=true`, { method: 'DELETE' });
+  },
+
+  async generateDesign(id: string): Promise<DesignObject> {
+    const r = await req<{ design: DesignObject }>(`/api/designs/${id}/generate`, {
+      method: 'POST', body: JSON.stringify({}),
+    });
+    return r.design;
+  },
+
+  async listWorkflows(): Promise<string[]> {
+    const r = await req<{ workflows: string[] }>('/api/workflows');
+    return r.workflows;
   },
 };

@@ -521,3 +521,36 @@
 .story-save-hint { font-size: 11px; color: var(--ok); }
 .story-nav { display: flex; justify-content: space-between; margin-top: 6px; }
 .story-error { color: var(--rec); font-size: 12px; }
+
+/* ===== object-designer 设计器 ===== */
+.designer-view { display: flex; flex-direction: column; padding: 24px 32px; gap: 16px; }
+.designer-head { font-size: 14px; font-weight: 600; }
+.designer-body { display: flex; gap: 24px; flex: 1; min-height: 0; }
+.designer-list { flex: 0 0 260px; display: flex; flex-direction: column; gap: 14px; overflow: auto; }
+.designer-group { display: flex; flex-direction: column; gap: 6px; }
+.designer-kind { font-size: 13px; font-weight: 600; color: var(--text-dim); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.designer-kind.active { color: var(--amber); }
+.designer-items { display: flex; flex-direction: column; gap: 4px; padding-left: 6px; }
+.designer-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px;
+  border: 1px solid var(--border); font-size: 12px; cursor: pointer; transition: all .15s;
+}
+.designer-item:hover { border-color: var(--border-2); }
+.designer-item.active { border-color: var(--amber); background: rgba(232, 163, 61, .06); }
+.designer-thumb-mini { width: 22px; height: 22px; border-radius: 4px; background-size: cover; background-position: center; border: 1px solid var(--border-2); }
+.designer-empty { color: var(--text-faint); font-size: 12px; padding: 8px; }
+.designer-add { align-self: flex-start; }
+.designer-form { flex: 1; max-width: 560px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
+.designer-form-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; }
+.designer-status { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border-2); color: var(--text-dim); }
+.designer-status.st-done { color: var(--ok); border-color: var(--ok); }
+.designer-status.st-failed { color: var(--rec); border-color: var(--rec); }
+.designer-status.st-generating { color: var(--amber); border-color: var(--amber); }
+.designer-label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.designer-label .ne-input { width: 100%; }
+.designer-actions { display: flex; gap: 10px; }
+.designer-tip { font-size: 11px; color: var(--text-faint); }
+.designer-preview { border: 1px solid var(--border-2); border-radius: 8px; overflow: hidden; }
+.designer-preview img { width: 100%; display: block; }
+.designer-del { align-self: flex-start; }
+.designer-error { padding: 0 32px; }

@@ -74,6 +74,23 @@ export interface StoryProgress {
   completedAt: string | null;
 }
 
+// object-designer 设计对象（镜像后端 src/design/store.ts）
+export type DesignKind = 'character' | 'scene' | 'prop';
+export type DesignStatus = 'draft' | 'generating' | 'done' | 'failed';
+
+export interface DesignObject {
+  id: string;
+  kind: DesignKind;
+  name: string;
+  description: string;
+  style: string;
+  template: string;
+  status: DesignStatus;
+  assetId?: string;
+  error?: string;
+  createdAt: number;
+}
+
 // 素材记录（镜像后端 src/types.ts AssetRecord）
 export interface AssetRecord {
   id: string;
