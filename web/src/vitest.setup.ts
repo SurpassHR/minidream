@@ -13,3 +13,17 @@ class ResizeObserverMock {
   disconnect() {}
 }
 globalThis.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
+
+// jsdom 无 DataTransfer（拖放 API），画布素材 drop 测试需要最小实现
+if (typeof globalThis.DataTransfer === 'undefined') {
+  class DataTransferMock {
+    private store = new Map<string, string>();
+    setData(kind: string, value: string): void { this.store.set(kind, value); }
+    getData(kind: string): string { return this.store.get(kind) ?? ''; }
+    clearData(kind?: string): void {
+      if (kind) this.store.delete(kind);
+      else this.store.clear();
+    }
+  }
+  globalThis.DataTransfer = DataTransferMock as unknown as typeof DataTransfer;
+}

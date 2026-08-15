@@ -81,6 +81,104 @@ describe('GraphStore 边 CRUD', () => {
       expect.objectContaining({ code: 'EDGE_NOT_FOUND' }),
     );
   });
+
+  it('createEdge 透传 targetHandle（分镜多接口圆点）', () => {
+    const g = emptyGraph();
+    const a = createNode(g, { type: 'prompt', title: 'P' });
+    const b = createNode(g, { type: 'shot', title: 'SHOT 01' });
+    const e = createEdge(g, { kind: 'ref', source: a.id, target: b.id, targetHandle: 'text-0' });
+    expect(e.targetHandle).toBe('text-0');
+    // 同一源连同一分镜同组不同圆点 = 不同边（不判重）
+    const kf = createNode(g, { type: 'keyframe', title: 'KF' });
+    const e2 = createEdge(g, { kind: 'ref', source: kf.id, target: b.id, targetHandle: 'image-0' });
+    expect(e2.targetHandle).toBe('image-0');
+    const e3 = createEdge(g, { kind: 'ref', source: kf.id, target: b.id, targetHandle: 'image-1' });
+    expect(e3.targetHandle).toBe('image-1');
+    expect(g.edges).toHaveLength(3);
+    // 同一源连同一分镜同一接口圆点仍判重
+    expect(() => createEdge(g, { kind: 'ref', source: a.id, target: b.id, targetHandle: 'text-0' }))
+      .toThrowError(expect.objectContaining({ code: 'EDGE_EXISTS' }));
+  });
+
+  it('createEdge 未传 targetHandle 时边不带该字段（向后兼容）', () => {
+    const g = emptyGraph();
+    const a = createNode(g, { type: 'prompt', title: 'P' });
+    const b = createNode(g, { type: 'shot', title: 'SHOT 01' });
+    const e = createEdge(g, { kind: 'ref', source: a.id, target: b.id });
+    expect(e.targetHandle).toBeUndefined();
+  });
+
+  it('接口圆点类型校验：文字/图像/视频源只能连对应接口', () => {
+    const g = emptyGraph();
+    const prompt = createNode(g, { type: 'prompt', title: 'P' });
+    const kf = createNode(g, { type: 'keyframe', title: 'KF' });
+    const vid = createNode(g, { type: 'asset', title: 'V', fields: { assetKind: 'vid' } });
+    const shot = createNode(g, { type: 'shot', title: 'SHOT 01' });
+    // 合法组合
+    expect(createEdge(g, { kind: 'ref', source: prompt.id, target: shot.id, targetHandle: 'text-0' }).targetHandle).toBe('text-0');
+    expect(createEdge(g, { kind: 'ref', source: kf.id, target: shot.id, targetHandle: 'image-0' }).targetHandle).toBe('image-0');
+    expect(createEdge(g, { kind: 'ref', source: vid.id, target: shot.id, targetHandle: 'video-0' }).targetHandle).toBe('video-0');
+    // 非法组合：文字节点不能连图像接口（反向亦然）
+    expect(() => createEdge(g, { kind: 'ref', source: prompt.id, target: shot.id, targetHandle: 'image-1' }))
+      .toThrowError(expect.objectContaining({ code: 'EDGE_INVALID' }));
+    expect(() => createEdge(g, { kind: 'ref', source: kf.id, target: shot.id, targetHandle: 'text-1' }))
+      .toThrowError(expect.objectContaining({ code: 'EDGE_INVALID' }));
+    expect(() => createEdge(g, { kind: 'ref', source: vid.id, target: shot.id, targetHandle: 'text-1' }))
+      .toThrowError(expect.objectContaining({ code: 'EDGE_INVALID' }));
+    // 非 shot 目标不受接口校验影响
+    const gen = createNode(g, { type: 'generation', title: 'G' });
+    expect(createEdge(g, { kind: 'exec', source: prompt.id, target: gen.id, targetHandle: 'whatever-0' })).toBeTruthy();
+  });
+
+  it('chain 边只能连剧情接口（chain-N），连素材接口被拒', () => {
+    const g = emptyGraph();
+    const a = createNode(g, { type: 'shot', title: 'A' });
+    const b = createNode(g, { type: 'shot', title: 'B' });
+    const c = createNode(g, { type: 'shot', title: 'C' });
+    const d = createNode(g, { type: 'shot', title: 'D' });
+    expect(createEdge(g, { kind: 'chain', source: a.id, target: b.id, targetHandle: 'chain-0' }).targetHandle).toBe('chain-0');
+    // 独立分镜对：chain 连素材接口（text-0）被类型校验拒绝
+    expect(() => createEdge(g, { kind: 'chain', source: c.id, target: d.id, targetHandle: 'text-0' }))
+      .toThrowError(expect.objectContaining({ code: 'EDGE_INVALID' }));
+  });
+
+  it('replaceEdgeId 为乐观 id（后端不存在）时按同源 chain 边匹配并原子替换', () => {
+    const g = emptyGraph();
+    const a = createNode(g, { type: 'shot', title: 'A' });
+    const b = createNode(g, { type: 'shot', title: 'B' });
+    const c = createNode(g, { type: 'shot', title: 'C' });
+    createEdge(g, { kind: 'chain', source: a.id, target: b.id, targetHandle: 'chain-0' });
+    // replaceEdgeId 是前端乐观边 id（pending-xxx，后端不存在）：按同源 chain 出边匹配
+    const e = createEdge(g, {
+      kind: 'chain', source: a.id, target: c.id, targetHandle: 'chain-0', replaceEdgeId: 'pending-xxx',
+    });
+    expect(e.target).toBe(c.id);
+    // 旧边被原子替换删除：只剩 A→C
+    expect(g.edges).toHaveLength(1);
+    expect(g.edges[0]?.target).toBe(c.id);
+  });
+
+  it('chain 重连替换：replaceEdgeId 排除旧边（移动 SHOT1→SHOT2 到 SHOT3）', () => {
+    const g = emptyGraph();
+    const a = createNode(g, { type: 'shot', title: 'A' });
+    const b = createNode(g, { type: 'shot', title: 'B' });
+    const c = createNode(g, { type: 'shot', title: 'C' });
+    const old = createEdge(g, { kind: 'chain', source: a.id, target: b.id, targetHandle: 'chain-0' });
+    // 不带 replaceEdgeId：SHOT1 已有出链 → 拒绝
+    expect(() => createEdge(g, { kind: 'chain', source: a.id, target: c.id, targetHandle: 'chain-0' }))
+      .toThrowError(expect.objectContaining({ code: 'EDGE_INVALID' }));
+    // 带 replaceEdgeId：排除旧边后 A 无出链 → 通过（重连语义）
+    const e = createEdge(g, {
+      kind: 'chain', source: a.id, target: c.id, targetHandle: 'chain-0', replaceEdgeId: old.id,
+    });
+    expect(e.target).toBe(c.id);
+    // 目标已有入链仍拒绝（即使排除旧边）
+    const d = createNode(g, { type: 'shot', title: 'D' });
+    createEdge(g, { kind: 'chain', source: c.id, target: d.id, targetHandle: 'chain-0' });
+    expect(() => createEdge(g, {
+      kind: 'chain', source: b.id, target: d.id, targetHandle: 'chain-0', replaceEdgeId: old.id,
+    })).toThrowError(expect.objectContaining({ code: 'EDGE_INVALID' }));
+  });
 });
 
 describe('GraphStore 持久化', () => {

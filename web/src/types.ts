@@ -20,6 +20,8 @@ export interface DirectorEdge {
   source: string;
   target: string;
   label?: string;
+  // 目标端接口圆点 id（分镜节点多输入圆点：text-0 / video-0 / image-0 …）
+  targetHandle?: string;
 }
 
 export interface Graph {

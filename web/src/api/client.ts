@@ -9,6 +9,13 @@ class ApiError extends Error {
   }
 }
 
+// 覆盖未来快照的确认钩子：写操作被后端拒绝（SNAPSHOT_FUTURE_EXISTS）时调用，
+// 返回 true 则批准覆盖并自动重放原请求（由 App 注册为确认对话框）
+let overwriteConfirmHandler: ((message: string) => Promise<boolean>) | null = null;
+export function setOverwriteConfirmHandler(fn: ((message: string) => Promise<boolean>) | null): void {
+  overwriteConfirmHandler = fn;
+}
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const body = init?.body;
   const headers: Record<string, string> = {};
@@ -20,8 +27,17 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { ...init, headers: { ...headers, ...init?.headers } });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new ApiError((payload as { code?: string }).code ?? 'HTTP_' + res.status,
-      (payload as { message?: string }).message ?? res.statusText);
+    const code = (payload as { code?: string }).code ?? 'HTTP_' + res.status;
+    // 覆盖未来（灰色）快照需确认：弹确认 → 批准 → 重放原请求
+    if (code === 'SNAPSHOT_FUTURE_EXISTS' && overwriteConfirmHandler) {
+      const approved = await overwriteConfirmHandler((payload as { message?: string }).message ?? '将覆盖未来快照');
+      if (approved) {
+        await req('/api/snapshots/approve-overwrite', { method: 'POST' });
+        return req<T>(url, init);
+      }
+      throw new ApiError('SNAPSHOT_OVERWRITE_CANCELLED', '已取消：未来快照未被覆盖');
+    }
+    throw new ApiError(code, (payload as { message?: string }).message ?? res.statusText);
   }
   return payload as T;
 }
@@ -60,7 +76,10 @@ export const client = {
     return r.node;
   },
 
-  async createEdge(input: { kind: EdgeKind; source: string; target: string; label?: string }): Promise<DirectorEdge> {
+  async createEdge(input: {
+    kind: EdgeKind; source: string; target: string; label?: string; targetHandle?: string;
+    replaceEdgeId?: string;
+  }): Promise<DirectorEdge> {
     const r = await req<{ edge: DirectorEdge }>('/api/edges', {
       method: 'POST', body: JSON.stringify(input),
     });
@@ -79,10 +98,36 @@ export const client = {
     await req(`/api/edges/${id}?confirm=true`, { method: 'DELETE' });
   },
 
-  async listSnapshots(): Promise<SnapshotMeta[]> {
-    const r = await req<{ snapshots: SnapshotMeta[] }>('/api/snapshots');
-    return r.snapshots;
+  async listSnapshots(): Promise<{ snapshots: SnapshotMeta[]; headSeq: number }> {
+    const r = await req<{ snapshots: SnapshotMeta[]; headSeq: number }>('/api/snapshots');
+    return r;
   },
+
+  // 点击快照直接回滚（免确认）：重置图为目标快照状态并切换 HEAD，不追加新快照
+  async rollback(seq: number): Promise<Graph> {
+    const r = await req<{ graph: Graph }>('/api/snapshots/rollback', {
+      method: 'POST', body: JSON.stringify({ seq }),
+    });
+    return r.graph;
+  },
+
+  // 撤销（Ctrl+Z）：HEAD 后退到前一个快照
+  async undo(): Promise<Graph> {
+    const r = await req<{ graph: Graph }>('/api/snapshots/undo', { method: 'POST' });
+    return r.graph;
+  },
+
+  // 重做（Ctrl+Y / Ctrl+Shift+Z）：HEAD 前进到下一个（未来）快照
+  async redo(): Promise<Graph> {
+    const r = await req<{ graph: Graph }>('/api/snapshots/redo', { method: 'POST' });
+    return r.graph;
+  },
+
+  // 批准覆盖未来快照（req 捕获 SNAPSHOT_FUTURE_EXISTS 时自动调用）
+  async approveOverwrite(): Promise<void> {
+    await req('/api/snapshots/approve-overwrite', { method: 'POST' });
+  },
+
 
   async listWorkspace(): Promise<string[]> {
     const r = await req<{ paths: string[] }>('/api/workspace/list');
@@ -181,10 +226,6 @@ export const client = {
 
   async cancelGeneration(nodeId: string): Promise<void> {
     await req('/api/generation/cancel', { method: 'POST', body: JSON.stringify({ nodeId, confirm: true }) });
-  },
-
-  async rollback(seq: number, reason: string): Promise<void> {
-    await req('/api/snapshots/rollback', { method: 'POST', body: JSON.stringify({ seq, reason, confirm: true }) });
   },
 
   // pi 模型列表（内置面板模型下拉数据源）

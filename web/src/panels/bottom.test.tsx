@@ -87,7 +87,7 @@ describe('VersionsList 版本历史', () => {
       { seq: 1, ts: 1000, actor: 'user', reason: '创建 SHOT 01' },
       { seq: 2, ts: 2000, actor: 'agent', reason: '更新分镜' },
       { seq: 3, ts: 1500, actor: 'user', reason: '移动节点' },
-    ] }), { status: 200 })));
+    ], headSeq: 3 }), { status: 200 })));
     useGraphStore.setState({ graph: null });
   });
   afterEach(() => { vi.unstubAllGlobals(); });
@@ -101,20 +101,38 @@ describe('VersionsList 版本历史', () => {
     expect(rows[0]!.textContent).toContain('SN-002');
     expect(rows[1]!.textContent).toContain('SN-003');
     expect(rows[2]!.textContent).toContain('SN-001');
+    // 无未来快照（headSeq = 最新）：无灰色行
+    expect(document.querySelector('.v-row.future')).toBeNull();
   });
 
-  it('点击行选中出现回滚按钮，触发 onRollback(seq)', async () => {
+  it('点击行直接触发 onRollback(seq)（免确认）', async () => {
     const onRollback = vi.fn();
     render(<VersionsList onRollback={onRollback} />);
     await waitFor(() => expect(screen.getByText(/创建 SHOT 01/)).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('version-1'));
-    const btn = screen.getByText('↩ 回滚');
-    fireEvent.click(btn);
     expect(onRollback).toHaveBeenCalledWith(1);
+    // 当前 HEAD（最新）行高亮
+    expect(screen.getByTestId('version-3').className).toContain('sel');
+  });
+
+  it('回滚后 headSeq 变小：其后的快照显示为灰色未来分支', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ snapshots: [
+      { seq: 1, ts: 1000, actor: 'user', reason: '创建' },
+      { seq: 2, ts: 2000, actor: 'user', reason: '更新' },
+      { seq: 3, ts: 1500, actor: 'user', reason: '移动' },
+    ], headSeq: 1 }), { status: 200 })));
+    render(<VersionsList />);
+    await waitFor(() => expect(screen.getByText(/创建/)).toBeInTheDocument());
+    const future = document.querySelectorAll('.v-row.future');
+    expect(future).toHaveLength(2); // seq 2/3 在 HEAD(1) 之后 → 灰色
+    expect(future[0]!.textContent).toContain('SN-002');
+    expect(screen.getAllByText('未来')).toHaveLength(2);
+    // HEAD 行高亮
+    expect(screen.getByTestId('version-1').className).toContain('sel');
   });
 
   it('无快照时显示空态', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ snapshots: [] }), { status: 200 })));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ snapshots: [], headSeq: 0 }), { status: 200 })));
     render(<VersionsList />);
     await waitFor(() => expect(screen.getByText(/暂无快照/)).toBeInTheDocument());
   });

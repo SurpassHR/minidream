@@ -4,3 +4,4 @@ dist/
 .playwright-cli/
 *.tsbuildinfo
 .codegraph/
+output/

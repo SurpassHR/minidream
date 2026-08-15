@@ -12,7 +12,7 @@ import { createNode, updateNode, deleteNode, moveNode, createEdge, deleteEdge } 
 import { listWorkspace, readWorkspaceFile, searchWorkspace } from '../workspace/accessor.js';
 import { listSnapshots, graphAtSnapshot } from '../snapshots/snapshot-store.js';
 import { listAssets, importAssetFile, importAssetText } from '../assets/assets-store.js';
-import { applyMutation } from '../api/mutations.js';
+import { applyMutation, applyHeadSwitch } from '../api/mutations.js';
 import type { ProjectContext } from '../api/routes.js';
 import type { EdgeKind, NodeType } from '../types.js';
 
@@ -225,7 +225,7 @@ function createMcpServer(
   }));
 
   server.registerTool('snapshot.rollback', {
-    description: '回滚到指定快照（破坏性，confirm 必须为 true）',
+    description: '回滚到指定快照（破坏性，confirm 必须为 true）；不追加新快照，其后的快照保留为未来分支',
     inputSchema: {
       seq: z.number(),
       reason: z.string(),
@@ -235,16 +235,9 @@ function createMcpServer(
     if (args.confirm !== true) {
       return { content: [{ type: 'text', text: '错误：回滚需 confirm=true' }], isError: true };
     }
-    // 走 applyMutation 管线（唯一写入口）：快照留痕 + WS 广播由管线保证，与 REST 通道一致
-    let resultGraph;
-    applyMutation(ctx.projectDir, actor, `回滚至 SN-${args.seq}: ${String(args.reason)}`, (g) => {
-      const target = graphAtSnapshot(ctx.projectDir, Number(args.seq));
-      g.nodes = target.nodes;
-      g.edges = target.edges;
-      g.projectName = target.projectName;
-      resultGraph = g;
-    });
-    return { content: [{ type: 'text', text: JSON.stringify(resultGraph) }] };
+    // 与 REST 通道一致：切换 HEAD（重置图 + 更新 HEAD + 广播），不追加新快照
+    const graph = applyHeadSwitch(ctx.projectDir, Number(args.seq));
+    return { content: [{ type: 'text', text: JSON.stringify(graph) }] };
   });
 
   server.registerTool('assets.list', { description: '列出全局素材库' }, async () => ({

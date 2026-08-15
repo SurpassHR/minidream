@@ -93,20 +93,65 @@ describe('API 导入与快照', () => {
     expect(res.json().code).toBe('FILE_CONFLICT');
   });
 
-  it('POST /api/snapshots/rollback 需 confirm 且回滚成功', async () => {
+  it('POST /api/snapshots/rollback 免确认直接回滚，且不追加新快照', async () => {
     await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'A' } });
     await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'B' } });
-    const noConfirm = await a.inject({
-      method: 'POST', url: '/api/snapshots/rollback',
-      payload: { seq: 1, reason: '撤销 B' },
-    });
-    expect(noConfirm.statusCode).toBe(400);
+    expect(listSnapshots(dir)).toHaveLength(2);
     const ok = await a.inject({
       method: 'POST', url: '/api/snapshots/rollback',
-      payload: { seq: 1, reason: '撤销 B', confirm: true },
+      payload: { seq: 1 },
     });
     expect(ok.statusCode).toBe(200);
     expect(loadGraph(dir).nodes).toHaveLength(1);
+    // 回滚不追加新快照（直接回到该快照）；未来快照保留
+    expect(listSnapshots(dir)).toHaveLength(2);
+    expect(ok.json().graph.nodes).toHaveLength(1);
+  });
+
+  it('POST /api/snapshots/undo 与 redo 切换 HEAD', async () => {
+    await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'A' } });
+    await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'B' } });
+    const undo = await a.inject({ method: 'POST', url: '/api/snapshots/undo' });
+    expect(undo.statusCode).toBe(200);
+    expect(undo.json().graph.nodes.map((n: { title: string }) => n.title)).toEqual(['A']);
+    const redo = await a.inject({ method: 'POST', url: '/api/snapshots/redo' });
+    expect(redo.statusCode).toBe(200);
+    expect(redo.json().graph.nodes.map((n: { title: string }) => n.title)).toEqual(['A', 'B']);
+    // 已到最新：redo 拒绝；已到最早：undo 拒绝
+    const redoAgain = await a.inject({ method: 'POST', url: '/api/snapshots/redo' });
+    expect(redoAgain.statusCode).toBe(400);
+    await a.inject({ method: 'POST', url: '/api/snapshots/undo' });
+    await a.inject({ method: 'POST', url: '/api/snapshots/undo' });
+    const undoAgain = await a.inject({ method: 'POST', url: '/api/snapshots/undo' });
+    expect(undoAgain.statusCode).toBe(400);
+  });
+
+  it('回滚后写操作覆盖未来快照需批准（409），批准后成功', async () => {
+    await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'A' } });
+    await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'B' } });
+    await a.inject({ method: 'POST', url: '/api/snapshots/rollback', payload: { seq: 1 } });
+    // 未批准：写操作被拒（409），图不变
+    const denied = await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'C' } });
+    expect(denied.statusCode).toBe(409);
+    expect(denied.json().code).toBe('SNAPSHOT_FUTURE_EXISTS');
+    expect(loadGraph(dir).nodes.map((n) => n.title)).toEqual(['A']);
+    // 批准后：覆盖成功
+    await a.inject({ method: 'POST', url: '/api/snapshots/approve-overwrite' });
+    const ok = await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'C' } });
+    expect(ok.statusCode).toBe(201);
+    expect(loadGraph(dir).nodes.map((n) => n.title)).toEqual(['A', 'C']);
+    expect(listSnapshots(dir)).toHaveLength(2); // 覆盖 seq2，未来快照被清
+  });
+
+  it('GET /api/snapshots 返回 headSeq（回滚后变小）', async () => {
+    await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'A' } });
+    await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'B' } });
+    const before = await a.inject({ method: 'GET', url: '/api/snapshots' });
+    expect(before.json().headSeq).toBe(2);
+    await a.inject({ method: 'POST', url: '/api/snapshots/rollback', payload: { seq: 1 } });
+    const after = await a.inject({ method: 'GET', url: '/api/snapshots' });
+    expect(after.json().headSeq).toBe(1);
+    expect(after.json().snapshots).toHaveLength(2);
   });
 });
 
@@ -166,20 +211,19 @@ describe('API 变更管线（回环与回滚）', () => {
     expect(listSnapshots(dir)).toHaveLength(2); // 创建 + 外部修改回填
   });
 
-  it('rollback 走变更管线：追加快照且 reason 含回滚前缀', async () => {
+  it('rollback 走 HEAD 切换：不追加新快照，未来快照保留', async () => {
     await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'A' } });
     await a.inject({ method: 'POST', url: '/api/nodes', payload: { type: 'shot', title: 'B' } });
     const ok = await a.inject({
       method: 'POST', url: '/api/snapshots/rollback',
-      payload: { seq: 1, reason: '撤销 B', confirm: true },
+      payload: { seq: 1 },
     });
     expect(ok.statusCode).toBe(200);
     expect(loadGraph(dir).nodes).toHaveLength(1);
+    // 回滚不追加快照（直接回到该快照）；未来快照保留待覆盖/重做
     const snaps = listSnapshots(dir);
-    expect(snaps).toHaveLength(3); // 创建A + 创建B + 回滚
-    const last = snaps[snaps.length - 1];
-    expect(last?.reason).toContain('回滚至 SN-1');
-    expect(last?.actor).toBe('user');
+    expect(snaps).toHaveLength(2);
+    expect(snaps.map((s) => s.seq)).toEqual([1, 2]);
   });
 });
 

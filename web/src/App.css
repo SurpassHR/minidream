@@ -83,6 +83,34 @@
 .react-flow__handle.connecting { background: var(--amber); }
 .react-flow__node:hover .react-flow__handle { background: var(--text-faint); }
 .react-flow__node:hover .react-flow__handle:hover { background: var(--amber); }
+
+/* 分镜节点左侧多接口圆点：剧情/文字/视频/图像 分组，素材组被占用时自动追加新圆点。
+   每行 = 类型标签 + 圆点（xyflow handle 绝对定位相对 .inlet 行，top:50% 行内居中）。
+   .inlet 行必须 pointer-events: none：否则行面（撑满节点宽）会盖住右侧 source 圆点，
+   导致 shot → shot 拖线失效；handle 子元素在 connectionindicator 时由 xyflow 类接管事件 */
+.shot .shot-inlets { padding-top: 4px; }
+.shot .inlet { position: relative; height: 12px; pointer-events: none; }
+.shot .inlet + .inlet { margin-top: 1px; }
+.shot .inlet-label {
+  position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+  font-size: 9px; font-family: var(--mono); color: var(--text-faint);
+  letter-spacing: .08em; user-select: none;
+  background: var(--panel); padding: 0 3px;
+}
+/* 剧情接口（chain 专用）：琥珀色圆点，与链式参考边同色系 */
+.shot .inlet[data-group="chain"] .inlet-label { color: var(--amber-soft); }
+.shot .inlet[data-group="chain"] .react-flow__handle {
+  background: var(--amber); border-color: var(--panel);
+  box-shadow: 0 0 4px rgba(232, 163, 61, .6);
+}
+/* 拖线类型不匹配提示 */
+.canvas-toast {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 30;
+  background: rgba(30, 24, 18, .92); border: 1px solid var(--amber); color: var(--amber-soft);
+  font-size: 11px; padding: 6px 14px; border-radius: 5px;
+  pointer-events: none; letter-spacing: .04em; box-shadow: 0 4px 14px rgba(0,0,0,.5);
+  white-space: nowrap;
+}
 .node-head {
   height: 28px; display: flex; align-items: center; gap: 7px; padding: 0 9px;
   border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600;
@@ -386,6 +414,13 @@
 }
 .v-row:hover { background: var(--panel-2); }
 .v-row.sel { background: var(--amber-dim); box-shadow: inset 2px 0 0 var(--amber); }
+/* 未来分支（灰色）：当前 HEAD 之后的快照，新操作将覆盖它们 */
+.v-row.future { opacity: .45; filter: grayscale(.8); cursor: not-allowed; }
+.v-row.future:hover { background: transparent; }
+.v-future {
+  font-size: 8.5px; color: var(--text-faint); border: 1px solid var(--border-2);
+  border-radius: 3px; padding: 0 4px; font-family: var(--mono); flex: 0 0 auto;
+}
 .v-sn { font-family: var(--mono); font-size: 10px; color: var(--amber-soft); flex: 0 0 auto; }
 .v-actor {
   font-size: 8.5px; padding: 0 5px; border-radius: 3px; flex: 0 0 auto;

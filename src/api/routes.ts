@@ -5,14 +5,14 @@ import {
   createEdge, updateEdge, deleteEdge, loadGraph,
 } from '../graph/graph-store.js';
 import { syncNodeToFile } from '../sync/dual-writer.js';
-import { listSnapshots, graphAtSnapshot } from '../snapshots/snapshot-store.js';
+import { listSnapshots, graphAtSnapshot, headSeq, futureSnapshotCount, approveOverwrite } from '../snapshots/snapshot-store.js';
 import { listWorkspace, readWorkspaceFile, searchWorkspace } from '../workspace/accessor.js';
 import { readFileSync, existsSync, mkdtempSync, createWriteStream, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
-import { applyMutation } from './mutations.js';
+import { applyMutation, applyHeadSwitch } from './mutations.js';
 import { graphToPromptYaml } from '../prompt/export.js';
 import { GenerationQueue } from '../generation/queue.js';
 import { ComfyUIClient } from '../comfy/client.js';
@@ -167,7 +167,10 @@ export function mountRoutes(
   });
 
   app.post('/api/edges', async (req, reply) => {
-    const body = req.body as { kind: 'ref' | 'chain' | 'exec'; source: string; target: string; label?: string };
+    const body = req.body as {
+      kind: 'ref' | 'chain' | 'exec'; source: string; target: string;
+      label?: string; targetHandle?: string; replaceEdgeId?: string;
+    };
     let edge;
     applyMutation(ctx.projectDir, actor, `创建边 ${body.source} -> ${body.target}`, (g) => {
       edge = createEdge(g, body);
@@ -221,23 +224,51 @@ export function mountRoutes(
     return { node };
   });
 
-  app.get('/api/snapshots', async () => ({ snapshots: listSnapshots(ctx.projectDir) }));
+  app.get('/api/snapshots', async () => ({
+    snapshots: listSnapshots(ctx.projectDir),
+    headSeq: headSeq(ctx.projectDir),
+  }));
 
+  // 点击快照直接回滚（免确认）：重置图为目标快照状态并切换 HEAD，不追加新快照
   app.post('/api/snapshots/rollback', async (req, reply) => {
-    const body = req.body as { seq: number; reason: string; confirm?: boolean };
-    if (!body.confirm) {
-      return reply.code(400).send({ code: 'CONFIRM_REQUIRED', message: '回滚需 confirm=true' });
+    const body = req.body as { seq: number };
+    try {
+      return { graph: applyHeadSwitch(ctx.projectDir, body.seq) };
+    } catch (e) {
+      if (e instanceof DirectorError) {
+        return reply.code(400).send({ code: e.code, message: e.message });
+      }
+      throw e;
     }
-    // 走 applyMutation 管线（唯一写入口）：快照留痕 + WS 广播由管线保证
-    let resultGraph;
-    applyMutation(ctx.projectDir, actor, `回滚至 SN-${body.seq}: ${body.reason}`, (g) => {
-      const target = graphAtSnapshot(ctx.projectDir, body.seq);
-      g.nodes = target.nodes;
-      g.edges = target.edges;
-      g.projectName = target.projectName;
-      resultGraph = g;
-    });
-    return { graph: resultGraph };
+  });
+
+  // 撤销（Ctrl+Z）：HEAD 后退到前一个快照
+  app.post('/api/snapshots/undo', async (req, reply) => {
+    const snaps = listSnapshots(ctx.projectDir);
+    const head = headSeq(ctx.projectDir);
+    const prev = [...snaps].reverse().find((s) => s.seq < head);
+    if (!prev) {
+      return reply.code(400).send({ code: 'INVALID_PATCH', message: '没有更早的快照可撤销' });
+    }
+    return { graph: applyHeadSwitch(ctx.projectDir, prev.seq) };
+  });
+
+  // 重做（Ctrl+Y / Ctrl+Shift+Z）：HEAD 前进到下一个（未来）快照
+  app.post('/api/snapshots/redo', async (req, reply) => {
+    const snaps = listSnapshots(ctx.projectDir);
+    const head = headSeq(ctx.projectDir);
+    const next = snaps.find((s) => s.seq > head);
+    if (!next) {
+      return reply.code(400).send({ code: 'INVALID_PATCH', message: '没有更新的快照可重做' });
+    }
+    return { graph: applyHeadSwitch(ctx.projectDir, next.seq) };
+  });
+
+  // 覆盖未来（灰色）快照的一次性批准：确认对话框后调用，
+  // 下一次写操作（recordSnapshot）发现未来快照时放行覆盖
+  app.post('/api/snapshots/approve-overwrite', async () => {
+    approveOverwrite();
+    return { ok: true };
   });
 
   app.get('/api/workspace/list', async () => ({ paths: listWorkspace(ctx.projectDir) }));
@@ -497,6 +528,7 @@ app.get('/api/agent/history', async () => ({ messages: readChatHistory(ctx.proje
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof DirectorError) {
       const status = err.code === 'CONFIRM_REQUIRED' ? 400
+        : err.code === 'SNAPSHOT_FUTURE_EXISTS' ? 409
         : err.code === 'NODE_NOT_FOUND' || err.code === 'EDGE_NOT_FOUND' ? 404
         : 400;
       reply.code(status).send({ code: err.code, message: err.message });

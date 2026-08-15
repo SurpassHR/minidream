@@ -8,11 +8,11 @@ import { AddProjectDialog } from './panels/AddProjectDialog';
 import { ImportDialog } from './panels/ImportDialog';
 import { AgentPanel, type ChatMsg } from './panels/AgentPanel';
 import { ConfirmDialog } from './panels/ConfirmDialog';
+import { client, setOverwriteConfirmHandler } from './api/client';
 import { Timeline } from './panels/Timeline';
 import { VersionsList } from './panels/VersionsList';
 import { GenQueue } from './panels/GenQueue';
 import { useGraphStore } from './store/graph';
-import { client } from './api/client';
 import { agentChat } from './api/agent';
 import { connectWs } from './api/ws';
 
@@ -24,8 +24,8 @@ export default function App() {
   const removeChip = useGraphStore((s) => s.removeChip);
   // 素材库三态：null=加载中/请求失败（显示空态，不误显 mock）；[]=真实空库（显示空态）；非空=真实数据
   const [assets, setAssets] = useState<AssetItem[] | null>(null);
-  // 破坏性操作确认对话框状态：null=关闭
-  const [confirm, setConfirm] = useState<{ title: string; body: string; action: () => void } | null>(null);
+  // 破坏性操作确认对话框状态：null=关闭；onCancel 可选（覆盖快照确认需回传结果）
+  const [confirm, setConfirm] = useState<{ title: string; body: string; action: () => void; onCancel?: () => void } | null>(null);
   // 项目导入对话框开关
   const [importOpen, setImportOpen] = useState(false);
   // 项目栏添加对话框开关
@@ -219,12 +219,43 @@ export default function App() {
       .catch(() => push('\n（agent 连接失败）'));
   }, [agentModel, thinkingLevel]);
 
-  // 破坏性操作走确认对话框（示例：时间线回滚）
-  const askRollback = (seq: number) => setConfirm({
-    title: '回滚快照',
-    body: `回滚到 SN-${String(seq).padStart(3, '0')}？当前改动将保存为新快照。`,
-    action: () => void client.rollback(seq, '前端回滚'),
-  });
+  // 点击快照直接回滚（免确认）：重置图为目标快照状态并切换 HEAD，不追加新快照
+  const handleRollback = useCallback((seq: number) => {
+    void client.rollback(seq);
+  }, []);
+
+  // 撤销/重做快捷键：Ctrl+Z 撤销，Ctrl+Y / Ctrl+Shift+Z 重做（输入框内不拦截）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const key = e.key.toLowerCase();
+      if (key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        void client.undo();
+      } else if (key === 'y' || (key === 'z' && e.shiftKey)) {
+        e.preventDefault();
+        void client.redo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // 覆盖未来（灰色）快照的确认钩子：写操作被后端拒绝（SNAPSHOT_FUTURE_EXISTS）时，
+  // 弹确认对话框；确认后批准覆盖并自动重放原操作
+  useEffect(() => {
+    setOverwriteConfirmHandler((message: string) => new Promise<boolean>((resolve) => {
+      setConfirm({
+        title: '覆盖未来快照',
+        body: `${message}。确认后其后的快照将被丢弃，且无法撤销。`,
+        action: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    }));
+    return () => setOverwriteConfirmHandler(null);
+  }, []);
 
   // 生成提交确认门：generation 节点“▶ 提交生成”按钮 → 确认后提交到 ComfyUI
   // useCallback 保持引用稳定，避免 CanvasView 的 WS 订阅因 prop 变化反复重建
@@ -308,16 +339,10 @@ export default function App() {
         <section
           className="canvas" data-testid="canvas"
           onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            const raw = e.dataTransfer.getData('application/x-asset');
-            if (!raw) return;
-            const item = JSON.parse(raw) as AssetItem;
-            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            handleDropToCanvas(item, { x: e.clientX - rect.left, y: e.clientY - rect.top });
-          }}
         >
-          <CanvasView onNodeSubmit={askSubmitGeneration} onDeleteNode={askDeleteNode} />
+          {/* 素材拖放位置换算在 CanvasView 内完成（screenToFlowPosition，
+              节点出现在松手时光标处）；onAssetDrop 收到画布坐标 */}
+          <CanvasView onNodeSubmit={askSubmitGeneration} onDeleteNode={askDeleteNode} onAssetDrop={handleDropToCanvas} />
         </section>
         <div
           className={`splitter splitter-v ${dragging === 'right' ? 'active' : ''}`}
@@ -340,14 +365,14 @@ export default function App() {
       />
       <footer className="footer" style={{ height: footerH }}>
         <div className="timeline-wrap" data-testid="timeline"><Timeline /></div>
-        <div className="versions-wrap" data-testid="versions"><VersionsList onRollback={askRollback} /></div>
+        <div className="versions-wrap" data-testid="versions"><VersionsList onRollback={handleRollback} /></div>
         <div className="queue-wrap" data-testid="queue"><GenQueue tasks={[...tasks.values()]} /></div>
       </footer>
       <ConfirmDialog
         open={confirm !== null}
         title={confirm?.title ?? ''}
         body={confirm?.body ?? ''}
-        onCancel={() => setConfirm(null)}
+        onCancel={() => { confirm?.onCancel?.(); setConfirm(null); }}
         onConfirm={() => { confirm?.action(); setConfirm(null); }}
         confirmLabel={confirm?.title === '提交生成' ? '确认提交' : confirm?.title === '回滚快照' ? '确认回滚' : '确认删除'}
       />

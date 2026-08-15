@@ -51,29 +51,101 @@ export function deleteNode(graph: Graph, nodeId: string): void {
   graph.edges = graph.edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
 }
 
+// 素材源节点 → 分镜接口组（文字/视频/图像）：与前端 nodes.tsx inletGroupOf 镜像
+// prompt/script/subject/params/project/文本素材 → 文字；keyframe/图片素材 → 图像；
+// 视频素材/generation 产物 → 视频；未知类型宽松归文字
+function inletGroupOf(node: DirectorNode): 'text' | 'video' | 'image' {
+  switch (node.type) {
+    case 'keyframe': return 'image';
+    case 'generation': return 'video';
+    case 'asset': {
+      const kind = node.fields.assetKind;
+      if (kind === 'img') return 'image';
+      if (kind === 'vid') return 'video';
+      return 'text';
+    }
+    default: return 'text';
+  }
+}
+
+const INLET_LABELS: Record<string, string> = { chain: '剧情', text: '文字', video: '视频', image: '图像' };
+
+// 分镜左侧接口圆点类型校验（targetHandle 存在时）：
+// - chain 边只能连剧情接口（chain-N）
+// - ref/exec 边只能连与源节点素材类型匹配的接口（文字/视频/图像）
+// 无 targetHandle 的边不校验（旧前端/重连兼容，前端渲染时会按源类型补齐）
+function validateTargetHandle(graph: Graph, input: { kind: EdgeKind; source: string; target: string; targetHandle?: string }): void {
+  if (!input.targetHandle) return;
+  const tgt = findNode(graph, input.target);
+  if (tgt.type !== 'shot') return;
+  const group = /^([a-z]+)-\d+$/.exec(input.targetHandle)?.[1];
+  if (!group) return;
+  if (input.kind === 'chain') {
+    if (group !== 'chain') {
+      throw new DirectorError('EDGE_INVALID',
+        `chain 边只能连接到分镜的剧情接口，不能连到${INLET_LABELS[group] ?? group}接口`);
+    }
+    return;
+  }
+  const src = findNode(graph, input.source);
+  const expect = inletGroupOf(src);
+  if (group !== expect) {
+    throw new DirectorError('EDGE_INVALID',
+      `接口类型不匹配：${INLET_LABELS[expect] ?? expect}类型的节点不能连接到${INLET_LABELS[group] ?? group}接口`);
+  }
+}
+
 export function createEdge(
   graph: Graph,
-  input: { kind: EdgeKind; source: string; target: string; label?: string },
+  input: {
+    kind: EdgeKind; source: string; target: string; label?: string; targetHandle?: string;
+    /** 重连替换：新建边时把旧边（replaceEdgeId）从约束校验中排除（移动 chain 边） */
+    replaceEdgeId?: string;
+  },
 ): DirectorEdge {
   findNode(graph, input.source);
   findNode(graph, input.target);
+  // 重连替换：定位被替换的旧边。replaceEdgeId 可能是前端乐观边 id（后端不存在）——
+  // 按“同源 chain 出边”匹配（重连 = 移动该源节点的 chain 出边，线性约束保证唯一）
+  let replacedId = input.replaceEdgeId;
+  if (replacedId && !graph.edges.some((e) => e.id === replacedId)) {
+    replacedId = input.kind === 'chain'
+      ? graph.edges.find((e) => e.kind === 'chain' && e.source === input.source)?.id
+      : undefined;
+  }
+  // 判重排除被替换的旧边（重连到相同参数 = 自身替换，允许）
   const dup = graph.edges.find(
-    (e) => e.kind === input.kind && e.source === input.source && e.target === input.target,
+    (e) => e.id !== replacedId
+      && e.kind === input.kind && e.source === input.source && e.target === input.target
+      && (e.targetHandle ?? null) === (input.targetHandle ?? null),
   );
   if (dup) throw new DirectorError('EDGE_EXISTS', `边已存在: ${input.source} -> ${input.target}`);
   // chain（链式参考）强制线性：只允许 shot→shot；每节点至多一个入/出 chain；全局无环。
   // （剧情顺序 = chain 拓扑序，分支/环会让 YAML segments 顺序不确定）
+  // 重连场景排除被替换的旧边：移动 SHOT1→SHOT2 的 chain 到 SHOT3 时，
+  // 旧边（SHOT1→SHOT2）让 SHOT1 看似“已有出链”，不排除会拒绝重连
   if (input.kind === 'chain') {
-    validateChainEdge(graph, graph.edges, input.source, input.target);
+    const others = replacedId
+      ? graph.edges.filter((e) => e.id !== replacedId)
+      : graph.edges;
+    validateChainEdge(graph, others, input.source, input.target);
   }
+  // 分镜左侧接口圆点类型校验（文字/视频/图像/剧情）
+  validateTargetHandle(graph, input);
   const edge: DirectorEdge = {
     id: randomUUID(),
     kind: input.kind,
     source: input.source,
     target: input.target,
     label: input.label,
+    targetHandle: input.targetHandle,
   };
   graph.edges.push(edge);
+  // 原子替换：创建新边后删除被替换的旧边（重连 = 后端一次性完成替换，
+  // 不依赖前端删除——乐观边 id 错位/WS 竞态下旧边也不会残留）
+  if (replacedId) {
+    graph.edges = graph.edges.filter((e) => e.id !== replacedId);
+  }
   return edge;
 }
 

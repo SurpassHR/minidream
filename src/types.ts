@@ -20,6 +20,9 @@ export interface DirectorEdge {
   source: string;  // 源节点 id
   target: string;  // 目标节点 id
   label?: string;
+  /** 目标端接口圆点 id（如分镜节点的 text-0 / video-1 / image-0）；
+   *  仅分镜（shot）节点使用：左侧按 文字/视频/图像 分组的多输入圆点 */
+  targetHandle?: string;
 }
 
 export interface Graph {
