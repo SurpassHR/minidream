@@ -23,6 +23,11 @@ export function StoryTellerView(props: { projectName: string }) {
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // AI 建议发起时的步骤 id：流式期间用户切步后丢弃过期 chunk（防污染新步骤草稿）
+  const aiStepRef = useRef<string | null>(null);
+  // 最新 step 的同步镜像：chunk 回调闭包中读取当前步骤（闭包捕获的 story 会过期）
+  const stepRef = useRef(story.step);
+  stepRef.current = story.step;
   const step = STORY_STEPS[Math.min(story.step, STORY_STEPS.length - 1)]!;
   const isLast = story.step === STORY_STEPS.length - 1;
 
@@ -99,13 +104,20 @@ export function StoryTellerView(props: { projectName: string }) {
 
   const aiSuggest = () => {
     setAiBusy(true);
+    aiStepRef.current = step.id; // 记录发起步骤：切步后其 chunk 不再写入
     const answersText = Object.entries(story.answers)
       .map(([id, v]) => `${STORY_STEPS.find((s) => s.id === id)?.question ?? id}：${v}`)
       .join('\n');
     const prompt = `${STORY_TELLER_SYSTEM}\n\n当前步骤问题：${step.question}\n已填写内容：\n${answersText || '（暂无）'}`;
     void agentChat(prompt, [], (chunk) => {
+      // 流式期间用户已切步（当前步骤 ≠ 发起步骤）：丢弃过期 chunk
+      const curStepId = STORY_STEPS[Math.min(stepRef.current, STORY_STEPS.length - 1)]!.id;
+      if (aiStepRef.current !== curStepId) return;
       setDraft((d) => d + chunk);
-    }).catch(() => setError('AI 建议失败，请重试')).finally(() => setAiBusy(false));
+    }).catch(() => setError('AI 建议失败，请重试')).finally(() => {
+      setAiBusy(false);
+      aiStepRef.current = null;
+    });
   };
 
   const complete = async () => {

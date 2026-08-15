@@ -27,11 +27,18 @@ beforeEach(() => {
       return new Response(JSON.stringify(STORY_API), { status: 200 });
     }
     if (u.includes('/api/agent/chat')) {
-      // 流式 agent：直接返回一个 SSE 帧 + DONE
-      return new Response(
-        'data: {"chunk":"建议文本"}\n\ndata: [DONE]\n\n',
-        { status: 200, headers: { 'content-type': 'text/event-stream' } },
-      );
+      // 流式 agent：两帧 chunk（帧间 50ms 延迟模拟流式，期间允许切步）+ DONE
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        async start(controller) {
+          controller.enqueue(encoder.encode('data: {"chunk":"建议"}\n\n'));
+          await new Promise((r) => setTimeout(r, 50));
+          controller.enqueue(encoder.encode('data: {"chunk":"文本"}\n\n'));
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
     }
     return new Response(JSON.stringify({}), { status: 404 });
   }));
@@ -79,6 +86,22 @@ describe('StoryTellerView', () => {
     await waitFor(() => expect(screen.getByText(/故事主题是什么/)).toBeInTheDocument());
     fireEvent.click(screen.getByText('✨ AI 建议'));
     await waitFor(() => expect(screen.getByTestId('story-answer')).toHaveValue('建议文本'));
+  });
+
+  it('AI 建议流式期间切步：chunk 不污染新步骤草稿', async () => {
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText(/故事主题是什么/)).toBeInTheDocument());
+    const textarea = screen.getByTestId('story-answer');
+    // 填写必填主题后触发 AI 建议（首帧立即到达，第二帧 50ms 后）
+    fireEvent.change(textarea, { target: { value: '精灵与哥布林' } });
+    fireEvent.click(screen.getByText('✨ AI 建议'));
+    // 流式进行中切到下一步（首帧前点下一步）
+    fireEvent.click(screen.getByText('下一步 →'));
+    await waitFor(() => expect(screen.getByText(/主角是谁/)).toBeInTheDocument());
+    // 等待流式全部到达（第二帧 50ms + DONE）
+    await new Promise((r) => setTimeout(r, 300));
+    // 新步骤（主角）草稿为空，未被过期 AI chunk 污染
+    expect((screen.getByTestId('story-answer') as HTMLTextAreaElement).value).toBe('');
   });
 
   it('完成后显示完成状态', async () => {
