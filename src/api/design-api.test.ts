@@ -223,6 +223,44 @@ describe('API designs generate', () => {
     expect(res.json().design.status).toBe('failed');
     expect(res.json().design.error).toBeTruthy();
   });
+
+  it('未知变量模板 → 400 且不写状态', async () => {
+    // 含 ${prompt} + 非常规变量 ${foo-bar}（旧正则 [a-zA-Z_][a-zA-Z0-9_]* 漏检连字符，
+    // 修复后与 buildWorkflow 的 [^}]+ 一致才能检出）
+    writeFileSync(join(wfDir, 'unknown-var.template.json'), JSON.stringify({
+      '1': { class_type: 'KSampler', inputs: { text: '${prompt}', weird: '${foo-bar}' } },
+    }), 'utf8');
+    const created = await a2.inject({
+      method: 'POST', url: '/api/designs',
+      payload: { kind: 'character', name: '未知变量对象' },
+    });
+    const id = created.json().design.id;
+    await a2.inject({
+      method: 'PUT', url: `/api/designs/${id}`,
+      payload: { patch: { style: '写实', description: '对象', template: 'unknown-var' } },
+    });
+    const res = await a2.inject({ method: 'POST', url: `/api/designs/${id}/generate` });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toContain('foo-bar');
+    // 状态未被改写（请求方错误不写 generating/failed）
+    const list = await a2.inject({ method: 'GET', url: '/api/designs' });
+    expect(list.json().designs[0].status).toBe('draft');
+  });
+
+  it('模板不存在 → 400', async () => {
+    const created = await a2.inject({
+      method: 'POST', url: '/api/designs',
+      payload: { kind: 'scene', name: '不存在模板' },
+    });
+    const id = created.json().design.id;
+    await a2.inject({
+      method: 'PUT', url: `/api/designs/${id}`,
+      payload: { patch: { style: '写实', description: '场景', template: 'no-such-template' } },
+    });
+    const res = await a2.inject({ method: 'POST', url: `/api/designs/${id}/generate` });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toContain('模板不存在');
+  });
 });
 
 describe('API 素材文件端点', () => {
@@ -240,5 +278,15 @@ describe('API 素材文件端点', () => {
   it('GET /api/assets/:id/file 未知 id 返回 404', async () => {
     const res = await a.inject({ method: 'GET', url: '/api/assets/nope/file' });
     expect(res.statusCode).toBe(404);
+  });
+
+  it('GET /api/assets/:id/file 返回 .mov 视频字节流（content-type 映射不漂移）', async () => {
+    const src = join(fakeHome, 'clip.mov');
+    writeFileSync(src, Buffer.from([0x00, 0x00, 0x00, 0x18]));
+    const rec = importAssetFile(src);
+    expect(rec.kind).toBe('vid');
+    const res = await a.inject({ method: 'GET', url: `/api/assets/${rec.id}/file` });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('video/quicktime');
   });
 });

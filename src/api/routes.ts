@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { DirectorError, type Actor, type AssetRecord, type NodeType } from '../types.js';
+import { DirectorError, type Actor, type NodeType } from '../types.js';
 import {
   createNode, updateNode, deleteNode, moveNode,
   createEdge, updateEdge, deleteEdge, loadGraph,
@@ -503,8 +503,12 @@ app.post('/api/designs/:id/generate', async (req, reply) => {
   if (design.status === 'generating') {
     return reply.code(400).send({ code: 'INVALID_PATCH', message: '该对象正在生成中' });
   }
-  // 提示词 = 风格 + 描述（先于模板校验：描述缺失是最根本的请求方错误）
-  const prompt = [design.style, design.description].filter((s) => s.trim()).join(', ').trim();
+  // 提示词 = 风格 + 描述（先于模板校验：描述缺失是最根本的请求方错误）；
+  // 字段可能为 null/undefined（PUT patch 无校验透传 / design.json 手工编辑缺字段），
+  // 用 typeof 守卫避免 .trim() 抛 TypeError → 500
+  const prompt = [design.style, design.description]
+    .filter((s) => typeof s === 'string' && s.trim())
+    .join(', ').trim();
   if (!prompt) {
     return reply.code(400).send({ code: 'INVALID_PATCH', message: '请先填写风格或视觉描述' });
   }
@@ -517,7 +521,9 @@ app.post('/api/designs/:id/generate', async (req, reply) => {
   } catch {
     return reply.code(400).send({ code: 'INVALID_PATCH', message: `模板不存在: ${design.template}` });
   }
-  const vars = [...templateText.matchAll(/\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g)].map((m) => m[1]!);
+  // 提取正则与 buildWorkflow 的 ${([^}]+)} 保持一致：非常规变量名（如 ${foo-bar}）
+  // 也必须被检出为“未知变量”→ 400，而不是漏检后走进生成流程
+  const vars = [...templateText.matchAll(/\$\{([^}]+)\}/g)].map((m) => m[1]!);
   const SUPPORTED = new Set(['prompt', 'seed', 'width', 'height', 'steps', 'cfg', 'negative_prompt']);
   const unknown = [...new Set(vars)].filter((v) => !SUPPORTED.has(v));
   if (!vars.includes('prompt')) {
@@ -565,22 +571,22 @@ app.post('/api/designs/:id/generate', async (req, reply) => {
   }
 });
 
-// 素材文件字节流（图片参考图预览 / 文本内容）：content-type 按扩展名
+// 素材文件字节流（图片参考图预览 / 文本内容）：content-type 按扩展名（与 kindOf 可入库类型对齐）
 app.get('/api/assets/:id/file', async (req, reply) => {
   const { id } = req.params as { id: string };
-  let rec: AssetRecord;
-  try {
-    rec = listAssets().find((x) => x.id === id) ?? (() => { throw new DirectorError('NODE_NOT_FOUND', `素材不存在: ${id}`); })();
-  } catch (err) {
-    if (err instanceof DirectorError) return reply.code(404).send({ code: err.code, message: err.message });
-    throw err;
+  // 一次查找取记录（不存在直接 404，不重复手抛 DirectorError；文件读取复用 store 的 assetFilePath）
+  const rec = listAssets().find((x) => x.id === id);
+  if (!rec) {
+    return reply.code(404).send({ code: 'NODE_NOT_FOUND', message: `素材不存在: ${id}` });
   }
-  const type = rec.ext === '.png' ? 'image/png'
-    : rec.ext === '.jpg' || rec.ext === '.jpeg' ? 'image/jpeg'
-    : rec.ext === '.webp' ? 'image/webp'
-    : rec.ext === '.gif' ? 'image/gif'
-    : rec.ext === '.mp4' ? 'video/mp4'
-    : rec.ext === '.webm' ? 'video/webm'
+  const ext = rec.ext.toLowerCase();
+  const type = ext === '.png' ? 'image/png'
+    : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
+    : ext === '.webp' ? 'image/webp'
+    : ext === '.gif' ? 'image/gif'
+    : ext === '.mp4' ? 'video/mp4'
+    : ext === '.webm' ? 'video/webm'
+    : ext === '.mov' ? 'video/quicktime'
     : 'text/plain; charset=utf-8';
   reply.header('content-type', type);
   return reply.send(readFileSync(assetFilePath(id)));
