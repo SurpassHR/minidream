@@ -90,4 +90,33 @@ describe('StoryTellerView', () => {
     fireEvent.click(screen.getByText('完成故事'));
     await waitFor(() => expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument());
   });
+
+  it('输入停止 500ms 后自动 PUT 保存草稿（防抖）', async () => {
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText(/故事主题是什么/)).toBeInTheDocument());
+    const textarea = screen.getByTestId('story-answer');
+    fireEvent.change(textarea, { target: { value: '精灵与哥布林' } });
+    // 等待防抖窗口（500ms）结束，timer 应触发 PUT
+    await new Promise((r) => setTimeout(r, 650));
+    const putCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/story') && (c[1] as RequestInit)?.method === 'PUT',
+    );
+    expect(putCalls.length).toBeGreaterThan(0);
+    const last = putCalls[putCalls.length - 1]![1] as RequestInit;
+    expect(JSON.parse(String(last.body))).toEqual({ answers: { theme: '精灵与哥布林' } });
+  });
+
+  it('complete 清防抖 timer：快速完成后 banner 不被 PUT 响应回退', async () => {
+    STORY_API.story = { step: 5, answers: { theme: 't', protagonist: 'p', antagonist: 'a', scenes: 's', ending: 'e' }, completedAt: null };
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText(/结局如何/)).toBeInTheDocument());
+    const textarea = screen.getByTestId('story-answer');
+    fireEvent.change(textarea, { target: { value: '圆满结局' } });
+    // 输入后立即完成：防抖 timer（500ms）尚未触发，complete 必须清掉它
+    fireEvent.click(screen.getByText('完成故事'));
+    await waitFor(() => expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument());
+    // 等待超过防抖窗口：若 timer 未清，其 PUT 响应（completedAt 为 null）会把 banner 覆盖掉
+    await new Promise((r) => setTimeout(r, 650));
+    expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument();
+  });
 });

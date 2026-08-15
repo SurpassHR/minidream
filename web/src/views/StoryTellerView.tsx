@@ -39,7 +39,11 @@ export function StoryTellerView(props: { projectName: string }) {
     }).catch(() => {
       if (!disposed) { setError('加载故事进度失败'); setLoaded(true); }
     });
-    return () => { disposed = true; };
+    return () => {
+      disposed = true;
+      // 卸载/切项目时清防抖 timer：避免旧 timer 在切项目后把草稿写入新项目
+      if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+    };
   }, [props.projectName]);
 
   // 防抖自动保存草稿
@@ -47,19 +51,23 @@ export function StoryTellerView(props: { projectName: string }) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       void client.saveStory({ answers: { [step.id]: nextDraft } }).then((s) => {
-        setStory(s); setSaved(true);
+        // 不回退 step / completedAt：timer 响应可能晚于 goto/complete 的响应
+        setStory((prev) => ({ ...s, step: Math.max(prev.step, s.step), completedAt: prev.completedAt ?? s.completedAt }));
+        setSaved(true);
         setTimeout(() => setSaved(false), 1200);
       }).catch(() => setError('保存失败，请重试'));
     }, 500);
   }, [step.id]);
 
-  // 立即保存当前草稿（清防抖 timer）：切步/完成前调用，避免草稿停留在 timer 里丢失
-  const flushDraft = (nextDraft: string) => {
+  // 立即保存当前草稿（清防抖 timer）：切步/完成前调用，避免草稿停留在 timer 里丢失。
+  // 返回 true=保存成功（调用方据此决定是否继续切步/完成，避免失败后仍前进）
+  const flushDraft = (nextDraft: string): Promise<boolean> => {
     if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
-    void client.saveStory({ answers: { [step.id]: nextDraft } }).then((s) => {
+    return client.saveStory({ answers: { [step.id]: nextDraft } }).then((s) => {
       setStory(s); setSaved(true);
       setTimeout(() => setSaved(false), 1200);
-    }).catch(() => setError('保存失败，请重试'));
+      return true;
+    }).catch(() => { setError('保存失败，请重试'); return false; });
   };
 
   // 切换到某一步（保存 step 并加载该步草稿）
@@ -72,14 +80,21 @@ export function StoryTellerView(props: { projectName: string }) {
     }).catch(() => setError('保存失败，请重试'));
   };
 
-  const next = () => {
+  // 下一步：先串行保存草稿（await），成功才切步——避免并发 PUT 响应乱序回退 step
+  const next = async () => {
     if (step.required && !draft.trim()) {
       setError('请填写后再继续');
       return;
     }
     setError('');
-    flushDraft(draft); // 立即保存当前草稿（不等防抖）
-    goto(story.step + 1);
+    const ok = await flushDraft(draft);
+    if (ok) goto(story.step + 1);
+  };
+
+  // 上一步：与 next 对称，先保存当前草稿再切步
+  const prev = async () => {
+    const ok = await flushDraft(draft);
+    if (ok) goto(story.step - 1);
   };
 
   const aiSuggest = () => {
@@ -96,8 +111,9 @@ export function StoryTellerView(props: { projectName: string }) {
   const complete = async () => {
     if (step.required && !draft.trim()) { setError('请填写后再继续'); return; }
     setError('');
-    // 先保存最后一步草稿（直接 await，确保入库时答案完整）
-    await client.saveStory({ answers: { [step.id]: draft } }).catch(() => {});
+    // 先清防抖 timer 并立即保存最后一步草稿；保存失败则中止（不调 completeStory）
+    const ok = await flushDraft(draft);
+    if (!ok) return;
     try {
       // 用 complete 返回值更新（含 completedAt），不额外 GET
       const r = await client.completeStory();
@@ -139,11 +155,11 @@ export function StoryTellerView(props: { projectName: string }) {
           <span className="story-save-hint">{saved ? '已保存 ✓' : ''}</span>
         </div>
         <div className="story-nav">
-          <button className="btn-ghost" disabled={story.step === 0} onClick={() => goto(story.step - 1)}>← 上一步</button>
+          <button className="btn-ghost" disabled={story.step === 0} onClick={() => void prev()}>← 上一步</button>
           {isLast ? (
             <button className="btn-primary" onClick={() => void complete()}>完成故事</button>
           ) : (
-            <button className="btn-primary" onClick={next}>下一步 →</button>
+            <button className="btn-primary" onClick={() => void next()}>下一步 →</button>
           )}
         </div>
         {error && <div className="story-error">{error}</div>}
