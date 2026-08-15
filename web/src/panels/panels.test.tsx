@@ -11,7 +11,7 @@ describe('ProjectList', () => {
         { path: '/p/elf', name: 'elf_and_goblin', current: true, shots: 3, duration: 11.25, mode: 'KEYFRAME' },
         { path: '/p/pose', name: 'pose-transfer', current: false, shots: -1, duration: -1, mode: 'REF2V' },
       ]}
-      activePath="/p/elf" onSelect={() => {}}
+      activePath="/p/elf" onSelect={() => {}} onAdd={() => {}} onRemove={() => {}}
     />);
     expect(screen.getByText('elf_and_goblin').closest('.proj')).toHaveClass('active');
     expect(screen.getByText('pose-transfer').closest('.proj')).not.toHaveClass('active');
@@ -24,10 +24,25 @@ describe('ProjectList', () => {
     const onSelect = vi.fn();
     render(<ProjectList
       projects={[{ path: '/p/x', name: 'x', current: true, shots: 1, duration: 3.75, mode: '' }]}
-      activePath="/p/x" onSelect={onSelect}
+      activePath="/p/x" onSelect={onSelect} onAdd={() => {}} onRemove={() => {}}
     />);
     fireEvent.click(screen.getByText('x'));
     expect(onSelect).toHaveBeenCalledWith('/p/x');
+  });
+
+  it('空列表显示空态与添加按钮；点击移除按钮触发 onRemove（不冒泡到 onSelect）', () => {
+    render(<ProjectList projects={[]} activePath="" onSelect={() => {}} onAdd={() => {}} onRemove={() => {}} />);
+    expect(screen.getByText('尚未添加项目')).toBeInTheDocument();
+    expect(screen.getByText('＋ 添加项目')).toBeInTheDocument();
+    const onRemove = vi.fn();
+    const onSelect = vi.fn();
+    render(<ProjectList
+      projects={[{ path: '/p/y', name: 'y', current: false, shots: 1, duration: 3.75, mode: '' }]}
+      activePath="" onSelect={onSelect} onAdd={() => {}} onRemove={onRemove}
+    />);
+    fireEvent.click(screen.getByTitle('从项目栏移除（不删除目录）'));
+    expect(onRemove).toHaveBeenCalledWith('/p/y', 'y');
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });
 

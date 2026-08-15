@@ -115,9 +115,26 @@ export const client = {
     return { healthy: r.healthy, baseUrl: r.baseUrl };
   },
 
-  // 项目列表（当前项目 + 同根项目发现，含分镜/时长统计）
+  // 项目列表：手动添加的项目注册表（含分镜/时长统计），默认不自动发现
   async listProjects(): Promise<ProjectInfo[]> {
     const r = await req<{ projects: ProjectInfo[] }>('/api/projects');
+    return r.projects;
+  },
+
+  // 手动添加项目：校验为剧本项目（mmh3_prompts/prompts）或空目录后才可添加；
+  // 成功后持久化注册表，之后自动显示在项目栏
+  async addProject(path: string): Promise<ProjectInfo[]> {
+    const r = await req<{ projects: ProjectInfo[] }>('/api/projects/add', {
+      method: 'POST', body: JSON.stringify({ path }),
+    });
+    return r.projects;
+  },
+
+  // 从项目栏移除（仅移除注册表项，不删除目录）
+  async removeProject(path: string): Promise<ProjectInfo[]> {
+    const r = await req<{ projects: ProjectInfo[] }>('/api/projects/remove', {
+      method: 'POST', body: JSON.stringify({ path }),
+    });
     return r.projects;
   },
 

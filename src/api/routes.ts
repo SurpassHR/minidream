@@ -17,7 +17,7 @@ import { ComfyUIClient } from '../comfy/client.js';
 import { listAssets, importAssetFile, importAssetText, deleteAsset, readAssetText } from '../assets/assets-store.js';
 import { buildAgentPrompt, runAgentCollect, runAgentStream } from '../agent/bridge.js';
 import {
-  listProjects, resolveSwitchTarget, resolveComfyUrl,
+  addProject, listProjects, removeProject, resolveSwitchTarget, resolveComfyUrl,
 } from '../projects/projects-store.js';
 import type { WsHandle } from './ws.js';
 
@@ -45,8 +45,18 @@ export function mountRoutes(
 
   app.get('/api/graph', async () => ({ graph: loadGraph(ctx.projectDir) }));
 
-  // —— 项目栏真实数据源：项目发现 + 热切换（计划 4） ——
+  // —— 项目栏：手动添加的项目注册表（默认不自动发现） ——
   app.get('/api/projects', async () => ({ projects: listProjects(ctx.projectDir) }));
+
+  // 添加项目：校验为剧本项目（mmh3_prompts/prompts）或空目录后才可加入；持久化注册表
+  app.post('/api/projects/add', async (req) => ({
+    projects: addProject(ctx.projectDir, (req.body as { path?: string }).path ?? ''),
+  }));
+
+  // 从项目栏移除（仅移除注册表项，不删除目录内容）
+  app.post('/api/projects/remove', async (req) => ({
+    projects: removeProject(ctx.projectDir, (req.body as { path?: string }).path ?? ''),
+  }));
 
   app.post('/api/project/switch', async (req, reply) => {
     const body = req.body as { path?: string };

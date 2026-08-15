@@ -4,6 +4,7 @@ import CanvasView from './canvas/CanvasView';
 import { ProjectList } from './panels/ProjectList';
 import type { ProjectInfo } from './types';
 import { AssetLibrary, type AssetItem } from './panels/AssetLibrary';
+import { AddProjectDialog } from './panels/AddProjectDialog';
 import { ImportDialog } from './panels/ImportDialog';
 import { AgentPanel, type ChatMsg } from './panels/AgentPanel';
 import { ConfirmDialog } from './panels/ConfirmDialog';
@@ -182,6 +183,20 @@ export default function App() {
     }
   }, [applyGraph, refreshAssets]);
 
+  // 手动添加项目：后端校验（剧本项目或空目录）→ 持久化注册表 → 用返回的新列表替换
+  const handleAddProject = useCallback((projects: ProjectInfo[]) => {
+    setProjects(projects);
+  }, []);
+
+  // 从项目栏移除（仅移除注册表项，不删除目录内容）：走确认门
+  const askRemoveProject = useCallback((path: string, name: string) => {
+    setConfirm({
+      title: '移除项目',
+      body: `将「${name}」从项目栏移除？仅移除列表项，不会删除目录内容。`,
+      action: () => { void client.removeProject(path).then(setProjects).catch(() => {}); },
+    });
+  }, []);
+
   // 真实 agent 流式发送：chips 是显示名（@xxx），发送时从画布查找节点内容注入上下文
   const handleAgentSend = (text: string, _chipRefs: string[]): ChatMsg[] => [
     { who: 'user', text },
@@ -264,11 +279,13 @@ export default function App() {
       </header>
       <main className="main">
         <aside className="left" style={{ flexBasis: leftW }} data-testid="left-panel">
-          <div className="panel-title">项目 <span className="mini">工作区 · 点击切换</span></div>
+          <div className="panel-title">项目 <span className="mini">手动添加 · 点击切换</span></div>
           <ProjectList
             projects={projects}
             activePath={projects.find((p) => p.current)?.path ?? ''}
             onSelect={handleProjectSelect}
+            onAdd={() => setAddProjectOpen(true)}
+            onRemove={askRemoveProject}
           />
           <div className="panel-title">素材库 <span className="mini">全局 · 跨项目</span></div>
           <AssetLibrary items={assets ?? []} onDropToCanvas={handleDropToCanvas} onAssetsChanged={refreshAssets} />
@@ -327,6 +344,11 @@ export default function App() {
         confirmLabel={confirm?.title === '提交生成' ? '确认提交' : confirm?.title === '回滚快照' ? '确认回滚' : '确认删除'}
       />
       <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
+      <AddProjectDialog
+        open={addProjectOpen}
+        onClose={() => setAddProjectOpen(false)}
+        onAdded={handleAddProject}
+      />
       {/* ComfyUI 地址自定义弹层 */}
       {comfyEditOpen && (
         <div className="dialog-mask" onClick={() => setComfyEditOpen(false)}>

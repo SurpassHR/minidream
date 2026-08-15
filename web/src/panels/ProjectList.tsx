@@ -14,6 +14,8 @@ export function ProjectList(props: {
   projects: ProjectInfo[];
   activePath: string;
   onSelect: (path: string) => void;
+  onAdd: () => void;
+  onRemove: (path: string, name: string) => void;
 }) {
   return (
     <div className="projects">
@@ -31,11 +33,17 @@ export function ProjectList(props: {
             <div className="pmeta">{fmtMeta(p)}</div>
           </div>
           {p.mode && <span className="pmode">{p.mode}</span>}
+          <button
+            className="proj-remove"
+            title="从项目栏移除（不删除目录）"
+            onClick={(e) => { e.stopPropagation(); props.onRemove(p.path, p.name); }}
+          >✕</button>
         </div>
       ))}
       {props.projects.length === 0 && (
-        <div className="q-empty">正在扫描项目…</div>
+        <div className="q-empty">尚未添加项目</div>
       )}
+      <button className="proj-add" onClick={props.onAdd}>＋ 添加项目</button>
     </div>
   );
 }

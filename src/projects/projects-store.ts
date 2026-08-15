@@ -1,9 +1,36 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import fg from 'fast-glob';
 import { loadGraph } from '../graph/graph-store.js';
+import { DirectorError } from '../types.js';
 
-// —— 项目发现与切换（计划 4：项目栏真实数据源） ——
+// —— 项目注册表（手动添加，持久化 ~/.director/projects.json） ——
+// 项目栏只显示用户手动添加的项目：默认不自动发现、不显示当前目录。
+// 添加校验：剧本项目（mmh3_prompts / prompts）或空目录；其余目录拒绝。
+// 注册表路径用函数式求值（每次读取当前 HOME），保证 vi.stubEnv('HOME') 测试隔离。
+function registryPath(): string {
+  return join(homedir(), '.director', 'projects.json');
+}
+
+interface RegistryEntry {
+  path: string;
+  addedAt: number;
+}
+
+function readRegistry(): RegistryEntry[] {
+  if (!existsSync(registryPath())) return [];
+  try {
+    return JSON.parse(readFileSync(registryPath(), 'utf8')) as RegistryEntry[];
+  } catch {
+    return [];
+  }
+}
+
+function writeRegistry(entries: RegistryEntry[]): void {
+  mkdirSync(dirname(registryPath()), { recursive: true });
+  writeFileSync(registryPath(), JSON.stringify(entries, null, 2), 'utf8');
+}
 
 export interface ProjectInfo {
   path: string;
@@ -14,18 +41,24 @@ export interface ProjectInfo {
   mode: string;     // 'KEYFRAME' | 'REF2V' | ''（探测目录结构）
 }
 
-// 项目判定：目录内含 mmh3_prompts / prompts（mmh3 项目惯例）或 .director/project.json（工作台图数据）
+// 剧本项目判定：目录内含 mmh3_prompts / prompts（mmh3 创作项目惯例）。
+// 注意：.director/project.json 是工作台运行时数据（被打开过即生成），不参与判定。
 function looksLikeProject(dir: string): boolean {
   try {
     if (!statSync(dir).isDirectory()) return false;
   } catch {
     return false;
   }
-  return (
-    existsSync(join(dir, 'mmh3_prompts')) ||
-    existsSync(join(dir, 'prompts')) ||
-    existsSync(join(dir, '.director', 'project.json'))
-  );
+  return existsSync(join(dir, 'mmh3_prompts')) || existsSync(join(dir, 'prompts'));
+}
+
+// 空目录也可作为项目添加（预留创作起点，后续由 skill 在其中生成 mmh3 结构）
+function isEmptyDir(dir: string): boolean {
+  try {
+    return readdirSync(dir).length === 0;
+  } catch {
+    return false;
+  }
 }
 
 function num(v: unknown): number | null {
@@ -92,63 +125,12 @@ function statProject(dir: string): { shots: number; duration: number; mode: stri
   };
 }
 
-function pushProject(out: ProjectInfo[], seen: Set<string>, dir: string, currentDir: string): void {
-  if (seen.has(dir)) return;
-  seen.add(dir);
+function pushProject(out: ProjectInfo[], dir: string, currentDir: string): void {
   out.push({ path: dir, name: basename(dir), current: dir === currentDir, ...statProject(dir) });
 }
 
-// 项目列表：当前项目 + 发现的项目。
-// 发现来源：DIRECTOR_PROJECTS_DIR（项目根，可选）+ projectDir 向上最多 3 层祖先目录；
-// 每个根扫描一层直接子目录（按 mmh3_prompts/prompts/.director 判定），
-// 并再深一层 mmh3_prompts/* 场景目录。无环境变量时也能发现同根项目。
-export function listProjects(projectDir: string): ProjectInfo[] {
-  const roots: string[] = [];
-  const env = process.env.DIRECTOR_PROJECTS_DIR;
-  if (env) roots.push(env);
-  let up = projectDir;
-  for (let i = 0; i < 3; i++) {
-    up = dirname(up);
-    if (up === '/' || up === dirname(up)) break;
-    roots.push(up);
-  }
-
-  const seen = new Set<string>();
-  const out: ProjectInfo[] = [];
-  pushProject(out, seen, projectDir, projectDir);
-
-  for (const root of roots) {
-    let entries: string[] = [];
-    try {
-      entries = readdirSync(root);
-    } catch {
-      continue;
-    }
-    for (const name of entries) {
-      const dir = join(root, name);
-      if (!looksLikeProject(dir)) continue;
-      pushProject(out, seen, dir, projectDir);
-      // 场景目录：root/<项目>/mmh3_prompts/<场景>
-      const scenesRoot = join(dir, 'mmh3_prompts');
-      let scenes: string[] = [];
-      try {
-        scenes = readdirSync(scenesRoot);
-      } catch {
-        continue;
-      }
-      for (const s of scenes) {
-        const scene = join(scenesRoot, s);
-        if (looksLikeProject(scene)) pushProject(out, seen, scene, projectDir);
-      }
-    }
-  }
-  // 固定按名称排序：切换项目只更新 current 高亮，不把当前项目挪到最上方
-  // （项目栏顺序稳定，用户点击哪个就高亮哪个）
-  return out.sort((a, b) => a.name.localeCompare(b.name));
-}
-
-// 切换目标校验：接受已发现项目的绝对路径，或其他存在的目录；相对路径按 projectDir 父目录解析
-export function resolveSwitchTarget(projectDir: string, path: string): string | null {
+// 路径解析：绝对路径直接使用；相对路径按 projectDir 父目录解析（与切换目标一致）
+function resolveDir(projectDir: string, path: string): string | null {
   if (!path) return null;
   const abs = isAbsolute(path) ? path : resolve(dirname(projectDir), path);
   try {
@@ -156,6 +138,50 @@ export function resolveSwitchTarget(projectDir: string, path: string): string | 
   } catch {
     return null;
   }
+}
+
+// 项目列表：只显示注册表中手动添加的项目（目录已删除的跳过）。
+// 不自动发现、不显示当前目录——项目栏的显示权完全归用户添加操作。
+// 固定按名称排序：切换项目只更新 current 高亮，不把当前项目挪到最上方。
+export function listProjects(projectDir: string): ProjectInfo[] {
+  const out: ProjectInfo[] = [];
+  for (const entry of readRegistry()) {
+    if (!existsSync(entry.path)) continue;
+    pushProject(out, entry.path, projectDir);
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// 添加项目：必须是剧本项目（mmh3_prompts / prompts）或空目录；
+// 已添加则幂等（不重复写入）。成功后持久化，之后自动显示在项目栏。
+export function addProject(projectDir: string, path: string): ProjectInfo[] {
+  const abs = resolveDir(projectDir, path);
+  if (!abs) throw new DirectorError('PROJECT_NOT_FOUND', `项目目录不存在: ${path}`);
+  if (!looksLikeProject(abs) && !isEmptyDir(abs)) {
+    throw new DirectorError(
+      'PROJECT_NOT_ADDABLE',
+      `不是剧本项目（需含 mmh3_prompts/ 或 prompts/ 目录，或为空目录）: ${path}`,
+    );
+  }
+  const registry = readRegistry();
+  if (!registry.some((e) => e.path === abs)) {
+    registry.push({ path: abs, addedAt: Date.now() });
+    writeRegistry(registry);
+  }
+  return listProjects(projectDir);
+}
+
+// 从项目栏移除（仅移除注册表项，不删除目录）；路径不存在按幂等处理
+export function removeProject(projectDir: string, path: string): ProjectInfo[] {
+  const abs = resolveDir(projectDir, path);
+  if (!abs) return listProjects(projectDir);
+  writeRegistry(readRegistry().filter((e) => e.path !== abs));
+  return listProjects(projectDir);
+}
+
+// 切换目标校验：接受已添加项目的绝对路径，或其他存在的目录；相对路径按 projectDir 父目录解析
+export function resolveSwitchTarget(projectDir: string, path: string): string | null {
+  return resolveDir(projectDir, path);
 }
 
 // 从 project 节点读 ComfyUI 地址，缺省 localhost:8188（切换项目后热重建客户端用）
