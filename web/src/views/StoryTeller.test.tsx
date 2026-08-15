@@ -2,12 +2,17 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { StoryTellerView } from './StoryTellerView';
 
-const STORY_API = { story: { step: 0, answers: {}, completedAt: null } };
+const STORY_API: { story: { step: number; answers: Record<string, string>; completedAt: string | null } } = { story: { step: 0, answers: {}, completedAt: null } };
 
 beforeEach(() => {
   localStorage.clear();
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     const u = String(url);
+    // reset 分支必须先于 /api/story（否则被 GET 分支吞掉，不执行重置）
+    if (u.includes('/api/story/reset')) {
+      STORY_API.story = { step: 0, answers: {}, completedAt: null };
+      return new Response(JSON.stringify(STORY_API), { status: 200 });
+    }
     if (u.includes('/api/story/complete')) {
       return new Response(JSON.stringify({
         asset: { id: 'a1', kind: 'txt', name: 'story_demo.md', ext: '.md', size: 1, importedAt: 1 },
@@ -141,5 +146,32 @@ describe('StoryTellerView', () => {
     // 等待超过防抖窗口：若 timer 未清，其 PUT 响应（completedAt 为 null）会把 banner 覆盖掉
     await new Promise((r) => setTimeout(r, 650));
     expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument();
+  });
+
+  it('完成后显示重新生成按钮，点击后回到第一步', async () => {
+    STORY_API.story = { step: 5, answers: { theme: 't', protagonist: 'p', antagonist: 'a', scenes: 's', ending: 'e' }, completedAt: '2026-08-15T00:00:00.000Z' };
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument());
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    fireEvent.click(screen.getByText('重新生成'));
+    await waitFor(() => expect(screen.getByText(/故事主题是什么/)).toBeInTheDocument());
+    // 完成 banner 消失（completedAt 已清空）
+    expect(screen.queryByText(/已完成 · 已生成故事文档/)).not.toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+
+  it('重新生成取消确认：进度不变', async () => {
+    STORY_API.story = { step: 5, answers: { theme: 't', protagonist: 'p', antagonist: 'a', scenes: 's', ending: 'e' }, completedAt: '2026-08-15T00:00:00.000Z' };
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument());
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    fireEvent.click(screen.getByText('重新生成'));
+    // 仍在完成态（banner 保留，未调 reset）
+    expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument();
+    expect(globalThis.fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('/api/story/reset'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    vi.restoreAllMocks();
   });
 });

@@ -20,7 +20,7 @@ import { listAssets, importAssetFile, importAssetText, deleteAsset, readAssetTex
 import { buildWorkflow } from '../comfy/workflow.js';
 import { buildAgentPrompt, runAgentCollect, runAgentStream } from '../agent/bridge.js';
 import { appendChatMessage, readChatHistory } from '../agent/chat-history.js';
-import { readStory, saveStory, completeStory, buildStoryMarkdown } from '../story/store.js';
+import { readStory, saveStory, completeStory, resetStory, buildStoryMarkdown } from '../story/store.js';
 import { listDesigns, createDesign, updateDesign, deleteDesign } from '../design/store.js';
 import type { DesignKind, DesignObject } from '../design/store.js';
 import {
@@ -427,6 +427,11 @@ app.post('/api/story/complete', async (req, reply) => {
   completeStory(ctx.projectDir, new Date().toISOString());
   reply.code(201);
   return { asset, story: readStory(ctx.projectDir) };
+});
+
+// 重新生成：清空进度与 completedAt，回到第一步（spec 4.3 重新生成入口）
+app.post('/api/story/reset', async () => {
+  return { story: resetStory(ctx.projectDir) };
 });
 
 // —— 物体设计器（object-designer 角色页）——

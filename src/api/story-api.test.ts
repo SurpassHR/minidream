@@ -74,4 +74,20 @@ describe('API 故事向导', () => {
     expect(res2.json().code).toBe('STORY_ALREADY_COMPLETED');
     expect(listAssets()).toHaveLength(1);
   });
+
+  it('POST /api/story/reset 清空进度与完成标记', async () => {
+    await a.inject({
+      method: 'PUT', url: '/api/story',
+      payload: { step: 3, answers: { theme: 't' } },
+    });
+    await a.inject({ method: 'POST', url: '/api/story/complete', payload: {} });
+    const res = await a.inject({ method: 'POST', url: '/api/story/reset', payload: {} });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().story).toEqual({ step: 0, answers: {}, completedAt: null });
+    // 落盘持久化
+    expect(readStory(dir)).toEqual({ step: 0, answers: {}, completedAt: null });
+    // reset 后可重新 complete（409 防护解除）
+    const res2 = await a.inject({ method: 'POST', url: '/api/story/complete', payload: {} });
+    expect(res2.statusCode).toBe(201);
+  });
 });

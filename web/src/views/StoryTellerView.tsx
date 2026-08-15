@@ -137,6 +137,16 @@ export function StoryTellerView(props: { projectName: string }) {
     }
   };
 
+  // 重新生成：清空进度与完成标记，回到第一步（确认门防误触）
+  const reset = () => {
+    if (!window.confirm('重新生成将清空当前故事进度，确定？')) return;
+    void client.resetStory().then((s) => {
+      setStory(s);
+      setDraft('');
+      setError('');
+    }).catch((err) => setError(err instanceof Error ? err.message : '重置失败'));
+  };
+
   if (!loaded) return <div className="role-view" data-testid="story-teller-view"><div className="story-center">加载中…</div></div>;
 
   return (
@@ -150,7 +160,10 @@ export function StoryTellerView(props: { projectName: string }) {
         </div>
       </div>
       {story.completedAt && (
-        <div className="story-banner">✅ 已完成 · 已生成故事文档进素材库（{new Date(story.completedAt).toLocaleString()}）</div>
+        <div className="story-banner">
+          ✅ 已完成 · 已生成故事文档进素材库（{new Date(story.completedAt).toLocaleString()}）
+          <button className="btn-ghost story-reset" onClick={reset}>重新生成</button>
+        </div>
       )}
       <div className="story-card">
         <div className="story-q">❓ {step.question}</div>

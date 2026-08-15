@@ -270,6 +270,14 @@ export const client = {
     });
   },
 
+  // 重新生成故事：清空进度与完成标记（spec 4.3 重新生成入口）
+  async resetStory(): Promise<StoryProgress> {
+    const r = await req<{ story: StoryProgress }>('/api/story/reset', {
+      method: 'POST', body: JSON.stringify({}),
+    });
+    return r.story;
+  },
+
   // —— object-designer 设计器 ——
   async listDesigns(): Promise<DesignObject[]> {
     const r = await req<{ designs: DesignObject[] }>('/api/designs');

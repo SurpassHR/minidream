@@ -57,6 +57,12 @@ export function completeStory(projectDir: string, completedAt: string): StoryPro
   return writeStory(projectDir, story);
 }
 
+// 重置向导：清空答案与完成标记，回到第一步（重新生成入口）
+export function resetStory(projectDir: string): StoryProgress {
+  const fresh: StoryProgress = { step: 0, answers: {}, completedAt: null };
+  return writeStory(projectDir, fresh);
+}
+
 // 全部答案汇总为 Markdown 故事文档（complete 接口入库前组装）
 // 小节标题用步骤短标签（与测试断言一致：## 主题 / ## 主角 / ## 配角 / ## 冲突 / ## 场景 / ## 结局）
 const STEP_TITLES: Record<string, string> = {
