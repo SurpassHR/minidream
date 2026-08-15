@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { DirectorError, type Actor, type NodeType } from '../types.js';
+import { DirectorError, type Actor, type AssetRecord, type NodeType } from '../types.js';
 import {
   createNode, updateNode, deleteNode, moveNode,
   createEdge, updateEdge, deleteEdge, loadGraph,
@@ -8,7 +8,7 @@ import { syncNodeToFile } from '../sync/dual-writer.js';
 import { listSnapshots, graphAtSnapshot, headSeq, futureSnapshotCount, approveOverwrite } from '../snapshots/snapshot-store.js';
 import { listWorkspace, readWorkspaceFile, searchWorkspace } from '../workspace/accessor.js';
 import { readFileSync, existsSync, mkdtempSync, createWriteStream, rmSync, writeFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { extname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
@@ -16,7 +16,8 @@ import { applyMutation, applyHeadSwitch } from './mutations.js';
 import { graphToPromptYaml } from '../prompt/export.js';
 import { GenerationQueue } from '../generation/queue.js';
 import { ComfyUIClient } from '../comfy/client.js';
-import { listAssets, importAssetFile, importAssetText, deleteAsset, readAssetText } from '../assets/assets-store.js';
+import { listAssets, importAssetFile, importAssetText, deleteAsset, readAssetText, assetFilePath } from '../assets/assets-store.js';
+import { buildWorkflow } from '../comfy/workflow.js';
 import { buildAgentPrompt, runAgentCollect, runAgentStream } from '../agent/bridge.js';
 import { appendChatMessage, readChatHistory } from '../agent/chat-history.js';
 import { readStory, saveStory, completeStory, buildStoryMarkdown } from '../story/store.js';
@@ -487,6 +488,102 @@ app.delete('/api/designs/:id', async (req, reply) => {
     }
     throw err;
   }
+});
+
+// 生成参考图：同步等待 ComfyUI 完成 → 下载 → 素材库入库 → 状态写回对象。
+// 模板规则：必须含 ${prompt}；允许变量 seed/width/height/steps/cfg/negative_prompt；
+// 未知变量返回 400 并列出（引导用户调整自备模板）。
+app.post('/api/designs/:id/generate', async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const designs = listDesigns(ctx.projectDir);
+  const design = designs.find((d) => d.id === id);
+  if (!design) {
+    return reply.code(404).send({ code: 'NODE_NOT_FOUND', message: `设计对象不存在: ${id}` });
+  }
+  if (design.status === 'generating') {
+    return reply.code(400).send({ code: 'INVALID_PATCH', message: '该对象正在生成中' });
+  }
+  // 提示词 = 风格 + 描述（先于模板校验：描述缺失是最根本的请求方错误）
+  const prompt = [design.style, design.description].filter((s) => s.trim()).join(', ').trim();
+  if (!prompt) {
+    return reply.code(400).send({ code: 'INVALID_PATCH', message: '请先填写风格或视觉描述' });
+  }
+  // 模板变量校验（模板不存在 / 缺 ${prompt} / 未知变量 → 400，不写状态）
+  const wfDir = process.env.DIRECTOR_WORKFLOWS_DIR ?? join(process.cwd(), 'workflows');
+  const templatePath = join(wfDir, `${design.template}.template.json`);
+  let templateText: string;
+  try {
+    templateText = readFileSync(templatePath, 'utf8');
+  } catch {
+    return reply.code(400).send({ code: 'INVALID_PATCH', message: `模板不存在: ${design.template}` });
+  }
+  const vars = [...templateText.matchAll(/\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g)].map((m) => m[1]!);
+  const SUPPORTED = new Set(['prompt', 'seed', 'width', 'height', 'steps', 'cfg', 'negative_prompt']);
+  const unknown = [...new Set(vars)].filter((v) => !SUPPORTED.has(v));
+  if (!vars.includes('prompt')) {
+    return reply.code(400).send({ code: 'INVALID_PATCH', message: '模板必须包含 ${prompt} 变量（文生图提示词入口）' });
+  }
+  if (unknown.length > 0) {
+    return reply.code(400).send({ code: 'INVALID_PATCH', message: `模板包含不支持的变量: ${unknown.join(', ')}（支持: ${[...SUPPORTED].join(', ')}）` });
+  }
+  // ComfyUI 连接检查：未连接直接 400，不排队空转
+  if (!(await ctx.comfy.health())) {
+    return reply.code(400).send({ code: 'INVALID_PATCH', message: '请先配置 ComfyUI 地址（点击顶栏 COMFYUI 徽章）' });
+  }
+  // 标记生成中 → 提交 → 等待 → 下载 → 入库
+  updateDesign(ctx.projectDir, id, { status: 'generating' });
+  try {
+    const workflow = buildWorkflow(design.template, {
+      prompt,
+      seed: Math.floor(Math.random() * 2 ** 31),
+      width: 1024, height: 1024, steps: 30, cfg: 7, negative_prompt: '',
+    });
+    const promptId = await ctx.comfy.submit(workflow, randomUUID());
+    const out = await ctx.comfy.waitForDone(promptId);
+    if (out.media.length === 0) {
+      throw new DirectorError('INVALID_PATCH', '生成完成但无输出媒体');
+    }
+    // 下载到临时文件（保留原始扩展名：importAssetFile 按扩展名判 kind）
+    const tmpDir = mkdtempSync(join(tmpdir(), 'director-design-'));
+    const ext = extname(out.media[0]!.filename) || '.png';
+    const tmpPath = join(tmpDir, `design-${id}${ext}`);
+    try {
+      await ctx.comfy.download(out.media[0]!, tmpPath);
+      const asset = importAssetFile(tmpPath);
+      // error 用空串而非 undefined：updateDesign 对 undefined 视为“不更新”，空串才能清除旧错误
+      const designDone = updateDesign(ctx.projectDir, id, {
+        status: 'done', assetId: asset.id, error: '',
+      });
+      return { design: designDone };
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const designFailed = updateDesign(ctx.projectDir, id, { status: 'failed', error: message });
+    return { design: designFailed };
+  }
+});
+
+// 素材文件字节流（图片参考图预览 / 文本内容）：content-type 按扩展名
+app.get('/api/assets/:id/file', async (req, reply) => {
+  const { id } = req.params as { id: string };
+  let rec: AssetRecord;
+  try {
+    rec = listAssets().find((x) => x.id === id) ?? (() => { throw new DirectorError('NODE_NOT_FOUND', `素材不存在: ${id}`); })();
+  } catch (err) {
+    if (err instanceof DirectorError) return reply.code(404).send({ code: err.code, message: err.message });
+    throw err;
+  }
+  const type = rec.ext === '.png' ? 'image/png'
+    : rec.ext === '.jpg' || rec.ext === '.jpeg' ? 'image/jpeg'
+    : rec.ext === '.webp' ? 'image/webp'
+    : rec.ext === '.gif' ? 'image/gif'
+    : rec.ext === '.mp4' ? 'video/mp4'
+    : rec.ext === '.webm' ? 'video/webm'
+    : 'text/plain; charset=utf-8';
+  reply.header('content-type', type);
+  return reply.send(readFileSync(assetFilePath(id)));
 });
 
 // —— 计划 4 Task 3：pi 桥 SSE 流式对话 ——

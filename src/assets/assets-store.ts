@@ -89,3 +89,9 @@ export function readAssetText(id: string): string {
   if (rec.kind !== 'txt') throw new DirectorError('FILE_CONFLICT', `素材不是文本: ${id}`);
   return readFileSync(join(assetDir(), `${rec.id}${rec.ext}`), 'utf8');
 }
+
+// 素材绝对路径（图片预览/下载用）；未知 id 抛 NODE_NOT_FOUND
+export function assetFilePath(id: string): string {
+  const rec = findAsset(id);
+  return join(assetDir(), `${rec.id}${rec.ext}`);
+}
