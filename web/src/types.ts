@@ -66,3 +66,20 @@ export type WsEvent =
   | { type: 'file-changed'; path: string }
   // agent 活动回传（借鉴 kanban hooks：agent 工具调用即活动，前端实时展示）
   | { type: 'agent-activity'; text: string; at: number };
+
+// story-teller 向导进度（镜像后端 src/story/store.ts）
+export interface StoryProgress {
+  step: number;
+  answers: Record<string, string>;
+  completedAt: string | null;
+}
+
+// 素材记录（镜像后端 src/types.ts AssetRecord）
+export interface AssetRecord {
+  id: string;
+  kind: 'txt' | 'img' | 'vid';
+  name: string;
+  ext: string;
+  size: number;
+  importedAt: number;
+}

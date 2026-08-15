@@ -502,3 +502,22 @@
   background: rgba(232, 163, 61, .35); border-color: var(--amber);
   box-shadow: 0 0 0 3px rgba(232, 163, 61, .25);
 }
+
+/* ===== story-teller 向导 ===== */
+.story-view { display: flex; flex-direction: column; padding: 24px 32px; gap: 16px; }
+.story-center { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-faint); }
+.story-head { display: flex; align-items: center; gap: 16px; }
+.story-title { font-size: 14px; font-weight: 600; }
+.story-progress { display: flex; gap: 4px; flex: 1; max-width: 420px; }
+.story-progress .seg { height: 5px; flex: 1; border-radius: 3px; background: var(--border); transition: background .2s; }
+.story-progress .seg.done { background: var(--ok); }
+.story-progress .seg.cur { background: var(--amber); }
+.story-banner { padding: 10px 14px; border: 1px solid var(--ok); border-radius: 6px; background: rgba(46, 160, 67, .08); color: var(--ok); font-size: 13px; }
+.story-card { max-width: 720px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+.story-q { font-size: 16px; font-weight: 600; }
+.story-hint { font-size: 12px; color: var(--text-faint); }
+.story-answer { width: 100%; resize: vertical; }
+.story-actions { display: flex; align-items: center; gap: 12px; }
+.story-save-hint { font-size: 11px; color: var(--ok); }
+.story-nav { display: flex; justify-content: space-between; margin-top: 6px; }
+.story-error { color: var(--rec); font-size: 12px; }

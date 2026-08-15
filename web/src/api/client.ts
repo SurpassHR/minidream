@@ -1,5 +1,6 @@
 import type {
   DirectorEdge, DirectorNode, EdgeKind, GenTask, Graph, NodeType, ProjectInfo, SnapshotMeta,
+  StoryProgress, AssetRecord,
 } from '../types';
 
 class ApiError extends Error {
@@ -248,5 +249,24 @@ export const client = {
       const body = await res.json().catch(() => ({}));
       throw new ApiError((body as { code?: string }).code ?? 'HTTP_' + res.status, (body as { message?: string }).message ?? res.statusText);
     }
+  },
+
+  // —— story-teller 向导 ——
+  async getStory(): Promise<StoryProgress> {
+    const r = await req<{ story: StoryProgress }>('/api/story');
+    return r.story;
+  },
+
+  async saveStory(patch: { step?: number; answers?: Record<string, string> }): Promise<StoryProgress> {
+    const r = await req<{ story: StoryProgress }>('/api/story', {
+      method: 'PUT', body: JSON.stringify(patch),
+    });
+    return r.story;
+  },
+
+  async completeStory(): Promise<{ asset: AssetRecord; story: StoryProgress }> {
+    return await req<{ asset: AssetRecord; story: StoryProgress }>('/api/story/complete', {
+      method: 'POST', body: JSON.stringify({}),
+    });
   },
 };
