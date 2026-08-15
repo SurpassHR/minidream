@@ -21,6 +21,8 @@ export function ObjectDesignerView(props: { projectName: string }) {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 防抖合并累积的字段 patch：500ms 窗口内多次编辑合并为一次 PUT，避免丢中间修改
+  const pendingRef = useRef<Partial<Pick<DesignObject, 'name' | 'description' | 'style' | 'template'>>>({});
 
   const refresh = useCallback(() => {
     void client.listDesigns().then((list) => {
@@ -36,6 +38,8 @@ export function ObjectDesignerView(props: { projectName: string }) {
   useEffect(() => {
     refresh();
     void client.listWorkflows().then(setWorkflows).catch(() => setWorkflows([]));
+    // 卸载/切项目清理防抖 timer，避免在途 PUT 污染新项目状态
+    return () => { if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; } };
   }, [props.projectName, refresh]);
 
   const create = () => {
@@ -48,21 +52,27 @@ export function ObjectDesignerView(props: { projectName: string }) {
     }).catch((err) => setError(err instanceof Error ? err.message : '创建失败'));
   };
 
-  // 防抖保存表单字段：乐观更新本地状态，500ms 后 PUT
+  // 防抖保存表单字段：乐观更新本地状态；窗口内多次编辑合并累积 patch 一次 PUT
   const persist = (patch: Partial<Pick<DesignObject, 'name' | 'description' | 'style' | 'template'>>) => {
     if (!selected) return;
     const id = selected.id;
+    pendingRef.current = { ...pendingRef.current, ...patch };
     setSelected((s) => (s ? { ...s, ...patch } : s));
     setDesigns((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      void client.updateDesign(id, patch).catch(() => setError('保存失败，请重试'));
+      const toSend = pendingRef.current;
+      pendingRef.current = {};
+      void client.updateDesign(id, toSend).catch(() => setError('保存失败，请重试'));
     }, 500);
   };
 
   const remove = () => {
     if (!selected) return;
     if (!window.confirm(`删除设计对象「${selected.name}」？`)) return;
+    // 清防抖 timer：删除后不再发送针对已删对象的在途 PUT
+    if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+    pendingRef.current = {};
     const id = selected.id;
     void client.deleteDesign(id).then(() => {
       setDesigns((prev) => prev.filter((d) => d.id !== id));
@@ -72,25 +82,32 @@ export function ObjectDesignerView(props: { projectName: string }) {
 
   const aiOptimize = () => {
     if (!selected) return;
+    const id = selected.id; // 提前捕获：流式回调不依赖可能过期的 selected 闭包
     setAiBusy(true);
     const prompt = `${OBJECT_DESIGNER_SYSTEM}\n\n对象名称：${selected.name}\n风格：${selected.style || '（未指定）'}\n现有描述：${selected.description || '（暂无）'}`;
     void agentChat(prompt, [], (chunk) => {
-      // 流式追加到描述框：用函数式 setState 避免 selected 闭包过期
-      setSelected((s) => (s ? { ...s, description: s.description + chunk } : s));
-      setDesigns((prev) => prev.map((d) => (d.id === selected.id ? { ...d, description: d.description + chunk } : d)));
+      // 只追加到发起优化的对象：切换选中后不污染新对象（selected 与 designs 双向守卫）
+      setSelected((s) => (s && s.id === id ? { ...s, description: s.description + chunk } : s));
+      setDesigns((prev) => prev.map((d) => (d.id === id ? { ...d, description: d.description + chunk } : d)));
     }).catch(() => setError('AI 优化失败，请重试')).finally(() => setAiBusy(false));
   };
 
   const generate = () => {
     if (!selected) return;
+    const id = selected.id;
     setError('');
+    // 乐观置位：selected 与 designs 同步更新
     setSelected((s) => (s ? { ...s, status: 'generating' } : s));
-    void client.generateDesign(selected.id).then((d) => {
+    setDesigns((prev) => prev.map((d) => (d.id === id ? { ...d, status: 'generating' } : d)));
+    void client.generateDesign(id).then((d) => {
       setDesigns((prev) => prev.map((x) => (x.id === d.id ? d : x)));
-      setSelected(d);
+      // 生成期间用户若已切走，不强切回选中（仅更新列表）
+      setSelected((s) => (s && s.id === d.id ? d : s));
     }).catch((err) => {
-      setSelected((s) => (s ? { ...s, status: 'failed', error: err instanceof Error ? err.message : '生成失败' } : s));
-      setError(err instanceof Error ? err.message : '生成失败');
+      const msg = err instanceof Error ? err.message : '生成失败';
+      setDesigns((prev) => prev.map((x) => (x.id === id ? { ...x, status: 'failed', error: msg } : x)));
+      setSelected((s) => (s && s.id === id ? { ...s, status: 'failed', error: msg } : s));
+      setError(msg);
     });
   };
 

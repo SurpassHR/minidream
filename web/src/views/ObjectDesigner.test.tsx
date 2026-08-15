@@ -10,6 +10,20 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     const u = String(url);
     const method = init?.method ?? 'GET';
+    if (u.includes('/api/agent/chat')) {
+      // AI 优化流式：两帧 chunk（帧间 50ms 延迟模拟流式，期间允许用户切换选中对象）+ DONE
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        async start(controller) {
+          controller.enqueue(encoder.encode('data: {"chunk":"+A1"}\n\n'));
+          await new Promise((r) => setTimeout(r, 50));
+          controller.enqueue(encoder.encode('data: {"chunk":"+A2"}\n\n'));
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }
     if (u.includes('/api/workflows')) {
       return new Response(JSON.stringify({ workflows: ['test-t2i', 'anime-img'] }), { status: 200 });
     }
@@ -83,5 +97,46 @@ describe('ObjectDesignerView', () => {
     fireEvent.click(screen.getByText('⚙ 生成参考图'));
     await waitFor(() => expect(screen.getByAltText('参考图')).toBeInTheDocument());
     expect((screen.getByAltText('参考图') as HTMLImageElement).src).toContain('/api/assets/a1/file');
+  });
+
+  it('连续编辑两个字段：防抖后两个字段都保存（合并 patch，不丢中间修改）', async () => {
+    designs = [{ id: 'd1', kind: 'character', name: '精灵骑士', description: '', style: '', template: 'test-t2i', status: 'draft', createdAt: 1 }];
+    render(<ObjectDesignerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText('精灵骑士')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('精灵骑士'));
+    await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('精灵骑士'));
+    // 同一防抖窗口内连续修改两个字段：先改 name，再改 description
+    fireEvent.change(screen.getByTestId('design-name'), { target: { value: '精灵骑士王' } });
+    fireEvent.change(screen.getByTestId('design-desc'), { target: { value: '银发绿眸' } });
+    // 等待超过防抖窗口（500ms）+ PUT 执行
+    await new Promise((r) => setTimeout(r, 700));
+    // 最后一次（唯一一次）PUT 必须同时携带两个字段
+    const puts = vi.mocked(globalThis.fetch).mock.calls.filter(
+      ([url, init]) => String(url).includes('/api/designs/d1') && init?.method === 'PUT',
+    );
+    expect(puts.length).toBeGreaterThan(0);
+    const lastBody = JSON.parse(String(puts[puts.length - 1]![1]!.body)) as { patch: Record<string, unknown> };
+    expect(lastBody.patch.name).toBe('精灵骑士王');
+    expect(lastBody.patch.description).toBe('银发绿眸');
+  });
+
+  it('AI 优化期间切换到其他对象：描述不被污染', async () => {
+    designs = [
+      { id: 'a', kind: 'character', name: '角色A', description: 'A描述', style: '', template: 'test-t2i', status: 'draft', createdAt: 1 },
+      { id: 'b', kind: 'character', name: '角色B', description: 'B描述', style: '', template: 'test-t2i', status: 'draft', createdAt: 1 },
+    ];
+    render(<ObjectDesignerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText('角色A')).toBeInTheDocument());
+    // 选中 A 并触发 AI 优化（流式分帧：第一帧后切换选中）
+    fireEvent.click(screen.getByText('角色A'));
+    await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('角色A'));
+    fireEvent.click(screen.getByText('✨ AI 优化描述'));
+    // 立即切换到 B（第一帧到达前）
+    fireEvent.click(screen.getByText('角色B'));
+    await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('角色B'));
+    // 等待流式全部到达（两帧 50ms + DONE）
+    await new Promise((r) => setTimeout(r, 300));
+    // B 的描述保持原样，未被 AI chunk 污染
+    expect((screen.getByTestId('design-desc') as HTMLTextAreaElement).value).toBe('B描述');
   });
 });
