@@ -21,8 +21,9 @@ export function ObjectDesignerView(props: { projectName: string }) {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // 防抖合并累积的字段 patch：500ms 窗口内多次编辑合并为一次 PUT，避免丢中间修改
-  const pendingRef = useRef<Partial<Pick<DesignObject, 'name' | 'description' | 'style' | 'template'>>>({});
+  // 防抖合并累积的字段 patch：500ms 窗口内多次编辑合并为一次 PUT，避免丢中间修改。
+  // 按对象隔离 { id, patch }：切换选中对象后旧 pending 作废，绝不串对象（B 不会收到 A 的字段）。
+  const pendingRef = useRef<{ id: string; patch: Partial<Pick<DesignObject, 'name' | 'description' | 'style' | 'template'>> } | null>(null);
 
   const refresh = useCallback(() => {
     void client.listDesigns().then((list) => {
@@ -38,8 +39,11 @@ export function ObjectDesignerView(props: { projectName: string }) {
   useEffect(() => {
     refresh();
     void client.listWorkflows().then(setWorkflows).catch(() => setWorkflows([]));
-    // 卸载/切项目清理防抖 timer，避免在途 PUT 污染新项目状态
-    return () => { if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; } };
+    // 卸载/切项目清理防抖 timer 与 pending，避免在途 PUT 污染新项目状态
+    return () => {
+      if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+      pendingRef.current = null;
+    };
   }, [props.projectName, refresh]);
 
   const create = () => {
@@ -52,18 +56,25 @@ export function ObjectDesignerView(props: { projectName: string }) {
     }).catch((err) => setError(err instanceof Error ? err.message : '创建失败'));
   };
 
-  // 防抖保存表单字段：乐观更新本地状态；窗口内多次编辑合并累积 patch 一次 PUT
+  // 防抖保存表单字段：乐观更新本地状态；窗口内多次编辑合并累积 patch 一次 PUT；
+  // 切换对象后只保留当前对象的累积（pendingRef 按 id 隔离，跨对象不合并）
   const persist = (patch: Partial<Pick<DesignObject, 'name' | 'description' | 'style' | 'template'>>) => {
     if (!selected) return;
     const id = selected.id;
-    pendingRef.current = { ...pendingRef.current, ...patch };
-    setSelected((s) => (s ? { ...s, ...patch } : s));
+    // 同一对象继续累积；不同对象则丢弃旧 pending 以当前对象重建（快速切换时旧对象未落盘修改随之作废）
+    pendingRef.current = pendingRef.current && pendingRef.current.id === id
+      ? { id, patch: { ...pendingRef.current.patch, ...patch } }
+      : { id, patch };
+    setSelected((s) => (s && s.id === id ? { ...s, ...patch } : s));
     setDesigns((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      const toSend = pendingRef.current;
-      pendingRef.current = {};
-      void client.updateDesign(id, toSend).catch(() => setError('保存失败，请重试'));
+      const pending = pendingRef.current;
+      pendingRef.current = null;
+      if (pending) {
+        // 从 pending 取 id 发送（而非 timer 闭包捕获的 id）：修复切换对象后 timer 仍发旧对象的问题
+        void client.updateDesign(pending.id, pending.patch).catch(() => setError('保存失败，请重试'));
+      }
     }, 500);
   };
 
@@ -72,7 +83,7 @@ export function ObjectDesignerView(props: { projectName: string }) {
     if (!window.confirm(`删除设计对象「${selected.name}」？`)) return;
     // 清防抖 timer：删除后不再发送针对已删对象的在途 PUT
     if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
-    pendingRef.current = {};
+    pendingRef.current = null;
     const id = selected.id;
     void client.deleteDesign(id).then(() => {
       setDesigns((prev) => prev.filter((d) => d.id !== id));

@@ -110,14 +110,79 @@ describe('ObjectDesignerView', () => {
     fireEvent.change(screen.getByTestId('design-desc'), { target: { value: '银发绿眸' } });
     // 等待超过防抖窗口（500ms）+ PUT 执行
     await new Promise((r) => setTimeout(r, 700));
-    // 最后一次（唯一一次）PUT 必须同时携带两个字段
+    // 窗口内多次编辑必须合并为一次 PUT（不丢中间修改）
     const puts = vi.mocked(globalThis.fetch).mock.calls.filter(
       ([url, init]) => String(url).includes('/api/designs/d1') && init?.method === 'PUT',
     );
-    expect(puts.length).toBeGreaterThan(0);
+    expect(puts.length).toBe(1);
     const lastBody = JSON.parse(String(puts[puts.length - 1]![1]!.body)) as { patch: Record<string, unknown> };
     expect(lastBody.patch.name).toBe('精灵骑士王');
     expect(lastBody.patch.description).toBe('银发绿眸');
+  });
+
+  it('切换对象后编辑：防抖保存不串对象（快速切换丢弃旧 pending）', async () => {
+    designs = [
+      { id: 'dA', kind: 'character', name: '角色A', description: 'A描述', style: '', template: 'test-t2i', status: 'draft', createdAt: 1 },
+      { id: 'dB', kind: 'character', name: '角色B', description: 'B描述', style: '', template: 'test-t2i', status: 'draft', createdAt: 1 },
+    ];
+    render(<ObjectDesignerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText('角色A')).toBeInTheDocument());
+    // 选中 A → 改 name → 立即（防抖窗口内）切换 B → 改 description
+    fireEvent.click(screen.getByText('角色A'));
+    await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('角色A'));
+    fireEvent.change(screen.getByTestId('design-name'), { target: { value: 'A2' } });
+    fireEvent.click(screen.getByText('角色B'));
+    await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('角色B'));
+    fireEvent.change(screen.getByTestId('design-desc'), { target: { value: 'B2描述' } });
+    // 等待超过防抖窗口（500ms）+ PUT 执行
+    await new Promise((r) => setTimeout(r, 700));
+    // dB 的 PUT 只能携带 description，绝不能携带 A 的 name（旧实现此处失败：B 收到 {name:'A2', description:'B2'}）
+    const puts = vi.mocked(globalThis.fetch).mock.calls.filter(
+      ([url, init]) => String(url).includes('/api/designs/') && init?.method === 'PUT',
+    );
+    for (const [, init] of puts) {
+      const body = JSON.parse(String(init!.body)) as { patch: Record<string, unknown> };
+      expect(body.patch.name).toBeUndefined();
+    }
+    // dB 的 PUT 至少一次且携带新 description
+    const dBputs = puts.filter(([url]) => String(url).includes('/api/designs/dB'));
+    expect(dBputs.length).toBeGreaterThan(0);
+    const dBbody = JSON.parse(String(dBputs[0]![1]!.body)) as { patch: Record<string, unknown> };
+    expect(dBbody.patch.description).toBe('B2描述');
+    // dB 的 name 未被改成 A 的名字（mock PUT 已把 patch 应用到 designs）
+    expect((designs.find((d) => d.id === 'dB') as Record<string, unknown>).name).toBe('角色B');
+  });
+
+  it('切换对象后编辑：已落盘的 A 修改不串到 B（A 先落盘再切 B）', async () => {
+    designs = [
+      { id: 'dA', kind: 'character', name: '角色A', description: 'A描述', style: '', template: 'test-t2i', status: 'draft', createdAt: 1 },
+      { id: 'dB', kind: 'character', name: '角色B', description: 'B描述', style: '', template: 'test-t2i', status: 'draft', createdAt: 1 },
+    ];
+    render(<ObjectDesignerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText('角色A')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('角色A'));
+    await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('角色A'));
+    fireEvent.change(screen.getByTestId('design-name'), { target: { value: 'A2' } });
+    // 等待 A 的防抖落盘（>500ms）
+    await new Promise((r) => setTimeout(r, 700));
+    fireEvent.click(screen.getByText('角色B'));
+    await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('角色B'));
+    fireEvent.change(screen.getByTestId('design-desc'), { target: { value: 'B2描述' } });
+    await new Promise((r) => setTimeout(r, 700));
+    const puts = vi.mocked(globalThis.fetch).mock.calls.filter(
+      ([url, init]) => String(url).includes('/api/designs/') && init?.method === 'PUT',
+    );
+    // 两个独立 PUT：dA 只含 name，dB 只含 description（旧实现 dB 会收到 A2）
+    const dAput = puts.find(([url]) => String(url).includes('/api/designs/dA'));
+    const dBput = puts.find(([url]) => String(url).includes('/api/designs/dB'));
+    expect(dAput).toBeTruthy();
+    expect(dBput).toBeTruthy();
+    const dAbody = JSON.parse(String(dAput![1]!.body)) as { patch: Record<string, unknown> };
+    const dBbody = JSON.parse(String(dBput![1]!.body)) as { patch: Record<string, unknown> };
+    expect(dAbody.patch.name).toBe('A2');
+    expect(dAbody.patch.description).toBeUndefined();
+    expect(dBbody.patch.description).toBe('B2描述');
+    expect(dBbody.patch.name).toBeUndefined();
   });
 
   it('AI 优化期间切换到其他对象：描述不被污染', async () => {
