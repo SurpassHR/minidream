@@ -2,7 +2,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DirectorError, type DirectorNode } from '../types.js';
 
-const TEMPLATE_DIR = join(process.cwd(), 'workflows');
+// 模板目录：默认 <cwd>/workflows；测试可用 DIRECTOR_WORKFLOWS_DIR 覆盖（避免污染真实目录）
+function templateDir(): string {
+  return process.env.DIRECTOR_WORKFLOWS_DIR ?? join(process.cwd(), 'workflows');
+}
 
 function replaceVars(value: unknown, vars: Record<string, string | number | boolean>, missing: Set<string>): unknown {
   if (typeof value === 'string') {
@@ -40,7 +43,7 @@ export function buildWorkflow(
   templateName: string,
   vars: Record<string, string | number | boolean>,
 ): Record<string, unknown> {
-  const p = join(TEMPLATE_DIR, `${templateName}.template.json`);
+  const p = join(templateDir(), `${templateName}.template.json`);
   let template: unknown;
   try {
     template = JSON.parse(readFileSync(p, 'utf8'));

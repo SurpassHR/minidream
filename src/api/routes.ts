@@ -7,7 +7,7 @@ import {
 import { syncNodeToFile } from '../sync/dual-writer.js';
 import { listSnapshots, graphAtSnapshot, headSeq, futureSnapshotCount, approveOverwrite } from '../snapshots/snapshot-store.js';
 import { listWorkspace, readWorkspaceFile, searchWorkspace } from '../workspace/accessor.js';
-import { readFileSync, existsSync, mkdtempSync, createWriteStream, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, createWriteStream, rmSync, writeFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
@@ -20,6 +20,8 @@ import { listAssets, importAssetFile, importAssetText, deleteAsset, readAssetTex
 import { buildAgentPrompt, runAgentCollect, runAgentStream } from '../agent/bridge.js';
 import { appendChatMessage, readChatHistory } from '../agent/chat-history.js';
 import { readStory, saveStory, completeStory, buildStoryMarkdown } from '../story/store.js';
+import { listDesigns, createDesign, updateDesign, deleteDesign } from '../design/store.js';
+import type { DesignKind, DesignObject } from '../design/store.js';
 import {
   addProject, listProjects, removeProject, resolveSwitchTarget, resolveComfyUrl,
 } from '../projects/projects-store.js';
@@ -424,6 +426,67 @@ app.post('/api/story/complete', async (req, reply) => {
   completeStory(ctx.projectDir, new Date().toISOString());
   reply.code(201);
   return { asset, story: readStory(ctx.projectDir) };
+});
+
+// —— 物体设计器（object-designer 角色页）——
+// 对象设计列表存 .director/design.json；生成参考图走 /api/designs/:id/generate（Task 5）
+app.get('/api/workflows', async () => {
+  const wfDir = process.env.DIRECTOR_WORKFLOWS_DIR ?? join(process.cwd(), 'workflows');
+  const names: string[] = [];
+  try {
+    for (const f of readdirSync(wfDir)) {
+      const m = /^(.*)\.template\.json$/.exec(f);
+      if (m) names.push(m[1]!);
+    }
+  } catch {
+    // 目录不存在 → 空列表（前端显示「暂无模板」）
+  }
+  return { workflows: names.sort() };
+});
+
+app.get('/api/designs', async () => ({ designs: listDesigns(ctx.projectDir) }));
+
+app.post('/api/designs', async (req, reply) => {
+  const body = req.body as { kind?: string; name?: string };
+  try {
+    const design = createDesign(ctx.projectDir, body.kind as DesignKind, body.name ?? '');
+    reply.code(201);
+    return { design };
+  } catch (err) {
+    if (err instanceof DirectorError && err.code === 'INVALID_PATCH') {
+      return reply.code(400).send({ code: err.code, message: err.message });
+    }
+    throw err;
+  }
+});
+
+app.put('/api/designs/:id', async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const patch = (req.body as { patch?: Record<string, unknown> }).patch ?? {};
+  try {
+    return { design: updateDesign(ctx.projectDir, id, patch as Partial<DesignObject>) };
+  } catch (err) {
+    if (err instanceof DirectorError && err.code === 'NODE_NOT_FOUND') {
+      return reply.code(404).send({ code: err.code, message: err.message });
+    }
+    throw err;
+  }
+});
+
+app.delete('/api/designs/:id', async (req, reply) => {
+  const { id } = req.params as { id: string };
+  if (!confirmOf(req.query)) {
+    return reply.code(400).send({ code: 'CONFIRM_REQUIRED', message: '删除设计对象需 confirm=true' });
+  }
+  try {
+    deleteDesign(ctx.projectDir, id);
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof DirectorError && err.code === 'NODE_NOT_FOUND') {
+      return reply.code(404).send({ code: err.code, message: err.message });
+    }
+    throw err;
+  }
 });
 
 // —— 计划 4 Task 3：pi 桥 SSE 流式对话 ——
