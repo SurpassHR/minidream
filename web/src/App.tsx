@@ -15,9 +15,13 @@ import { GenQueue } from './panels/GenQueue';
 import { useGraphStore } from './store/graph';
 import { agentChat } from './api/agent';
 import { connectWs } from './api/ws';
+import { useHashRoute } from './router';
+import { StoryTellerView } from './views/StoryTellerView';
+import { ObjectDesignerView } from './views/ObjectDesignerView';
 
 // 五区布局骨架：各面板在后续任务替换为真实组件
 export default function App() {
+  const route = useHashRoute();
   const tasks = useGraphStore((s) => s.tasks);
   const graph = useGraphStore((s) => s.graph);
   const chips = useGraphStore((s) => s.chips);
@@ -303,6 +307,11 @@ export default function App() {
             <div className="logo-sub">DIRECTOR WORKBENCH</div>
           </div>
         </div>
+        <nav className="role-tabs" data-testid="role-tabs">
+          <a href="#/story-teller" className={`role-tab${route === 'story-teller' ? ' active' : ''}`} data-testid="tab-story-teller">故事向导</a>
+          <a href="#/object-designer" className={`role-tab${route === 'object-designer' ? ' active' : ''}`} data-testid="tab-object-designer">物体设计</a>
+          <a href="#/canvas" className={`role-tab${route === 'canvas' ? ' active' : ''}`} data-testid="tab-canvas">画布</a>
+        </nav>
         <div className="header-div" />
         <div className="project-name" data-testid="project-name" title={graph?.projectName}>{graph?.projectName ?? '加载中…'}</div>
         {comfyHealthy === null ? (
@@ -316,58 +325,66 @@ export default function App() {
         <button className="btn-ghost" onClick={() => setImportOpen(true)}>＋ 导入</button>
         <button className="run-btn"><span className="tri">▶</span>运行流水线</button>
       </header>
-      <main className="main">
-        <aside className="left" style={{ flexBasis: leftW }} data-testid="left-panel">
-          <div className="panel-title">项目 <span className="mini">手动添加 · 点击切换</span></div>
-          <ProjectList
-            projects={projects}
-            activePath={projects.find((p) => p.current)?.path ?? ''}
-            onSelect={handleProjectSelect}
-            onAdd={() => setAddProjectOpen(true)}
-            onRemove={askRemoveProject}
+      {route === 'canvas' ? (
+        <>
+          <main className="main">
+            <aside className="left" style={{ flexBasis: leftW }} data-testid="left-panel">
+              <div className="panel-title">项目 <span className="mini">手动添加 · 点击切换</span></div>
+              <ProjectList
+                projects={projects}
+                activePath={projects.find((p) => p.current)?.path ?? ''}
+                onSelect={handleProjectSelect}
+                onAdd={() => setAddProjectOpen(true)}
+                onRemove={askRemoveProject}
+              />
+              <div className="panel-title">素材库 <span className="mini">全局 · 跨项目</span></div>
+              <AssetLibrary items={assets ?? []} onDropToCanvas={handleDropToCanvas} onAssetsChanged={refreshAssets} />
+            </aside>
+            <div
+              className={`splitter splitter-v ${dragging === 'left' ? 'active' : ''}`}
+              data-testid="splitter-left"
+              title="拖拽调整宽度 · 双击恢复默认"
+              onMouseDown={onSplitterDown('left')}
+              onDoubleClick={onSplitterReset('left')}
+            />
+            <section
+              className="canvas" data-testid="canvas"
+              onDragOver={(e) => e.preventDefault()}
+            >
+              {/* 素材拖放位置换算在 CanvasView 内完成（screenToFlowPosition，
+                  节点出现在松手时光标处）；onAssetDrop 收到画布坐标 */}
+              <CanvasView onNodeSubmit={askSubmitGeneration} onDeleteNode={askDeleteNode} onAssetDrop={handleDropToCanvas} />
+            </section>
+            <div
+              className={`splitter splitter-v ${dragging === 'right' ? 'active' : ''}`}
+              data-testid="splitter-right"
+              title="拖拽调整宽度 · 双击恢复默认"
+              onMouseDown={onSplitterDown('right')}
+              onDoubleClick={onSplitterReset('right')}
+            />
+            <aside className="right" style={{ flexBasis: rightW }} data-testid="agent-panel">
+              <div className="panel-title">AGENT · pi <span className="mini">mmh3 skills</span></div>
+              <AgentPanel chips={chips} onChipsChange={handleChipsChange} onSend={handleAgentSend} onStream={handleAgentStream} models={agentModels} selectedModel={agentModel} onModelChange={setAgentModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={(v) => { setThinkingLevel(v); localStorage.setItem('dw:agentThinking', v); }} historyKey={graph?.projectName ?? 'none'} activity={agentActivity} />
+            </aside>
+          </main>
+          <div
+            className={`splitter splitter-h ${dragging === 'footer' ? 'active' : ''}`}
+            data-testid="splitter-footer"
+            title="拖拽调整高度 · 双击恢复默认"
+            onMouseDown={onSplitterDown('footer')}
+            onDoubleClick={onSplitterReset('footer')}
           />
-          <div className="panel-title">素材库 <span className="mini">全局 · 跨项目</span></div>
-          <AssetLibrary items={assets ?? []} onDropToCanvas={handleDropToCanvas} onAssetsChanged={refreshAssets} />
-        </aside>
-        <div
-          className={`splitter splitter-v ${dragging === 'left' ? 'active' : ''}`}
-          data-testid="splitter-left"
-          title="拖拽调整宽度 · 双击恢复默认"
-          onMouseDown={onSplitterDown('left')}
-          onDoubleClick={onSplitterReset('left')}
-        />
-        <section
-          className="canvas" data-testid="canvas"
-          onDragOver={(e) => e.preventDefault()}
-        >
-          {/* 素材拖放位置换算在 CanvasView 内完成（screenToFlowPosition，
-              节点出现在松手时光标处）；onAssetDrop 收到画布坐标 */}
-          <CanvasView onNodeSubmit={askSubmitGeneration} onDeleteNode={askDeleteNode} onAssetDrop={handleDropToCanvas} />
-        </section>
-        <div
-          className={`splitter splitter-v ${dragging === 'right' ? 'active' : ''}`}
-          data-testid="splitter-right"
-          title="拖拽调整宽度 · 双击恢复默认"
-          onMouseDown={onSplitterDown('right')}
-          onDoubleClick={onSplitterReset('right')}
-        />
-        <aside className="right" style={{ flexBasis: rightW }} data-testid="agent-panel">
-          <div className="panel-title">AGENT · pi <span className="mini">mmh3 skills</span></div>
-          <AgentPanel chips={chips} onChipsChange={handleChipsChange} onSend={handleAgentSend} onStream={handleAgentStream} models={agentModels} selectedModel={agentModel} onModelChange={setAgentModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={(v) => { setThinkingLevel(v); localStorage.setItem('dw:agentThinking', v); }} historyKey={graph?.projectName ?? 'none'} activity={agentActivity} />
-        </aside>
-      </main>
-      <div
-        className={`splitter splitter-h ${dragging === 'footer' ? 'active' : ''}`}
-        data-testid="splitter-footer"
-        title="拖拽调整高度 · 双击恢复默认"
-        onMouseDown={onSplitterDown('footer')}
-        onDoubleClick={onSplitterReset('footer')}
-      />
-      <footer className="footer" style={{ height: footerH }}>
-        <div className="timeline-wrap" data-testid="timeline"><Timeline /></div>
-        <div className="versions-wrap" data-testid="versions"><VersionsList onRollback={handleRollback} /></div>
-        <div className="queue-wrap" data-testid="queue"><GenQueue tasks={[...tasks.values()]} /></div>
-      </footer>
+          <footer className="footer" style={{ height: footerH }}>
+            <div className="timeline-wrap" data-testid="timeline"><Timeline /></div>
+            <div className="versions-wrap" data-testid="versions"><VersionsList onRollback={handleRollback} /></div>
+            <div className="queue-wrap" data-testid="queue"><GenQueue tasks={[...tasks.values()]} /></div>
+          </footer>
+        </>
+      ) : route === 'story-teller' ? (
+        <StoryTellerView projectName={graph?.projectName ?? ''} />
+      ) : (
+        <ObjectDesignerView projectName={graph?.projectName ?? ''} />
+      )}
       <ConfirmDialog
         open={confirm !== null}
         title={confirm?.title ?? ''}

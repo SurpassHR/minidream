@@ -35,6 +35,15 @@ beforeEach(() => {
     if (String(url).includes('/api/assets')) {
       return new Response(JSON.stringify({ assets: [] }), { status: 200 });
     }
+    if (String(url).includes('/api/story')) {
+      return new Response(JSON.stringify({ story: { step: 0, answers: {}, completedAt: null } }), { status: 200 });
+    }
+    if (String(url).includes('/api/designs')) {
+      return new Response(JSON.stringify({ designs: [] }), { status: 200 });
+    }
+    if (String(url).includes('/api/workflows')) {
+      return new Response(JSON.stringify({ workflows: ['test-t2i'] }), { status: 200 });
+    }
     return new Response(JSON.stringify({ graph: { projectName: 't', nodes: [], edges: [] } }), { status: 200 });
   }));
   // mock WebSocket：App 挂载会发起 WS 连接
@@ -130,5 +139,35 @@ describe('App 面板分割条', () => {
     fireEvent.mouseMove(window, { clientX: -5000, clientY: 100 });
     fireEvent.mouseUp(window);
     expect(left.style.flexBasis).toBe('160px'); // 最小 160
+  });
+});
+
+describe('角色路由 tab', () => {
+  it('顶栏渲染三个角色 tab，默认高亮画布', async () => {
+    render(<App />);
+    expect(screen.getByTestId('tab-story-teller')).toBeInTheDocument();
+    expect(screen.getByTestId('tab-object-designer')).toBeInTheDocument();
+    expect(screen.getByTestId('tab-canvas')).toBeInTheDocument();
+    expect(screen.getByTestId('tab-canvas').className).toContain('active');
+    // 默认路由渲染画布
+    expect(screen.getByTestId('canvas')).toBeInTheDocument();
+  });
+
+  it('点击故事向导 tab 切换到向导视图（URL hash 同步）', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByTestId('tab-story-teller'));
+    await waitFor(() => expect(screen.getByTestId('story-teller-view')).toBeInTheDocument());
+    expect(screen.getByTestId('tab-story-teller').className).toContain('active');
+    // 画布隐藏
+    expect(screen.queryByTestId('canvas')).not.toBeInTheDocument();
+    // hash 已更新
+    expect(window.location.hash).toBe('#/story-teller');
+  });
+
+  it('hash 初始化直接进入对应视图', async () => {
+    window.location.hash = '#/object-designer';
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('object-designer-view')).toBeInTheDocument());
+    window.location.hash = '';
   });
 });

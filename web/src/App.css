@@ -16,6 +16,17 @@
 .logo-name { font-weight: 600; letter-spacing: .06em; }
 .logo-sub { font-size: 9px; color: var(--text-faint); letter-spacing: .22em; }
 .header-div { width: 1px; height: 22px; background: var(--border); }
+
+/* 角色路由 tab（故事向导 / 物体设计 / 画布） */
+.role-tabs { display: flex; align-items: center; gap: 2px; margin-left: 4px; }
+.role-tab {
+  padding: 5px 12px; font-size: 12px; color: var(--text-dim);
+  border: 1px solid transparent; border-radius: 5px; text-decoration: none;
+  letter-spacing: .05em; transition: all .15s;
+}
+.role-tab:hover { color: var(--text); background: var(--bg); }
+.role-tab.active { color: var(--amber); border-color: var(--border-2); background: var(--bg); font-weight: 600; }
+.role-view { flex: 1; min-height: 0; overflow: auto; background: var(--bg); }
 .project-name { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
 .badge {
   display: flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 20px;
