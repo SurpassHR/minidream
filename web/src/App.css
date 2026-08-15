@@ -64,15 +64,40 @@
 /* 节点通用 */
 .node {
   width: 212px; background: var(--panel); border: 1px solid var(--border-2);
-  border-radius: 7px; box-shadow: 0 4px 14px rgba(0,0,0,.45); overflow: hidden;
+  border-radius: 7px; box-shadow: 0 4px 14px rgba(0,0,0,.45);
+  position: relative;
+  /* 不用 overflow: hidden：连接点（Handle）需要伸出节点边界；
+     内部元素的圆角裁剪由各自的 border-radius 承担 */
 }
+/* 连接点：节点左右边缘的小圆点，hover 光环提示可拖线。
+   注意：ReactFlow 用 transform: translate(-50%,-50%) 定位 handle，
+   动画不得覆盖 transform（scale 会顶掉定位导致跳位）——用背景色 + box-shadow 光环 */
+.react-flow__handle {
+  width: 9px; height: 9px; background: var(--border-2); border: 1.5px solid var(--panel);
+  transition: background .15s, box-shadow .15s;
+}
+.react-flow__handle:hover {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px rgba(232, 163, 61, .35);
+}
+.react-flow__handle.connecting { background: var(--amber); }
+.react-flow__node:hover .react-flow__handle { background: var(--text-faint); }
+.react-flow__node:hover .react-flow__handle:hover { background: var(--amber); }
 .node-head {
   height: 28px; display: flex; align-items: center; gap: 7px; padding: 0 9px;
   border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600;
+  border-radius: 6px 6px 0 0; /* 无 overflow:hidden 后自行承担上圆角裁剪 */
 }
 .node.shot .node-head {
   background: repeating-linear-gradient(45deg, #E8E6DF 0 5px, #10141D 5px 10px);
   color: #10141D;
+}
+/* 斜纹背景上任何纯色字都有一半看不清：标题文字放独立深色底块（浅色字），
+   与右侧时长徽章同风格；斜纹仍作为场记板装饰保留在两侧空隙 */
+.node.shot .node-head > span:first-child {
+  background: #10141D; color: #E8E6DF; border-radius: 3px;
+  padding: 1px 7px; font-weight: 600; max-width: 120px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .node.shot .dur {
   margin-left: auto; background: #10141D; color: var(--amber); border-radius: 3px;
@@ -247,6 +272,13 @@
 /* —— 确认对话框（破坏性操作确认门） —— */
 .dialog-mask { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
 .dialog { background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 10px; padding: 16px; width: 340px; }
+.dialog.dialog-wide { width: 560px; max-width: 90vw; }
+/* YAML 导出预览 */
+.yaml-preview {
+  background: #0d131d; border: 1px solid var(--border-2); border-radius: 6px;
+  padding: 10px 12px; overflow: auto; max-height: 46vh; font-family: var(--mono);
+  font-size: 11px; line-height: 1.55; color: var(--text); white-space: pre;
+}
 .dialog-title { font-weight: 600; margin-bottom: 8px; }
 .dialog-body { color: var(--text-dim); font-size: 12px; line-height: 1.6; margin-bottom: 14px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
@@ -408,5 +440,19 @@
 }
 .ctx-item:hover { background: var(--panel-3); color: var(--amber-soft); }
 .ctx-item.danger:hover { background: rgba(224,82,82,.14); color: var(--rec); }
+.ctx-item.sel { background: var(--panel-3); color: var(--amber-soft); }
+.ctx-label { font-size: 9.5px; color: var(--text-faint); letter-spacing: .08em; padding: 4px 9px 2px; font-family: var(--mono); }
 .ctx-sep { height: 1px; background: var(--border); margin: 4px 2px; }
 
+
+/* 连线终点拖拽点：hover 显示琥珀小圆点提示可拖（断开/重连） */
+.edge-drag-handle {
+  position: fixed; width: 14px; height: 14px; margin-left: -7px; margin-top: -7px;
+  border-radius: 50%; border: 1.5px solid transparent; cursor: crosshair;
+  z-index: 60; transition: background .15s, border-color .15s, box-shadow .15s;
+  background: rgba(232, 163, 61, .08);
+}
+.edge-drag-handle:hover {
+  background: rgba(232, 163, 61, .35); border-color: var(--amber);
+  box-shadow: 0 0 0 3px rgba(232, 163, 61, .25);
+}

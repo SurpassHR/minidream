@@ -12,6 +12,7 @@ import { client } from '../api/client';
 import { nodeTypes } from './nodes';
 import { edgeTypes } from './edges';
 import { NodeEditor, type EditorNode } from './NodeEditor';
+import { YamlExportDialog } from './YamlExportDialog';
 import type { DirectorEdge, DirectorNode, NodeType } from '../types';
 
 function toFlowNode(
@@ -60,6 +61,8 @@ function CanvasInner({ onNodeSubmit, onDeleteNode }: CanvasProps) {
   const [selected, setSelected] = useState<EditorNode | null>(null);
   const [menu, setMenu] = useState<CtxMenu | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  // YAML 导出结果（成功文本 / 校验错误）
+  const [yamlExport, setYamlExport] = useState<{ yaml: string | null; error: string | null } | null>(null);
   const { screenToFlowPosition, fitView } = useReactFlow();
 
   // WS 回推图时同步（后端为唯一事实来源）；订阅放 useEffect 避免重复注册
@@ -78,9 +81,24 @@ function CanvasInner({ onNodeSubmit, onDeleteNode }: CanvasProps) {
 
   const onConnect = useCallback((c: Connection) => {
     if (!c.source || !c.target) return;
-    void client.createEdge({ kind: 'ref', source: c.source, target: c.target });
-    setEdges((eds) => addEdge({ ...c, type: 'ref' }, eds));
+    // 拖线按端点类型自动推断边类型：shot→shot = chain（链式参考，剧情顺序）；
+    // 含 generation 端点 = exec（执行流）；其余 = ref（创作引用）
+    const typeOf = (id: string) => useGraphStore.getState().graph?.nodes.find((n) => n.id === id)?.type;
+    const st = typeOf(c.source);
+    const tt = typeOf(c.target);
+    const kind = st === 'shot' && tt === 'shot' ? 'chain'
+      : st === 'generation' || tt === 'generation' ? 'exec'
+      : 'ref';
+    void client.createEdge({ kind, source: c.source, target: c.target });
+    setEdges((eds) => addEdge({ ...c, type: kind }, eds));
   }, [setEdges]);
+
+  // 边被删除（Delete 键）→ 同步后端；onEdgesDelete 是 ReactFlow 标准回调。
+  // 注：连线终点拖拽断开/重连由自定义边组件（edges.tsx）的拖拽点实现，
+  // 不使用 onReconnect/onReconnectEnd（ReactFlow 存在导致边不渲染的边缘 bug）
+  const onEdgesDelete = useCallback((deleted: Edge[]) => {
+    for (const e of deleted) void client.deleteEdge(e.id);
+  }, []);
 
   // 点击节点 → 右上浮动编辑面板；点击空白 → 关闭
   const onNodeClick = useCallback((_e: unknown, n: FlowNode) => {
@@ -134,6 +152,18 @@ function CanvasInner({ onNodeSubmit, onDeleteNode }: CanvasProps) {
     closeMenu();
   }, [menu, screenToFlowPosition, closeMenu]);
 
+  // 导出画布 → MMH3 Prompt YAML（chain 拓扑序 = 剧情顺序）；失败展示后端校验错误
+  const exportYaml = useCallback(() => {
+    closeMenu();
+    setYamlExport({ yaml: null, error: null });
+    void client.exportPromptYaml()
+      .then((r) => setYamlExport({ yaml: r.yaml, error: null }))
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        setYamlExport({ yaml: null, error: msg });
+      });
+  }, [closeMenu]);
+
   // 自动编号：SHOT 01 / 02 …（按现有分镜节点数 +1）
   const nextShotNo = useCallback(() => {
     const count = graph?.nodes.filter((n) => n.type === 'shot').length ?? 0;
@@ -157,6 +187,38 @@ function CanvasInner({ onNodeSubmit, onDeleteNode }: CanvasProps) {
     };
   }, [menu]);
 
+
+  // —— 右键菜单：边 —— 改类型 / 删除 ——
+  const [edgeMenu, setEdgeMenu] = useState<{ x: number; y: number; edge: Edge } | null>(null);
+  const edgeMenuRef = useRef<HTMLDivElement | null>(null);
+  const onEdgeContextMenu = useCallback((e: ReactMouseEvent, ed: Edge) => {
+    e.preventDefault();
+    setMenu(null);
+    setEdgeMenu({ x: e.clientX, y: e.clientY, edge: ed });
+  }, []);
+
+  // 边类型切换（chain 改为线性校验由后端执行，失败时 WS 回推纠正）
+  const changeEdgeKind = useCallback((kind: 'ref' | 'chain' | 'exec') => {
+    if (!edgeMenu) return;
+    void client.updateEdge(edgeMenu.edge.id, { kind }).catch(() => {});
+    setEdgeMenu(null);
+  }, [edgeMenu]);
+
+  // 边菜单：Esc / 点击外部关闭
+  useEffect(() => {
+    if (!edgeMenu) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setEdgeMenu(null); };
+    const onOutside = (e: MouseEvent) => {
+      if (edgeMenuRef.current && !edgeMenuRef.current.contains(e.target as Node)) setEdgeMenu(null);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mousedown', onOutside);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onOutside);
+    };
+  }, [edgeMenu]);
+
   // 菜单尺寸估计（用于视口内钳位，避免贴边溢出）
   const menuH = menu?.kind === 'pane' ? 172 : 112;
   const menuX = menu ? Math.min(menu.x, Math.max(8, window.innerWidth - 190)) : 0;
@@ -176,7 +238,9 @@ function CanvasInner({ onNodeSubmit, onDeleteNode }: CanvasProps) {
         onPaneClick={onPaneClick}
         onNodeContextMenu={onNodeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
+        onEdgeContextMenu={onEdgeContextMenu}
         onConnect={onConnect}
+        onEdgesDelete={onEdgesDelete}
         fitView
         proOptions={{ hideAttribution: true }}
       >
@@ -205,6 +269,7 @@ function CanvasInner({ onNodeSubmit, onDeleteNode }: CanvasProps) {
               <button className="ctx-item" onClick={() => createNodeAt('params', `PARAMS ${nextShotNo()}`)}>＋ 新建参数节点</button>
               <button className="ctx-item" onClick={() => createNodeAt('prompt', `PROMPT ${nextShotNo()}`)}>＋ 新建提示词节点</button>
               <div className="ctx-sep" />
+              <button className="ctx-item" onClick={exportYaml}>⇩ 导出 Prompt YAML</button>
               <button className="ctx-item" onClick={() => { void fitView({ padding: 0.15 }); closeMenu(); }}>⤢ 适应视图</button>
             </>
           ) : (
@@ -220,12 +285,37 @@ function CanvasInner({ onNodeSubmit, onDeleteNode }: CanvasProps) {
           )}
         </div>
       )}
+      {/* 边右键菜单：改类型 / 删除 */}
+      {edgeMenu && (
+        <div
+          ref={edgeMenuRef}
+          className="ctx-menu"
+          style={{
+            left: Math.min(edgeMenu.x, Math.max(8, window.innerWidth - 190)),
+            top: Math.min(edgeMenu.y, Math.max(8, window.innerHeight - 130)),
+          }}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <div className="ctx-label">边类型（当前：{edgeMenu.edge.type}）</div>
+          <button className={`ctx-item ${edgeMenu.edge.type === 'ref' ? 'sel' : ''}`} onClick={() => changeEdgeKind('ref')}>ref · 创作引用（灰虚线）</button>
+          <button className={`ctx-item ${edgeMenu.edge.type === 'chain' ? 'sel' : ''}`} onClick={() => changeEdgeKind('chain')}>chain · 链式参考（琥珀实线）</button>
+          <button className={`ctx-item ${edgeMenu.edge.type === 'exec' ? 'sel' : ''}`} onClick={() => changeEdgeKind('exec')}>exec · 执行流（蓝实线）</button>
+          <div className="ctx-sep" />
+          <button className="ctx-item danger" onClick={() => { void client.deleteEdge(edgeMenu.edge.id); setEdgeMenu(null); }}>🗑 删除连线</button>
+        </div>
+      )}
       {selected && (
         <div className="ne-float">
           {/* key=selected.id：切换选中节点时强制重挂载，重置面板内部 state，避免显示旧节点内容但保存到新节点 */}
           <NodeEditor key={selected.id} node={selected} onClose={() => setSelected(null)} />
         </div>
       )}
+      <YamlExportDialog
+        open={yamlExport !== null}
+        yaml={yamlExport?.yaml ?? null}
+        error={yamlExport?.error ?? null}
+        onClose={() => setYamlExport(null)}
+      />
     </div>
   );
 }

@@ -1,5 +1,16 @@
-import type { NodeProps } from '@xyflow/react';
+import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { GenStatus } from '../types';
+
+// 连接点（Handle）：所有自定义节点渲染左右两个连接点，
+// 从右侧拖出 → 到目标节点左侧松开，即可创建连线（类型按端点自动推断）
+function Connectors() {
+  return (
+    <>
+      <Handle type="target" position={Position.Left} />
+      <Handle type="source" position={Position.Right} />
+    </>
+  );
+}
 
 export interface ShotData { title: string; fields: Record<string, unknown>; addChip?: () => void }
 export interface GenData {
@@ -16,6 +27,7 @@ export function ShotNode(props: NodeProps) {
   const d = props.data as unknown as ShotData;
   return (
     <div className="node shot">
+      <Connectors />
       <div className="node-head">
         <span>{d.title}</span>
         <span className="dur">{fmt(d.fields.duration)}</span>
@@ -37,6 +49,7 @@ export function GenerationNode(props: NodeProps) {
   const success = d.status === 'success';
   return (
     <div className={`node gen ${d.status ?? ''}`}>
+      <Connectors />
       <div className="node-head">
         <span>🎥 {d.title}</span>
         <span className={`gen-tag ${success ? 'ok' : running ? 'run' : ''}`}>
@@ -76,6 +89,7 @@ export function KeyframeNode(props: NodeProps) {
   const thumbs = (d.fields.thumbs as string[] | undefined) ?? [];
   return (
     <div className="node kf">
+      <Connectors />
       <div className="node-head">🖼 {d.title}</div>
       {thumbs.map((t, i) => (
         <div key={i} className={`thumb ${t}`}>
@@ -95,6 +109,7 @@ export function ParamsNode(props: NodeProps) {
   const entries = Object.entries((d.fields.params as Record<string, unknown>) ?? {});
   return (
     <div className="node params">
+      <Connectors />
       <div className="node-head">⚙ {d.title}</div>
       <div className="node-body">
         {entries.map(([k, v]) => (
@@ -113,6 +128,7 @@ function GenericNode(props: NodeProps) {
   const d = props.data as unknown as ShotData;
   return (
     <div className="node">
+      <Connectors />
       <div className="node-head">{d.title}</div>
       <div className="node-body">{fmt(d.fields.summary ?? d.fields.content)}</div>
       <div className="node-foot">
