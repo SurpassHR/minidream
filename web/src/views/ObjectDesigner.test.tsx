@@ -204,4 +204,24 @@ describe('ObjectDesignerView', () => {
     // B 的描述保持原样，未被 AI chunk 污染
     expect((screen.getByTestId('design-desc') as HTMLTextAreaElement).value).toBe('B描述');
   });
+
+  it('AI 优化完成后描述自动落盘（所见即所得）', async () => {
+    designs = [{ id: 'd1', kind: 'character', name: '精灵骑士', description: '', style: '', template: 'test-t2i', status: 'draft', createdAt: 1 }];
+    render(<ObjectDesignerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText('精灵骑士')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('精灵骑士'));
+    await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('精灵骑士'));
+    fireEvent.click(screen.getByText('✨ AI 优化描述'));
+    // 等待流式全部到达（两帧 50ms + DONE）+ finally 落盘
+    await new Promise((r) => setTimeout(r, 400));
+    // AI 完成后必须有一次 PUT 落盘完整描述（直接 PUT，不等 500ms 防抖）：
+    // generate 端点从后端 design.json 读 description，不落盘则参考图基于旧描述生成
+    const puts = vi.mocked(globalThis.fetch).mock.calls.filter(
+      ([url, init]) => String(url).includes('/api/designs/d1') && init?.method === 'PUT',
+    );
+    expect(puts.length).toBeGreaterThan(0);
+    const last = puts[puts.length - 1]![1] as RequestInit;
+    const body = JSON.parse(String(last.body)) as { patch: Record<string, unknown> };
+    expect(body.patch.description).toBe('+A1+A2');
+  });
 });

@@ -94,13 +94,24 @@ export function ObjectDesignerView(props: { projectName: string }) {
   const aiOptimize = () => {
     if (!selected) return;
     const id = selected.id; // 提前捕获：流式回调不依赖可能过期的 selected 闭包
+    const baseDesc = selected.description;
     setAiBusy(true);
     const prompt = `${OBJECT_DESIGNER_SYSTEM}\n\n对象名称：${selected.name}\n风格：${selected.style || '（未指定）'}\n现有描述：${selected.description || '（暂无）'}`;
+    // 本地累积最终描述（chunk 回调与 finally 共用；UI state 仍走函数式更新）
+    let acc = baseDesc;
     void agentChat(prompt, [], (chunk) => {
+      acc += chunk;
       // 只追加到发起优化的对象：切换选中后不污染新对象（selected 与 designs 双向守卫）
       setSelected((s) => (s && s.id === id ? { ...s, description: s.description + chunk } : s));
       setDesigns((prev) => prev.map((d) => (d.id === id ? { ...d, description: d.description + chunk } : d)));
-    }).catch(() => setError('AI 优化失败，请重试')).finally(() => setAiBusy(false));
+    }).catch(() => setError('AI 优化失败，请重试')).finally(() => {
+      setAiBusy(false);
+      // AI 流式完成后立即落盘最终描述（不等 500ms 防抖）：
+      // generate 端点从后端 design.json 读 description，不落盘则参考图基于旧描述生成（所见非所得）
+      if (acc !== baseDesc) {
+        void client.updateDesign(id, { description: acc }).catch(() => setError('保存失败，请重试'));
+      }
+    });
   };
 
   const generate = () => {
