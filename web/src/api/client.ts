@@ -356,9 +356,34 @@ export const client = {
 
   // —— 故事向导对话式 ——
   // 对话历史（独立 story-chat.json，与 AGENT 面板 chat.json 隔离）
-  async getStoryChatHistory(): Promise<Array<{ who: 'user' | 'agent'; text: string; at: number }>> {
-    const r = await req<{ messages: Array<{ who: 'user' | 'agent'; text: string; at: number }> }>('/api/story/chat/history');
+  async getStoryChatHistory(sessionId?: string | null): Promise<Array<{ who: 'user' | 'agent'; text: string; at: number }>> {
+    const q = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+    const r = await req<{ messages: Array<{ who: 'user' | 'agent'; text: string; at: number }> }>(`/api/story/chat/history${q}`);
     return r.messages ?? [];
+  },
+
+  // —— 故事对话式会话（多会话 CRUD；全部返回列表 + activeId）——
+  async listStorySessions(): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
+    const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>('/api/story/chat/sessions');
+    return r;
+  },
+  async createStorySession(): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
+    const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>('/api/story/chat/sessions', {
+      method: 'POST', body: JSON.stringify({}),
+    });
+    return r;
+  },
+  async renameStorySession(id: string, title: string): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
+    const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>(`/api/story/chat/sessions/${id}`, {
+      method: 'PATCH', body: JSON.stringify({ title }),
+    });
+    return r;
+  },
+  async deleteStorySession(id: string): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
+    const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>(`/api/story/chat/sessions/${id}`, {
+      method: 'DELETE', body: JSON.stringify({}),
+    });
+    return r;
   },
 
   // SSE 流式对话（协议同 /api/agent/chat，端点独立）；
@@ -369,11 +394,12 @@ export const client = {
     model?: string,
     thinking?: string,
     persistAs?: string,
+    sessionId?: string | null,
   ): Promise<void> {
     const res = await fetch('/api/story/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message, model, thinking, persistAs }),
+      body: JSON.stringify({ message, model, thinking, persistAs, sessionId: sessionId ?? undefined }),
     });
     if (!res.ok || !res.body) throw new Error(`story chat 请求失败: ${res.status}`);
     const reader = res.body.getReader();

@@ -22,6 +22,10 @@ beforeEach(() => {
         md: '# demo · 故事设定\n\n## 主题\n战争与和解',
       }), { status: 201 });
     }
+    // 会话分支必须先于 /api/story/chat（会话 URL 含 /api/story/chat 子串；StoryChat 挂载时先列会话）
+    if (u.includes('/api/story/chat/sessions')) {
+      return new Response(JSON.stringify({ sessions: [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }], activeId: 's1' }), { status: 200 });
+    }
     // chat 分支必须先于 /api/story（chat URL 含 /api/story 子串，否则被 GET 分支吞掉）
     if (u.includes('/api/story/chat')) {
       // GET history → 空历史；POST chat → SSE 六步答案帧（回填/总结用）

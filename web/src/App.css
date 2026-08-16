@@ -725,3 +725,24 @@
 .agent-session-act:hover { color: var(--amber); }
 .agent-session-empty { font-size: 11px; color: var(--text-faint); padding: 8px; text-align: center; }
 .agent-session-mask { position: fixed; inset: 0; z-index: 19; }
+
+/* ===== 故事对话式：会话列表面板 ===== */
+.chat-wrap { flex-direction: row; }  /* 覆盖原 column：左面板 + 聊天主区 */
+.session-panel {
+  flex: 0 0 150px; display: flex; flex-direction: column; gap: 8px; min-height: 0;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+}
+.session-new { font-size: 12px; }
+.session-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+.session-item { display: flex; align-items: center; gap: 4px; border-radius: 6px; padding: 5px 8px; cursor: pointer; }
+.session-item:hover { background: var(--panel-3); }
+.session-item.active { background: var(--amber-dim); border: 1px solid rgba(232, 163, 61, .35); }
+.session-select { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; background: none; border: none; cursor: pointer; text-align: left; }
+.session-title { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.session-date { font-family: var(--mono); font-size: 9px; color: var(--text-faint); }
+.session-acts { display: none; gap: 2px; }
+.session-item:hover .session-acts { display: flex; }
+.session-act { background: none; border: none; cursor: pointer; font-size: 11px; color: var(--text-faint); padding: 2px 4px; }
+.session-act:hover { color: var(--amber); }
+.session-empty { font-size: 11px; color: var(--text-faint); text-align: center; padding: 10px 0; }
+.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; min-height: 0; }

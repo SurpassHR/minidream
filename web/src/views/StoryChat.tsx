@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { client } from '../api/client';
 import { resolvePrompt } from './roles';
 import { AiButton, EmptyState, ErrorBanner } from './role-ui';
+import type { SessionMeta } from '../types';
 
 export interface ChatMsg { who: 'user' | 'agent'; text: string }
 
@@ -20,6 +21,16 @@ export function parseStoryAnswers(text: string): Record<string, string> {
   return out;
 }
 
+// 会话更新时间 → 短日期：当天显示 HH:mm，否则 MM-DD（同 AGENT 面板）
+function fmtSessionDate(at: number): string {
+  const d = new Date(at);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  return sameDay
+    ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    : `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export function StoryChat(props: {
   projectName: string;
   // 回填向导成功回调：携带解析出的答案（父组件写入 story.json 并切回向导式）
@@ -33,24 +44,39 @@ export function StoryChat(props: {
 }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
+  // 多会话：会话列表 + 当前会话 id（左侧列表面板）
+  const [sessions, setSessions] = useState<SessionMeta[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false); // 发送/总结/回填共用 busy（防并发）
   const [action, setAction] = useState<'summarize' | 'backfill' | null>(null);
 
-  // 项目切换/挂载时加载历史
+  // 项目切换/挂载时：加载会话列表 → 无会话自动新建 → 加载当前会话历史
   useEffect(() => {
     setMsgs([]);
     setLoaded(false);
     setError(''); // 切项目清残留错误（新项目可能有独立状态）
     let disposed = false;
-    void client.getStoryChatHistory().then((h) => {
-      if (disposed) return;
-      setMsgs(h.map((m) => ({ who: m.who, text: m.text })));
-      setLoaded(true);
-    }).catch(() => {
-      if (!disposed) { setError('加载对话历史失败'); setLoaded(true); }
-    });
+    const load = async () => {
+      try {
+        let r = await client.listStorySessions();
+        if (!r.activeId) r = await client.createStorySession();
+        if (disposed) return;
+        setSessions(r.sessions);
+        setActiveId(r.activeId);
+        if (r.activeId) {
+          const history = await client.getStoryChatHistory(r.activeId);
+          if (!disposed) {
+            setMsgs(history.map((m) => ({ who: m.who, text: m.text })));
+          }
+        }
+        if (!disposed) setLoaded(true);
+      } catch {
+        if (!disposed) { setError('加载对话历史失败'); setLoaded(true); }
+      }
+    };
+    void load();
     return () => { disposed = true; };
   }, [props.projectName]);
 
@@ -68,6 +94,48 @@ export function StoryChat(props: {
     });
   };
 
+  // 新建会话：流式中禁止（busy 期间切换会打乱正在落盘/流式的会话上下文）
+  const newSession = async () => {
+    if (busy) return;
+    const r = await client.createStorySession().catch(() => null);
+    if (!r) return;
+    setSessions(r.sessions);
+    setActiveId(r.activeId);
+    setMsgs([]);
+  };
+
+  // 点选历史会话：流式中禁止
+  const selectSession = (id: string) => {
+    if (busy) return;
+    if (id === activeId) return;
+    setActiveId(id);
+    setMsgs([]);
+    void client.getStoryChatHistory(id).then((history) => {
+      setMsgs(history.map((m) => ({ who: m.who, text: m.text })));
+    }).catch(() => {});
+  };
+
+  const renameSession = async (s: SessionMeta) => {
+    const title = window.prompt('会话标题', s.title);
+    if (!title || title.trim() === '' || title === s.title) return;
+    const r = await client.renameStorySession(s.id, title.trim()).catch(() => null);
+    if (r) setSessions(r.sessions);
+  };
+
+  const deleteSession = async (s: SessionMeta) => {
+    if (!window.confirm(`删除会话「${s.title}」？其消息将一并删除。`)) return;
+    const r = await client.deleteStorySession(s.id).catch(() => null);
+    if (!r) return;
+    setSessions(r.sessions);
+    setActiveId(r.activeId);
+    setMsgs([]);
+    if (r.activeId) {
+      void client.getStoryChatHistory(r.activeId).then((history) => {
+        setMsgs(history.map((m) => ({ who: m.who, text: m.text })));
+      }).catch(() => {});
+    }
+  };
+
   const send = () => {
     const text = input.trim();
     if (!text || busy) return;
@@ -75,7 +143,7 @@ export function StoryChat(props: {
     setBusy(true);
     setError('');
     setMsgs((m) => [...m, { who: 'user', text }]);
-    client.storyChat(text, appendStream)
+    client.storyChat(text, appendStream, undefined, undefined, undefined, activeId)
       .catch(() => appendStream('\n\n（agent 连接失败）'))
       .finally(() => setBusy(false));
   };
@@ -102,7 +170,7 @@ export function StoryChat(props: {
       await client.storyChat(prompt, (chunk) => {
         acc += chunk;
         appendStream(chunk);
-      }, undefined, undefined, persistAs);
+      }, undefined, undefined, persistAs, activeId);
       const answers = parseStoryAnswers(acc);
       if (Object.keys(answers).length === 0) {
         setError('未识别到答案格式，请重试');
@@ -128,47 +196,70 @@ export function StoryChat(props: {
 
   return (
     <div className="chat-wrap">
-      {props.completedAt && (
-        <div className="story-banner">✅ 已完成 · 已生成故事文档进素材库</div>
-      )}
-      <div className="chat-msgs">
-        {msgs.length === 0 && (
-          <EmptyState icon="💬" text="还没有对话，从任意创意开始吧——主题、角色、情节都可以聊" />
-        )}
-        {msgs.map((m, i) => (
-          <div key={i} className={`chat-msg ${m.who}`}>
-            <div className="chat-who">{m.who === 'user' ? 'YOU' : 'AI · 编剧'}</div>
-            <div className="chat-bubble">
-              {m.who === 'agent' ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
-              ) : m.text}
+      {/* 左侧会话列表面板：新建 / 点选 / 重命名 / 删除 */}
+      <div className="session-panel" data-testid="session-panel">
+        <button type="button" className="btn-ghost session-new" data-testid="session-new" onClick={() => { void newSession(); }}>＋ 新建会话</button>
+        <div className="session-list">
+          {sessions.map((s) => (
+            <div key={s.id} className={`session-item${s.id === activeId ? ' active' : ''}`} data-testid={`session-item-${s.id}`}>
+              <button type="button" className="session-select" onClick={() => selectSession(s.id)}>
+                <span className="session-title">{s.title}</span>
+                <span className="session-date">{fmtSessionDate(s.updatedAt)}</span>
+              </button>
+              <div className="session-acts">
+                <button type="button" className="session-act" data-testid={`session-rename-${s.id}`} title="重命名"
+                  onClick={() => { void renameSession(s); }}>✎</button>
+                <button type="button" className="session-act" data-testid={`session-del-${s.id}`} title="删除"
+                  onClick={() => { void deleteSession(s); }}>🗑</button>
+              </div>
             </div>
-          </div>
-        ))}
-        {busy && <div className="chat-thinking">⏳ AI 思考中…</div>}
+          ))}
+          {sessions.length === 0 && <div className="session-empty">暂无会话</div>}
+        </div>
       </div>
-      <div className="chat-input-row">
-        <textarea
-          className="ne-input chat-input" data-testid="chat-input"
-          placeholder="和编剧聊聊你的故事…（Enter 发送 · Shift+Enter 换行）"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
-          rows={2}
-        />
-        <button className="btn-primary" onClick={send} disabled={busy || !input.trim()}>发送</button>
+      <div className="chat-main">
+        {props.completedAt && (
+          <div className="story-banner">✅ 已完成 · 已生成故事文档进素材库</div>
+        )}
+        <div className="chat-msgs">
+          {msgs.length === 0 && (
+            <EmptyState icon="💬" text="还没有对话，从任意创意开始吧——主题、角色、情节都可以聊" />
+          )}
+          {msgs.map((m, i) => (
+            <div key={i} className={`chat-msg ${m.who}`}>
+              <div className="chat-who">{m.who === 'user' ? 'YOU' : 'AI · 编剧'}</div>
+              <div className="chat-bubble">
+                {m.who === 'agent' ? (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+                ) : m.text}
+              </div>
+            </div>
+          ))}
+          {busy && <div className="chat-thinking">⏳ AI 思考中…</div>}
+        </div>
+        <div className="chat-input-row">
+          <textarea
+            className="ne-input chat-input" data-testid="chat-input"
+            placeholder="和编剧聊聊你的故事…（Enter 发送 · Shift+Enter 换行）"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            rows={2}
+          />
+          <button className="btn-primary" onClick={send} disabled={busy || !input.trim()}>发送</button>
+        </div>
+        <div className="chat-actions">
+          <AiButton busy={busy && action === 'summarize'} onClick={summarize}>✨ 总结成稿</AiButton>
+          <AiButton busy={busy && action === 'backfill'} onClick={backfill}>↩ 回填向导</AiButton>
+          <span className="chat-hint">总结成稿：对话 → 完整故事文档入库；回填向导：对话 → 六步答案写入向导</span>
+        </div>
+        {error && <ErrorBanner text={error} />}
       </div>
-      <div className="chat-actions">
-        <AiButton busy={busy && action === 'summarize'} onClick={summarize}>✨ 总结成稿</AiButton>
-        <AiButton busy={busy && action === 'backfill'} onClick={backfill}>↩ 回填向导</AiButton>
-        <span className="chat-hint">总结成稿：对话 → 完整故事文档入库；回填向导：对话 → 六步答案写入向导</span>
-      </div>
-      {error && <ErrorBanner text={error} />}
     </div>
   );
 }
