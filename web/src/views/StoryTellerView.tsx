@@ -31,7 +31,7 @@ export function StoryTellerView(props: { projectName: string }) {
   });
   const switchMode = (m: 'wizard' | 'chat') => {
     setMode(m);
-    localStorage.setItem('dw:storyMode', m);
+    try { localStorage.setItem('dw:storyMode', m); } catch { /* 隐私模式等：仅本次会话生效 */ }
   };
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // AI 建议发起时的步骤 id：流式期间用户切步后丢弃过期 chunk（防污染新步骤草稿）
@@ -261,10 +261,11 @@ export function StoryTellerView(props: { projectName: string }) {
             <button className="btn-primary" onClick={() => void next()}>下一步 →</button>
           )}
         </div>
-        {error && <ErrorBanner text={error} />}
       </RoleCard>
         </>
       )}
+      {/* 错误横幅：对话式 / 向导式共用（提升到模式条件之外，避免 chat 模式静默失败） */}
+      {error && <ErrorBanner text={error} />}
     </div>
   );
 }
