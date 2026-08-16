@@ -209,7 +209,7 @@ describe('StoryTellerView', () => {
     );
     const body = JSON.parse(String(calls.at(-1)![1]?.body)) as { message: string };
     expect(body.message).toContain('定制建议系统提示词');
-    expect(body.message).not.toContain('你是导演工作台的故事向导角色');
+    expect(body.message).not.toContain('MiniMax H3 Prompt Director');
   });
 
   it('破甲开启时 AI 建议请求以预设文本开头', async () => {

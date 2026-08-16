@@ -80,7 +80,7 @@ describe('SettingsModal', () => {
       expect(screen.getByDisplayValue(n)).toBeInTheDocument();
     }
     // 故事向导条目内容 = 内置默认
-    expect(screen.getByDisplayValue(/你是导演工作台的「故事向导」角色/)).toBeInTheDocument();
+    expect(screen.getByDisplayValue(/MiniMax H3 Prompt Director/)).toBeInTheDocument();
   });
 
   it('已保存 prompts 直接展示（含自定义条目），不预填', () => {
@@ -117,7 +117,7 @@ describe('SettingsModal', () => {
       onClose={() => {}} onSaved={() => {}} onError={() => {}}
     />);
     fireEvent.click(screen.getByText('↺ 重置为默认提示词'));
-    expect(screen.getByDisplayValue(/你是导演工作台的「故事向导」角色/)).toBeInTheDocument();
+    expect(screen.getByDisplayValue(/MiniMax H3 Prompt Director/)).toBeInTheDocument();
     expect(screen.getByDisplayValue('custom')).toBeInTheDocument();
     expect(screen.getByDisplayValue('storyBackfill')).toBeInTheDocument();
   });
