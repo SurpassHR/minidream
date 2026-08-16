@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { client } from '../api/client';
@@ -33,14 +33,12 @@ export function StoryChat(props: {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false); // 发送/总结/回填共用 busy（防并发）
   const [action, setAction] = useState<'summarize' | 'backfill' | null>(null);
-  const dirtyRef = useRef(false);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // 项目切换/挂载时加载历史
   useEffect(() => {
-    dirtyRef.current = false;
     setMsgs([]);
     setLoaded(false);
+    setError(''); // 切项目清残留错误（新项目可能有独立状态）
     let disposed = false;
     void client.getStoryChatHistory().then((h) => {
       if (disposed) return;
@@ -69,7 +67,6 @@ export function StoryChat(props: {
   const send = () => {
     const text = input.trim();
     if (!text || busy) return;
-    dirtyRef.current = true;
     setInput('');
     setBusy(true);
     setError('');
@@ -83,7 +80,9 @@ export function StoryChat(props: {
   // 发送的 message 是组装好的角色+指令 prompt（后端会把它当用户消息落盘，
   // 落盘文本用「（请总结成稿）」等标记，避免把长指令污染进对话历史）；
   // 流式累积输出 → 解析六步答案 → 回调父组件。
-  const runAction = (kind: 'summarize' | 'backfill') => {
+  // try/catch/finally：连接失败时只提示连接失败，跳过解析与回调（
+  // 避免与「未识别到答案格式」同时出现两条矛盾提示）。
+  const runAction = async (kind: 'summarize' | 'backfill') => {
     if (busy) return;
     setBusy(true);
     setAction(kind);
@@ -92,10 +91,11 @@ export function StoryChat(props: {
     const prompt = `${STORY_CHAT_SYSTEM}\n\n${system}`;
     let acc = '';
     setMsgs((m) => [...m, { who: 'user', text: kind === 'summarize' ? '（请总结成稿）' : '（请回填向导）' }]);
-    client.storyChat(prompt, (chunk) => {
-      acc += chunk;
-      appendStream(chunk);
-    }).catch(() => appendStream('\n\n（agent 连接失败）')).then(() => {
+    try {
+      await client.storyChat(prompt, (chunk) => {
+        acc += chunk;
+        appendStream(chunk);
+      });
       const answers = parseStoryAnswers(acc);
       if (Object.keys(answers).length === 0) {
         setError('未识别到答案格式，请重试');
@@ -104,10 +104,12 @@ export function StoryChat(props: {
       } else {
         props.onSummarized(answers);
       }
-    }).finally(() => {
+    } catch {
+      appendStream('\n\n（agent 连接失败）');
+    } finally {
       setBusy(false);
       setAction(null);
-    });
+    }
   };
 
   const summarize = () => runAction('summarize');
@@ -137,7 +139,6 @@ export function StoryChat(props: {
       </div>
       <div className="chat-input-row">
         <textarea
-          ref={inputRef}
           className="ne-input chat-input" data-testid="chat-input"
           placeholder="和编剧聊聊你的故事…（Enter 发送 · Shift+Enter 换行）"
           value={input}

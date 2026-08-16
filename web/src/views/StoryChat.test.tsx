@@ -83,4 +83,46 @@ describe('StoryChat', () => {
     fireEvent.click(screen.getByText('↩ 回填向导'));
     await waitFor(() => expect(backfilled).toEqual({ theme: '战争与和解', protagonist: '精灵骑士' }));
   });
+
+  it('总结成稿：解析后回调 onSummarized 携带答案', async () => {
+    let summarized: Record<string, string> | null = null;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes('/api/story/chat/history')) {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat')) {
+        return new Response(
+          'data: {"chunk":"theme: 战争与和解\\nprotagonist: 精灵骑士"}\n\ndata: [DONE]\n\n',
+          { status: 200, headers: { 'content-type': 'text/event-stream' } },
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }));
+    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={(a) => { summarized = a; }} />);
+    await waitFor(() => expect(screen.getByText('✨ 总结成稿')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    await waitFor(() => expect(summarized).toEqual({ theme: '战争与和解', protagonist: '精灵骑士' }));
+  });
+
+  it('总结成稿连接失败：不显示格式错误（只提示连接失败）', async () => {
+    // mock POST /api/story/chat 返回 500：流式请求失败
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes('/api/story/chat/history')) {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat')) {
+        return new Response('err', { status: 500 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }));
+    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('✨ 总结成稿')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    // 出现连接失败提示
+    await waitFor(() => expect(screen.getByText(/（agent 连接失败）/)).toBeInTheDocument());
+    // 不出现格式错误提示（旧实现会同时显示两条矛盾提示）
+    expect(screen.queryByText('未识别到答案格式，请重试')).not.toBeInTheDocument();
+  });
 });
