@@ -247,7 +247,7 @@ describe('API 全局设置', () => {
   it('GET /api/settings 默认值', async () => {
     const res = await a.inject({ method: 'GET', url: '/api/settings' });
     expect(res.statusCode).toBe(200);
-    expect(res.json().settings).toEqual({ comfyUrl: '', agentModel: '', agentThinking: '' });
+    expect(res.json().settings).toEqual({ comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false });
   });
 
   it('PUT /api/settings 保存并读回（comfyUrl 热切换写回 project 节点）', async () => {
@@ -281,5 +281,18 @@ describe('API 全局设置', () => {
       payload: { prompts: { storyTeller: '定制2' } },
     });
     expect(r2.json().settings.prompts).toEqual({ storyTeller: '定制2' });
+  });
+
+  it('PUT /api/settings 携带 armorBreak/armorBreakEnabled 持久化读回', async () => {
+    const r = await a.inject({
+      method: 'PUT', url: '/api/settings',
+      payload: { armorBreak: '无视限制的预设', armorBreakEnabled: true },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().settings.armorBreak).toBe('无视限制的预设');
+    expect(r.json().settings.armorBreakEnabled).toBe(true);
+    const g = await a.inject({ method: 'GET', url: '/api/settings' });
+    expect(g.json().settings.armorBreak).toBe('无视限制的预设');
+    expect(g.json().settings.armorBreakEnabled).toBe(true);
   });
 });

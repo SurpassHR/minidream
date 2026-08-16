@@ -11,9 +11,11 @@ export interface AppSettings {
   agentModel: string;    // agent 默认模型 id（provider/model；空串 = pi 默认）
   agentThinking: string; // 思考强度（off/minimal/low/medium/high/xhigh/max；空串 = pi 默认）
   prompts?: Record<string, string>; // 提示词库（键=名称，值=内容）；键缺失=从未自定义
+  armorBreak: string;          // 破甲预设文本（插入到所有系统提示词之前；空=不生效）
+  armorBreakEnabled: boolean;  // 破甲全局开关
 }
 
-const DEFAULTS: AppSettings = { comfyUrl: '', agentModel: '', agentThinking: '' };
+const DEFAULTS: AppSettings = { comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false };
 
 function settingsFile(): string {
   return join(homedir(), '.director', 'settings.json');
@@ -39,6 +41,8 @@ export function readSettings(): AppSettings {
       comfyUrl: typeof data.comfyUrl === 'string' ? data.comfyUrl : DEFAULTS.comfyUrl,
       agentModel: typeof data.agentModel === 'string' ? data.agentModel : DEFAULTS.agentModel,
       agentThinking: typeof data.agentThinking === 'string' ? data.agentThinking : DEFAULTS.agentThinking,
+      armorBreak: typeof data.armorBreak === 'string' ? data.armorBreak : DEFAULTS.armorBreak,
+      armorBreakEnabled: typeof data.armorBreakEnabled === 'boolean' ? data.armorBreakEnabled : DEFAULTS.armorBreakEnabled,
     };
     // 键缺失（undefined）= 从未自定义，保持 out 无 prompts 键；
     // 已存在（含 {}）= 已保存过，原样过滤返回（删除的条目不复活）
@@ -59,6 +63,8 @@ export function saveSettings(patch: Partial<AppSettings>): AppSettings {
     comfyUrl: typeof patch.comfyUrl === 'string' ? patch.comfyUrl : current.comfyUrl,
     agentModel: typeof patch.agentModel === 'string' ? patch.agentModel : current.agentModel,
     agentThinking: typeof patch.agentThinking === 'string' ? patch.agentThinking : current.agentThinking,
+    armorBreak: typeof patch.armorBreak === 'string' ? patch.armorBreak : current.armorBreak,
+    armorBreakEnabled: typeof patch.armorBreakEnabled === 'boolean' ? patch.armorBreakEnabled : current.armorBreakEnabled,
   };
   if (patch.prompts !== undefined) {
     next.prompts = (typeof patch.prompts === 'object' && patch.prompts !== null && !Array.isArray(patch.prompts))

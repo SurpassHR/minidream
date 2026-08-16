@@ -366,13 +366,17 @@ export function mountRoutes(
 
   app.put('/api/settings', async (req) => {
     const body = req.body as {
-      comfyUrl?: string; agentModel?: string; agentThinking?: string; prompts?: Record<string, string>;
+      comfyUrl?: string; agentModel?: string; agentThinking?: string;
+      prompts?: Record<string, string>;
+      armorBreak?: string; armorBreakEnabled?: boolean;
     };
     const settings = saveSettings({
       comfyUrl: typeof body.comfyUrl === 'string' ? body.comfyUrl : undefined,
       agentModel: typeof body.agentModel === 'string' ? body.agentModel : undefined,
       agentThinking: typeof body.agentThinking === 'string' ? body.agentThinking : undefined,
       prompts: body.prompts,
+      armorBreak: typeof body.armorBreak === 'string' ? body.armorBreak : undefined,
+      armorBreakEnabled: typeof body.armorBreakEnabled === 'boolean' ? body.armorBreakEnabled : undefined,
     });
     // ComfyUI 地址变化 → 写回当前项目节点 + 热切换（复用 comfy/config 行为）
     if (settings.comfyUrl) {

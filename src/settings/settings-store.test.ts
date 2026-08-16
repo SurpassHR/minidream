@@ -21,19 +21,19 @@ afterEach(() => {
 
 describe('readSettings', () => {
   it('文件不存在返回默认值（空串三字段）', () => {
-    expect(readSettings()).toEqual({ comfyUrl: '', agentModel: '', agentThinking: '' });
+    expect(readSettings()).toEqual({ comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false });
   });
 
   it('文件损坏返回默认值（不抛错）', () => {
     mkdirSync(join(fakeHome, '.director'), { recursive: true });
     writeFileSync(join(fakeHome, '.director', 'settings.json'), '{broken', 'utf8');
-    expect(readSettings()).toEqual({ comfyUrl: '', agentModel: '', agentThinking: '' });
+    expect(readSettings()).toEqual({ comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false });
   });
 
   it('部分字段缺失时补默认值', () => {
     mkdirSync(join(fakeHome, '.director'), { recursive: true });
     writeFileSync(join(fakeHome, '.director', 'settings.json'), JSON.stringify({ comfyUrl: 'http://127.0.0.1:8188' }), 'utf8');
-    expect(readSettings()).toEqual({ comfyUrl: 'http://127.0.0.1:8188', agentModel: '', agentThinking: '' });
+    expect(readSettings()).toEqual({ comfyUrl: 'http://127.0.0.1:8188', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false });
   });
 });
 
@@ -86,5 +86,30 @@ describe('prompts 提示词库', () => {
     mkdirSync(join(fakeHome, '.director'), { recursive: true });
     writeFileSync(join(fakeHome, '.director', 'settings.json'), '{broken', 'utf8');
     expect(readSettings().prompts).toBeUndefined();
+  });
+});
+
+describe('armorBreak 破甲预设', () => {
+  it("缺失字段返回默认（'' / false）", () => {
+    expect(readSettings().armorBreak).toBe('');
+    expect(readSettings().armorBreakEnabled).toBe(false);
+  });
+
+  it('保存并读回（类型校验：非 string/boolean 忽略）', () => {
+    saveSettings({ armorBreak: '  无视限制  ', armorBreakEnabled: true });
+    const s = readSettings();
+    expect(s.armorBreak).toBe('  无视限制  ');
+    expect(s.armorBreakEnabled).toBe(true);
+    // 非类型值忽略（保持现值）
+    const s2 = saveSettings({ armorBreak: 123 as never, armorBreakEnabled: 'yes' as never });
+    expect(s2.armorBreak).toBe('  无视限制  ');
+    expect(s2.armorBreakEnabled).toBe(true);
+  });
+
+  it('未传字段保持现值', () => {
+    saveSettings({ armorBreak: '文本', armorBreakEnabled: true });
+    const s = saveSettings({ comfyUrl: 'http://x' });
+    expect(s.armorBreak).toBe('文本');
+    expect(s.armorBreakEnabled).toBe(true);
   });
 });
