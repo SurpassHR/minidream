@@ -1,9 +1,9 @@
 import './App.css';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import CanvasView from './canvas/CanvasView';
-import { ProjectList } from './panels/ProjectList';
 import type { ProjectInfo } from './types';
 import { AssetLibrary, type AssetItem } from './panels/AssetLibrary';
+import { ProjectSwitcher } from './panels/ProjectSwitcher';
 import { AddProjectDialog } from './panels/AddProjectDialog';
 import { ImportDialog } from './panels/ImportDialog';
 import { AgentPanel, type ChatMsg } from './panels/AgentPanel';
@@ -48,8 +48,8 @@ export default function App() {
     const v = Number(localStorage.getItem(key));
     return Number.isFinite(v) && v > 0 ? clamp(v, min, max) : def;
   };
-  const PANEL_DEFAULTS = { left: 232, right: 300, footer: 148 } as const;
-  const [leftW, setLeftW] = useState(() => stored('dw:leftW', 232, 160, 420));
+  const PANEL_DEFAULTS = { left: 270, right: 300, footer: 148 } as const;
+  const [leftW, setLeftW] = useState(() => stored('dw:leftW', 270, 200, 480));
   const [rightW, setRightW] = useState(() => stored('dw:rightW', 300, 240, 520));
   const [footerH, setFooterH] = useState(() => stored('dw:footerH', 148, 120, 360));
   const [dragging, setDragging] = useState<'left' | 'right' | 'footer' | null>(null);
@@ -68,7 +68,7 @@ export default function App() {
       const d = dragRef.current;
       if (!d) return;
       const delta = (d.kind === 'footer' ? e.clientY : e.clientX) - d.start;
-      if (d.kind === 'left') setLeftW(clamp(d.val + delta, 160, 420));
+      if (d.kind === 'left') setLeftW(clamp(d.val + delta, 200, 480));
       else if (d.kind === 'right') setRightW(clamp(d.val - delta, 240, 520));
       else setFooterH(clamp(d.val - delta, 120, 360));
     };
@@ -313,7 +313,14 @@ export default function App() {
           <a href="#/canvas" className={`role-tab${route === 'canvas' ? ' active' : ''}`} data-testid="tab-canvas">画布</a>
         </nav>
         <div className="header-div" />
-        <div className="project-name" data-testid="project-name" title={graph?.projectName}>{graph?.projectName ?? '加载中…'}</div>
+        <ProjectSwitcher
+          projects={projects}
+          activePath={projects.find((p) => p.current)?.path ?? ''}
+          fallbackName={graph?.projectName ?? ''}
+          onSelect={handleProjectSelect}
+          onAdd={() => setAddProjectOpen(true)}
+          onRemove={askRemoveProject}
+        />
         {comfyHealthy === null ? (
           <div className="badge"><span className="dot" style={{ background: 'var(--text-faint)' }} />COMFYUI&nbsp;检测中</div>
         ) : comfyHealthy ? (
@@ -329,14 +336,6 @@ export default function App() {
         <>
           <main className="main">
             <aside className="left" style={{ flexBasis: leftW }} data-testid="left-panel">
-              <div className="panel-title">项目 <span className="mini">手动添加 · 点击切换</span></div>
-              <ProjectList
-                projects={projects}
-                activePath={projects.find((p) => p.current)?.path ?? ''}
-                onSelect={handleProjectSelect}
-                onAdd={() => setAddProjectOpen(true)}
-                onRemove={askRemoveProject}
-              />
               <div className="panel-title">素材库 <span className="mini">全局 · 跨项目</span></div>
               <AssetLibrary items={assets ?? []} onDropToCanvas={handleDropToCanvas} onAssetsChanged={refreshAssets} />
             </aside>

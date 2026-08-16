@@ -1,46 +1,60 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { ProjectList } from './ProjectList';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { ProjectSwitcher } from './ProjectSwitcher';
 import { AssetLibrary } from './AssetLibrary';
 import type { AssetItem } from './AssetLibrary';
 
-describe('ProjectList', () => {
-  it('渲染项目并高亮当前项（含分镜统计与模式徽章）', () => {
-    render(<ProjectList
+describe('ProjectSwitcher', () => {
+  // 下拉面板默认收起：先点当前项目名展开；下拉内的查询用 within 限定（按钮也含项目名）
+  const openDropdown = () => fireEvent.click(screen.getByTestId('project-name'));
+  const dropdown = () => within(screen.getByTestId('project-dropdown'));
+
+  it('渲染当前项目名；展开后列出项目并高亮当前项（含分镜统计）', () => {
+    render(<ProjectSwitcher
       projects={[
         { path: '/p/elf', name: 'elf_and_goblin', current: true, shots: 3, duration: 11.25, mode: 'KEYFRAME' },
         { path: '/p/pose', name: 'pose-transfer', current: false, shots: -1, duration: -1, mode: 'REF2V' },
       ]}
-      activePath="/p/elf" onSelect={() => {}} onAdd={() => {}} onRemove={() => {}}
+      activePath="/p/elf" fallbackName="" onSelect={() => {}} onAdd={() => {}} onRemove={() => {}}
     />);
-    expect(screen.getByText('elf_and_goblin').closest('.proj')).toHaveClass('active');
-    expect(screen.getByText('pose-transfer').closest('.proj')).not.toHaveClass('active');
-    expect(screen.getByText('3 分镜 · 11.25s')).toBeInTheDocument();
+    // 按钮显示当前项目名
+    expect(screen.getByTestId('project-name')).toHaveTextContent('elf_and_goblin');
+    openDropdown();
+    expect(dropdown().getByText('elf_and_goblin').closest('.ps-item')).toHaveClass('active');
+    expect(dropdown().getByText('pose-transfer').closest('.ps-item')).not.toHaveClass('active');
+    expect(dropdown().getByText('3 分镜 · 11.25s')).toBeInTheDocument();
     // 无图数据项目显示占位文案而不是伪造统计
-    expect(screen.getByText('尚未构建画布')).toBeInTheDocument();
+    expect(dropdown().getByText('尚未构建画布')).toBeInTheDocument();
   });
 
-  it('点击项目触发 onSelect（传目录路径）', () => {
+  it('点击项目触发 onSelect（传目录路径）并收起下拉', () => {
     const onSelect = vi.fn();
-    render(<ProjectList
+    render(<ProjectSwitcher
       projects={[{ path: '/p/x', name: 'x', current: true, shots: 1, duration: 3.75, mode: '' }]}
-      activePath="/p/x" onSelect={onSelect} onAdd={() => {}} onRemove={() => {}}
+      activePath="/p/x" fallbackName="" onSelect={onSelect} onAdd={() => {}} onRemove={() => {}}
     />);
-    fireEvent.click(screen.getByText('x'));
+    openDropdown();
+    fireEvent.click(dropdown().getByText('x'));
     expect(onSelect).toHaveBeenCalledWith('/p/x');
+    expect(screen.queryByTestId('project-dropdown')).not.toBeInTheDocument();
   });
 
-  it('空列表显示空态与添加按钮；点击移除按钮触发 onRemove（不冒泡到 onSelect）', () => {
-    render(<ProjectList projects={[]} activePath="" onSelect={() => {}} onAdd={() => {}} onRemove={() => {}} />);
-    expect(screen.getByText('尚未添加项目')).toBeInTheDocument();
-    expect(screen.getByText('＋ 添加项目')).toBeInTheDocument();
+  it('空列表显示空态与添加按钮', () => {
+    render(<ProjectSwitcher projects={[]} activePath="" fallbackName="" onSelect={() => {}} onAdd={() => {}} onRemove={() => {}} />);
+    openDropdown();
+    expect(dropdown().getByText('尚未添加项目')).toBeInTheDocument();
+    expect(dropdown().getByText('＋ 添加项目')).toBeInTheDocument();
+  });
+
+  it('移除按钮触发 onRemove（不冒泡到 onSelect）', () => {
     const onRemove = vi.fn();
     const onSelect = vi.fn();
-    render(<ProjectList
+    render(<ProjectSwitcher
       projects={[{ path: '/p/y', name: 'y', current: false, shots: 1, duration: 3.75, mode: '' }]}
-      activePath="" onSelect={onSelect} onAdd={() => {}} onRemove={onRemove}
+      activePath="" fallbackName="" onSelect={onSelect} onAdd={() => {}} onRemove={onRemove}
     />);
-    fireEvent.click(screen.getByTitle('从项目栏移除（不删除目录）'));
+    openDropdown();
+    fireEvent.click(dropdown().getByTitle('从项目栏移除（不删除目录）'));
     expect(onRemove).toHaveBeenCalledWith('/p/y', 'y');
     expect(onSelect).not.toHaveBeenCalled();
   });

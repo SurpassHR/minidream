@@ -70,9 +70,10 @@ describe('App 布局骨架', () => {
     expect(screen.getByTestId('timeline')).toBeInTheDocument();
     expect(screen.getByTestId('versions')).toBeInTheDocument();
     expect(screen.getByTestId('queue')).toBeInTheDocument();
-    // 图/项目列表异步到达后：头部项目名 + 项目栏渲染真实数据（当前项目 + 统计）
+    // 图/项目列表异步到达后：头部项目名 + 展开下拉后项目列表渲染真实数据（当前项目 + 统计）
     await waitFor(() => expect(screen.getByTestId('project-name')).toHaveTextContent('t'));
-    expect(screen.getByTestId('project-t')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('project-name'));
+    await waitFor(() => expect(screen.getByTestId('project-t')).toBeInTheDocument());
     expect(screen.getByText('2 分镜 · 7.5s')).toBeInTheDocument();
   });
 
@@ -88,16 +89,22 @@ describe('App 布局骨架', () => {
   });
 });
 
-describe('项目栏高亮', () => {
+describe('顶栏项目切换器高亮', () => {
   it('点击项目只切换高亮，不调整列表顺序', async () => {
     render(<App />);
-    await waitFor(() => expect(screen.getByTestId('project-t')).toBeInTheDocument());
-    const items = () => Array.from(document.querySelectorAll('.proj'));
+    await waitFor(() => expect(screen.getByTestId('project-name')).toHaveTextContent('t'));
+    // 展开下拉
+    fireEvent.click(screen.getByTestId('project-name'));
+    await waitFor(() => expect(screen.getByTestId('project-dropdown')).toBeInTheDocument());
+    const items = () => Array.from(document.querySelectorAll('.ps-item'));
     expect(items()).toHaveLength(2);
     expect(items()[0]!.classList.contains('active')).toBe(true); // t 首位高亮
     // 点击 b：只移动高亮，t 仍在首位
     fireEvent.click(screen.getByTestId('project-b'));
     await waitFor(() => expect(screen.getByTestId('project-name')).toHaveTextContent('b'));
+    // 重新展开查看高亮顺序
+    fireEvent.click(screen.getByTestId('project-name'));
+    await waitFor(() => expect(screen.getByTestId('project-dropdown')).toBeInTheDocument());
     expect(items()[0]!.querySelector('.pname')?.textContent).toBe('t');
     expect(items()[0]!.classList.contains('active')).toBe(false);
     expect(items()[1]!.querySelector('.pname')?.textContent).toBe('b');
@@ -109,13 +116,13 @@ describe('App 面板分割条', () => {
   it('拖拽左分割条改变左栏宽度并持久化', async () => {
     render(<App />);
     const left = screen.getByTestId('left-panel');
-    expect(left.style.flexBasis).toBe('232px');
+    expect(left.style.flexBasis).toBe('270px');
     // 模拟拖拽：按下 → window 移动 +100px → 抬起
     fireEvent.mouseDown(screen.getByTestId('splitter-left'), { clientX: 300, clientY: 100 });
     fireEvent.mouseMove(window, { clientX: 400, clientY: 100 });
     fireEvent.mouseUp(window);
-    expect(left.style.flexBasis).toBe('332px');
-    expect(localStorage.getItem('dw:leftW')).toBe('332');
+    expect(left.style.flexBasis).toBe('370px');
+    expect(localStorage.getItem('dw:leftW')).toBe('370');
   });
 
   it('拖拽下分割条改变底部高度，双击恢复默认', async () => {
@@ -138,7 +145,7 @@ describe('App 面板分割条', () => {
     fireEvent.mouseDown(screen.getByTestId('splitter-left'), { clientX: 100, clientY: 100 });
     fireEvent.mouseMove(window, { clientX: -5000, clientY: 100 });
     fireEvent.mouseUp(window);
-    expect(left.style.flexBasis).toBe('160px'); // 最小 160
+    expect(left.style.flexBasis).toBe('200px'); // 最小 200
   });
 });
 

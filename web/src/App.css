@@ -28,6 +28,46 @@
 .role-tab.active { color: var(--amber); border-color: var(--border-2); background: var(--bg); font-weight: 600; }
 .role-view { flex: 1; min-height: 0; overflow: auto; background: var(--bg); }
 .project-name { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+
+/* —— 顶栏项目切换器（项目 = 故事向导 + 物体设计 + 画布） —— */
+.project-switcher { position: relative; }
+.project-switch-btn {
+  display: flex; align-items: center; gap: 7px; padding: 5px 12px;
+  background: none; border: 1px solid var(--border-2); border-radius: 5px;
+  color: var(--text); font-family: var(--mono); font-size: 12px; cursor: pointer;
+  transition: all .15s;
+}
+.project-switch-btn:hover { border-color: var(--amber); color: var(--amber); }
+.ps-ico { font-size: 11px; }
+.ps-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ps-caret { color: var(--text-faint); font-size: 10px; }
+.project-dropdown {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 80;
+  width: 280px; max-height: 60vh; overflow: auto;
+  background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.55); padding: 8px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.ps-title { font-size: 10px; letter-spacing: .14em; color: var(--text-dim); padding: 4px 8px 8px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.ps-title .mini { font-family: var(--mono); font-size: 10px; color: var(--text-faint); letter-spacing: 0; }
+.ps-item {
+  display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 6px;
+  cursor: pointer; transition: background .12s; position: relative;
+}
+.ps-item:hover { background: var(--panel-3); }
+.ps-item.active { background: rgba(232, 163, 61, .07); }
+.ps-item.active .pname { color: var(--amber); }
+.ps-item .pinfo { flex: 1; min-width: 0; }
+.ps-item .pname { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ps-item .pmeta { font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+.ps-check { color: var(--amber); font-size: 12px; }
+.ps-item .proj-remove { opacity: 0; transition: opacity .12s; }
+.ps-item:hover .proj-remove { opacity: 1; }
+.ps-add {
+  margin-top: 4px; padding: 7px; border: 1px dashed var(--border-2); border-radius: 6px;
+  background: none; color: var(--text-dim); font-size: 12px; cursor: pointer; transition: all .15s;
+}
+.ps-add:hover { border-color: var(--amber); color: var(--amber); }
 .badge {
   display: flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 20px;
   border: 1px solid var(--border-2); font-size: 11px; color: var(--text-dim);
