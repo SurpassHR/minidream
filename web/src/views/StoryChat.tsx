@@ -262,7 +262,7 @@ export function StoryChat(props: {
           <button className="btn-primary" onClick={send} disabled={busy || !input.trim()}>发送</button>
         </div>
         <div className="chat-actions">
-          <AiButton busy={busy} onClick={summarize}>✨ 总结成稿</AiButton>
+          <AiButton busy={busy && action === 'summarize'} onClick={summarize}>✨ 总结成稿</AiButton>
           <span className="chat-hint">总结成稿：对话 → 完整故事文档入库</span>
         </div>
         {error && <ErrorBanner text={error} />}

@@ -24,7 +24,12 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
       setMd(m ?? null);
       setLoaded(true);
     }).catch(() => {
-      if (!disposed) { setError('加载故事进度失败'); setLoaded(true); }
+      if (!disposed) {
+        // GET 失败：清空剧本栏（切项目后不得残留上一项目已完成的 md）
+        setMd(null);
+        setError('加载故事进度失败');
+        setLoaded(true);
+      }
     });
     return () => { disposed = true; };
   }, [props.projectName]);

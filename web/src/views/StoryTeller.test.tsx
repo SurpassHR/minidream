@@ -3,6 +3,8 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { StoryTellerView } from './StoryTellerView';
 
 const STORY_API: { story: { step: number; answers: Record<string, string>; completedAt: string | null } } = { story: { step: 0, answers: {}, completedAt: null } };
+// GET /api/story 失败开关：置 true 后 GET 分支返回 500（模拟切项目后加载失败）
+let GET_STORY_FAIL = false;
 
 beforeEach(() => {
   localStorage.clear();
@@ -43,6 +45,8 @@ beforeEach(() => {
         const body = JSON.parse(String(init?.body)) as { answers?: Record<string, string> };
         STORY_API.story = { ...STORY_API.story, answers: { ...STORY_API.story.answers, ...(body.answers ?? {}) } };
       }
+      // GET 失败开关：模拟切项目后加载失败（不得残留上一项目已完成的 md）
+      if (GET_STORY_FAIL) return new Response(JSON.stringify({}), { status: 500 });
       return new Response(JSON.stringify({ ...STORY_API, md: STORY_API.story.completedAt ? '# demo · 故事设定' : null }), { status: 200 });
     }
     return new Response(JSON.stringify({}), { status: 404 });
@@ -53,6 +57,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe('StoryTellerView 对话式', () => {
   beforeEach(() => {
     STORY_API.story = { step: 0, answers: {}, completedAt: null };
+    GET_STORY_FAIL = false;
   });
 
   it('仅对话式：无模式 tab 与向导元素，显示聊天区', async () => {
@@ -98,5 +103,19 @@ describe('StoryTellerView 对话式', () => {
     await waitFor(() => expect(screen.getByTestId('script-viewer')).toBeInTheDocument());
     // 已完成项目挂载：md 从 GET 响应恢复并渲染到剧本栏
     expect(screen.getByTestId('script-viewer')).toHaveTextContent('# demo · 故事设定');
+  });
+
+  it('GET 失败：右侧栏回占位并显示错误横幅（不残留上一项目剧本）', async () => {
+    STORY_API.story = { step: 5, answers: { theme: 't' }, completedAt: '2026-08-15T00:00:00.000Z' };
+    const { rerender } = render(<StoryTellerView projectName="demoA" />);
+    // 项目 A 已完成：右侧栏展示剧本
+    await waitFor(() => expect(screen.getByTestId('script-viewer')).toBeInTheDocument());
+    expect(screen.getByTestId('script-viewer')).toHaveTextContent('# demo · 故事设定');
+    // 切到项目 B 且 GET 失败：不得残留项目 A 的剧本（md 清空回占位 + 错误横幅）
+    GET_STORY_FAIL = true;
+    rerender(<StoryTellerView projectName="demoB" />);
+    await waitFor(() => expect(screen.getByText('加载故事进度失败')).toBeInTheDocument());
+    expect(screen.queryByTestId('script-viewer')).not.toBeInTheDocument();
+    expect(screen.getByTestId('script-sidebar')).toHaveTextContent('剧本将在这里展示');
   });
 });

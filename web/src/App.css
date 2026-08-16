@@ -568,29 +568,10 @@
 .role-error { color: var(--rec); font-size: 12px; padding: 8px 12px; border: 1px solid rgba(224, 82, 82, .25); border-radius: 6px; background: rgba(224, 82, 82, .06); line-height: 1.5; }
 .role-loading { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-faint); letter-spacing: .1em; }
 
-/* ===== story-teller 向导（窄列聚焦 + 场记板步骤轨道） ===== */
+/* ===== story-teller（对话式 + 完成横幅 + 剧本栏） ===== */
 .story-view { max-width: min(1480px, 96vw); margin: 0 auto; width: 100%; }
 .story-step-meta { font-family: var(--mono); color: var(--amber); }
-.story-track { display: flex; gap: 8px; margin-bottom: 2px; }
-.track-seg {
-  position: relative; flex: 1; height: 42px; display: flex; align-items: center; justify-content: center;
-  border: 1px solid var(--border-2); border-radius: 8px; background: var(--panel); cursor: pointer;
-  font-family: var(--mono); font-size: 12px; color: var(--text-faint); transition: all .18s;
-}
-.track-seg:hover { border-color: var(--text-dim); color: var(--text); }
-.track-seg.done { border-color: rgba(79, 174, 126, .45); color: var(--ok); background: rgba(79, 174, 126, .06); }
-.track-seg.cur {
-  border-color: var(--amber); color: var(--amber); background: rgba(232, 163, 61, .08);
-  box-shadow: 0 0 0 1px var(--amber), 0 0 14px rgba(232, 163, 61, .22); font-weight: 600;
-}
-.track-mark { position: absolute; top: 3px; right: 6px; font-size: 9px; line-height: 1; }
 .story-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border: 1px solid rgba(79, 174, 126, .4); border-radius: 8px; background: rgba(79, 174, 126, .08); color: var(--ok); font-size: 13px; }
-.story-card { max-width: 100%; }
-.story-q { font-size: 18px; font-weight: 600; }
-.story-hint { font-size: 12px; color: var(--text-faint); }
-.story-actions { display: flex; align-items: center; gap: 12px; }
-.story-save-hint { font-size: 11px; color: var(--ok); font-family: var(--mono); }
-.story-nav { display: flex; justify-content: space-between; margin-top: 4px; }
 
 /* ===== object-designer 设计器（左分类右表单 + 定妆照灯箱） ===== */
 .designer-view { max-width: min(1480px, 96vw); margin: 0 auto; width: 100%; }
