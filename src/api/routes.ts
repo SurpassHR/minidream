@@ -20,7 +20,9 @@ import { listAssets, importAssetFile, importAssetText, deleteAsset, readAssetTex
 import { buildWorkflow } from '../comfy/workflow.js';
 import { buildAgentPrompt, runAgentCollect, runAgentStream } from '../agent/bridge.js';
 import { appendChatMessage, readChatHistory } from '../agent/chat-history.js';
+import type { ChatMessage } from '../agent/chat-history.js';
 import { readStory, saveStory, completeStory, resetStory, buildStoryMarkdown } from '../story/store.js';
+import { readStoryChat, appendStoryChat } from '../story/chat-store.js';
 import { listDesigns, createDesign, updateDesign, deleteDesign } from '../design/store.js';
 import type { DesignKind, DesignObject } from '../design/store.js';
 import {
@@ -68,6 +70,39 @@ export function writeAgentMcpConfig(mcpPort: number): string | null {
   } catch {
     return null;
   }
+}
+
+// —— 故事向导对话式（story-chat）prompt 构造 ——
+// 对话式 prompt 携带：项目名 + 向导答案摘要 + 最近 20 条历史 + 用户消息（纯函数，便于测试）
+const STORY_CHAT_HISTORY_WINDOW = 20;
+
+export function buildStoryChatPrompt(
+  projectName: string,
+  answers: Record<string, string>,
+  history: ChatMessage[],
+  message: string,
+): string {
+  const parts: string[] = [];
+  parts.push('你是导演工作台的故事编剧（story-teller 对话模式）。你正在帮用户自由构思一个视频故事的创意。');
+  parts.push('要求：');
+  parts.push('1. 直接给出创作建议、扩展点子或追问，像资深编剧与导演讨论剧本一样自然；');
+  parts.push('2. 结合项目设定与已有向导进度，不要重复用户已写的内容；');
+  parts.push('3. 每次回答 100-200 字，聚焦推进故事；');
+  parts.push('4. 用中文回答。');
+  parts.push(`\n当前项目：${projectName}`);
+  const filled = Object.entries(answers).filter(([, v]) => v && v.trim());
+  if (filled.length > 0) {
+    parts.push('向导进度（已完成部分）：');
+    for (const [id, v] of filled) parts.push(`  ${id}: ${v}`);
+  }
+  if (history.length > 0) {
+    parts.push('\n对话历史：');
+    for (const h of history.slice(-STORY_CHAT_HISTORY_WINDOW)) {
+      parts.push(`  ${h.who === 'user' ? '用户' : '编剧'}：${h.text}`);
+    }
+  }
+  parts.push(`\n用户消息：\n${message}`);
+  return parts.join('\n');
 }
 
 
@@ -432,6 +467,95 @@ app.post('/api/story/complete', async (req, reply) => {
 // 重新生成：清空进度与 completedAt，回到第一步（spec 4.3 重新生成入口）
 app.post('/api/story/reset', async () => {
   return { story: resetStory(ctx.projectDir) };
+});
+
+// —— 故事向导对话式（story-chat）——
+// 历史独立存 .director/story-chat.json（与 AGENT 面板 chat.json 隔离）
+app.get('/api/story/chat/history', async () => ({ messages: readStoryChat(ctx.projectDir) }));
+
+app.post('/api/story/chat', async (req, reply) => {
+  const body = req.body as { message?: string; model?: string; thinking?: string };
+  const message = (body.message ?? '').trim();
+  if (!message) {
+    return reply.code(400).send({ code: 'INVALID_PATCH', message: '消息不能为空' });
+  }
+  // 组装对话上下文：项目名 + 向导答案 + 最近历史（全上下文）
+  const graph = loadGraph(ctx.projectDir);
+  const story = readStory(ctx.projectDir);
+  const history = readStoryChat(ctx.projectDir);
+  const prompt = buildStoryChatPrompt(graph.projectName, story.answers, history, message);
+
+  const cmd = (process.env.DIRECTOR_PI_CMD ?? 'pi --mode json').split(' ').filter(Boolean);
+  if (!process.env.DIRECTOR_PI_CMD) {
+    const mcpPort = Number(process.env.DIRECTOR_MCP_PORT ?? 4778);
+    const mcpFile = writeAgentMcpConfig(mcpPort);
+    if (mcpFile) cmd.push('--mcp-config', mcpFile);
+  }
+  if (body.model) cmd.push('--model', body.model);
+  if (body.thinking && THINKING_LEVELS.includes(body.thinking)) {
+    cmd.push('--thinking', body.thinking);
+  }
+
+  reply.raw.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache',
+    connection: 'keep-alive',
+  });
+  const send = (text: string) => reply.raw.write(`data: ${JSON.stringify({ chunk: text })}\n\n`);
+  // 用户消息先落盘（不依赖 pi 是否正常退出）；agent 全文在流结束后落盘
+  appendStoryChat(ctx.projectDir, 'user', message);
+  let agentText = '';
+  let pending = '';
+  let flushTimer: NodeJS.Timeout | null = null;
+  const flushPending = () => {
+    if (pending) { send(pending); pending = ''; }
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+  };
+  const pushDelta = (delta: string) => {
+    agentText += delta;
+    pending += delta;
+    if (pending.length >= 120) flushPending();
+    else if (!flushTimer) flushTimer = setTimeout(flushPending, 60);
+  };
+  const sendCollect = (line: string): boolean => {
+    const t = line.trim();
+    if (t.startsWith('{')) {
+      try {
+        const ev = JSON.parse(t) as {
+          type?: string;
+          assistantMessageEvent?: { type?: string; delta?: string };
+        };
+        if (ev.type === 'message_update' && ev.assistantMessageEvent?.type === 'text_delta') {
+          const delta = ev.assistantMessageEvent.delta ?? '';
+          if (delta) pushDelta(delta);
+        }
+        return ev.type === 'agent_end';
+      } catch {
+        // 解析失败按文本行处理
+      }
+    }
+    agentText += t + '\n';
+    send(t);
+    return false;
+  };
+  try {
+    const idleMs = Number(process.env.DIRECTOR_AGENT_IDLE_MS) || 45_000;
+    await runAgentStream(cmd, prompt, sendCollect, {
+      idleTimeoutMs: idleMs,
+      env: {
+        DIRECTOR_PROJECT_DIR: ctx.projectDir,
+        DIRECTOR_PROJECT_NAME: graph.projectName,
+      },
+    });
+    flushPending();
+    appendStoryChat(ctx.projectDir, 'agent', agentText);
+    if (agentText.trim().length === 0) send('\n\n（输出为空）');
+    reply.raw.write('data: [DONE]\n\n');
+  } catch (err) {
+    send(`（agent 启动失败：${err instanceof Error ? err.message : String(err)}）`);
+    reply.raw.write('data: [DONE]\n\n');
+  }
+  reply.raw.end();
 });
 
 // —— 物体设计器（object-designer 角色页）——

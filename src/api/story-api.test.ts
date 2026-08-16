@@ -91,3 +91,43 @@ describe('API 故事向导', () => {
     expect(res2.statusCode).toBe(201);
   });
 });
+
+describe('API 故事对话', () => {
+  it('GET /api/story/chat/history 空历史返回空列表', async () => {
+    const res = await a.inject({ method: 'GET', url: '/api/story/chat/history' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().messages).toEqual([]);
+  });
+
+  it('POST /api/story/chat 流式响应并落盘历史（mock pi 输出）', async () => {
+    // mock pi：DIRECTOR_PI_CMD 指向 mock-agent（afterEach 的 unstubAllEnvs 统一清理）；
+    // 短回复单段输出（mock-agent 按 5 字符分段，'mock' 恰好一段，避免 SSE 帧拆开断言）
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_REPLY', 'mock');
+    const res = await a.inject({
+      method: 'POST', url: '/api/story/chat',
+      payload: { message: '你好' },
+    });
+    expect(res.statusCode).toBe(200);
+    // SSE 帧协议：data: {"chunk":"..."} 至少一帧 + [DONE]
+    expect(res.body).toContain('data: [DONE]');
+    expect(res.body).toContain('mock');
+    // 历史已落盘（用户消息 + agent 全文）
+    const hist = await a.inject({ method: 'GET', url: '/api/story/chat/history' });
+    const messages = hist.json().messages;
+    expect(messages).toHaveLength(2);
+    expect(messages[0].who).toBe('user');
+    expect(messages[0].text).toBe('你好');
+    expect(messages[1].who).toBe('agent');
+    expect(messages[1].text).toBe('mock');
+  });
+
+  it('POST /api/story/chat 空消息返回 400', async () => {
+    const res = await a.inject({
+      method: 'POST', url: '/api/story/chat',
+      payload: { message: '   ' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('INVALID_PATCH');
+  });
+});
