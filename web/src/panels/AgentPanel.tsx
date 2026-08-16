@@ -65,7 +65,7 @@ export function AgentPanel(props: {
             setMsgs(history.map((h) => ({ who: h.who, text: h.text })));
           }
         }
-      } catch { /* 加载失败静默：发送时兜底自动建会话 */ }
+      } catch { /* 加载失败静默：activeId 为 null 时发送仍可用，后端回退到当前会话兜底 */ }
     };
     void load();
     return () => { disposed = true; };

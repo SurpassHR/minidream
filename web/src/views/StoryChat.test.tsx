@@ -313,4 +313,50 @@ describe('StoryChat', () => {
     await waitFor(() => expect(screen.queryByText('新名字')).not.toBeInTheDocument());
     vi.restoreAllMocks();
   });
+
+  it('流式中点删除会话：busy 守卫不触发 DELETE 请求', async () => {
+    // 覆盖 mock：POST /api/story/chat 返回延迟流（首帧 80ms 后），期间 busy 保持 true；
+    // confirm 置 true——若无 busy 守卫，删除会真的发出 DELETE（与 jsdom confirm 默认 false 区分）
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? 'GET';
+      if (u.includes('/api/story/chat/sessions')) {
+        return new Response(JSON.stringify({ sessions: [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }], activeId: 's1' }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat/history')) {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat')) {
+        if (method === 'POST') {
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream({
+            async start(controller) {
+              await new Promise((r) => setTimeout(r, 80));
+              controller.enqueue(encoder.encode('data: {"chunk":"慢流"}\n\n'));
+              controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+              controller.close();
+            },
+          });
+          return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+        }
+        return new Response(JSON.stringify({}), { status: 404 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }));
+    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('session-item-s1')).toBeInTheDocument());
+    const input = screen.getByTestId('chat-input');
+    fireEvent.change(input, { target: { value: '主角是谁？' } });
+    fireEvent.click(screen.getByText('发送'));
+    // 流式未完成（首帧 80ms 后）：立即点删除，busy 守卫应直接返回
+    fireEvent.click(screen.getByTestId('session-del-s1'));
+    // 等待流式结束（若误触发 DELETE，早已发出）
+    await new Promise((r) => setTimeout(r, 150));
+    const delCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/story/chat/sessions') && (c[1] as RequestInit)?.method === 'DELETE',
+    );
+    expect(delCalls.length).toBe(0);
+    vi.restoreAllMocks();
+  });
 });

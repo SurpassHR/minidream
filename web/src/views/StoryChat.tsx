@@ -101,6 +101,7 @@ export function StoryChat(props: {
     if (!r) return;
     setSessions(r.sessions);
     setActiveId(r.activeId);
+    setError(''); // 新空会话清残留错误（旧会话可能报过加载/格式错误）
     setMsgs([]);
   };
 
@@ -122,7 +123,9 @@ export function StoryChat(props: {
     if (r) setSessions(r.sessions);
   };
 
+  // 删除会话：流式中禁止（否则在途流式 POST 会落盘到刚删除的会话，幽灵 AI 文本进入空视图）
   const deleteSession = async (s: SessionMeta) => {
+    if (busy) return;
     if (!window.confirm(`删除会话「${s.title}」？其消息将一并删除。`)) return;
     const r = await client.deleteStorySession(s.id).catch(() => null);
     if (!r) return;
