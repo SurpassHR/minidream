@@ -51,7 +51,7 @@ export function SettingsModal(props: {
       setAgentModel(props.settings.agentModel);
       setAgentThinking(props.settings.agentThinking);
       setPromptEntries(
-        Object.entries(ROLE_PROMPT_KEYS).map(([key, def]) => ({
+        (Object.entries(ROLE_PROMPT_KEYS) as Array<[RolePromptKey, string]>).map(([key, def]) => ({
           key,
           value: props.settings.prompts?.[key] ?? def,
         })),
@@ -73,7 +73,7 @@ export function SettingsModal(props: {
   // 重置全部 3 角色条目为内置默认
   const resetDefaults = () => {
     setPromptEntries(
-      Object.entries(ROLE_PROMPT_KEYS).map(([key, value]) => ({ key, value })),
+      (Object.entries(ROLE_PROMPT_KEYS) as Array<[RolePromptKey, string]>).map(([key, value]) => ({ key, value })),
     );
   };
 
