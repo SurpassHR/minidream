@@ -196,11 +196,15 @@ describe('StoryTellerView 模式切换', () => {
   it('默认向导式，切到对话式后显示聊天区', async () => {
     render(<StoryTellerView projectName="demo" />);
     await waitFor(() => expect(screen.getByText(/故事主题是什么/)).toBeInTheDocument());
-    // 默认向导式
+    // 默认向导式：头部显示第几步
     expect(screen.getByTestId('story-answer')).toBeInTheDocument();
+    expect(screen.getByText(/第 1\/6 步/)).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('mode-chat'));
     await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
     expect(screen.queryByTestId('story-answer')).not.toBeInTheDocument();
+    // 对话式无步骤概念：不显示「第 X/6 步」
+    expect(screen.queryByText(/第 \d+\/6 步/)).not.toBeInTheDocument();
+    expect(screen.getByText(/自由对话 · 探索故事方向/)).toBeInTheDocument();
   });
 
   it('对话式回填向导：answers 写入后切回向导式并显示答案', async () => {

@@ -189,7 +189,12 @@ export function StoryTellerView(props: { projectName: string }) {
       <RoleHeader
         eyebrow="STORY TELLER"
         title="故事向导"
-        meta={<span className="story-step-meta">第 {story.step + 1}/{STORY_STEPS.length} 步</span>}
+        meta={
+          // 第几步是向导式（问卷）的概念：对话式无步骤，meta 显示模式提示
+          mode === 'wizard'
+            ? <span className="story-step-meta">第 {story.step + 1}/{STORY_STEPS.length} 步</span>
+            : <span className="story-step-meta">自由对话 · 探索故事方向</span>
+        }
       />
       {/* 模式切换：向导式 / 对话式 */}
       <div className="role-mode-tabs" role="tablist" aria-label="向导模式">
