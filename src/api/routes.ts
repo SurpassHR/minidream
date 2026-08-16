@@ -88,9 +88,10 @@ export function buildStoryChatPrompt(
   answers: Record<string, string>,
   history: ChatMessage[],
   message: string,
+  systemPrompt?: string,
 ): string {
   const parts: string[] = [];
-  parts.push('你是导演工作台的故事编剧（story-teller 对话模式）。你正在帮用户自由构思一个视频故事的创意。');
+  parts.push(systemPrompt?.trim() || '你是导演工作台的故事编剧（story-teller 对话模式）。你正在帮用户自由构思一个视频故事的创意。');
   parts.push('要求：');
   parts.push('1. 直接给出创作建议、扩展点子或追问，像资深编剧与导演讨论剧本一样自然；');
   parts.push('2. 结合项目设定与已有向导进度，不要重复用户已写的内容；');
@@ -571,7 +572,7 @@ app.get('/api/story/chat/history', async (req) => {
 });
 
 app.post('/api/story/chat', async (req, reply) => {
-  const body = req.body as { message?: string; model?: string; thinking?: string; persistAs?: string; sessionId?: string };
+  const body = req.body as { message?: string; model?: string; thinking?: string; persistAs?: string; sessionId?: string; systemPrompt?: string };
   const message = (body.message ?? '').trim();
   if (!message) {
     return reply.code(400).send({ code: 'INVALID_PATCH', message: '消息不能为空' });
@@ -581,7 +582,7 @@ app.post('/api/story/chat', async (req, reply) => {
   const story = readStory(ctx.projectDir);
   const sessionId = body.sessionId ?? null;
   const history = readStoryChat(ctx.projectDir, sessionId);
-  const prompt = buildStoryChatPrompt(graph.projectName, story.answers, history, message);
+  const prompt = buildStoryChatPrompt(graph.projectName, story.answers, history, message, body.systemPrompt);
 
   const cmd = (process.env.DIRECTOR_PI_CMD ?? 'pi --mode json').split(' ').filter(Boolean);
   if (!process.env.DIRECTOR_PI_CMD) {

@@ -296,3 +296,17 @@ describe('API 全局设置', () => {
     expect(g.json().settings.armorBreakEnabled).toBe(true);
   });
 });
+
+describe('buildStoryChatPrompt 纯函数', () => {
+  it('buildStoryChatPrompt：systemPrompt 替换写死文本；缺省兜底', async () => {
+    const { buildStoryChatPrompt } = await import('./routes.js');
+    const base = buildStoryChatPrompt('p', {}, [], '你好');
+    expect(base).toContain('你是导演工作台的故事编剧');
+    const custom = buildStoryChatPrompt('p', {}, [], '你好', '你是定制系统提示词');
+    expect(custom).toContain('你是定制系统提示词');
+    expect(custom).not.toContain('你是导演工作台的故事编剧');
+    // 空白 systemPrompt 视为缺省
+    const blank = buildStoryChatPrompt('p', {}, [], '你好', '   ');
+    expect(blank).toContain('你是导演工作台的故事编剧');
+  });
+});
