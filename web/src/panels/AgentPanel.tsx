@@ -22,8 +22,10 @@ export function AgentPanel(props: {
   onChipsChange: (chips: string[]) => void;
   onSend: (text: string, chips: string[], sessionId?: string | null) => ChatMsg[];
   // 可选流式通道：发送后由外部（真实 agent 桥）逐块推送文本，追加到消息流最后一条 agent 消息；
-  // 未提供时面板自行请求 agentChat（测试/独立挂载仍可流式渲染）
-  onStream?: (text: string, chips: string[], push: (chunk: string) => void, sessionId?: string | null) => void;
+  // 未提供时面板自行请求 agentChat（测试/独立挂载仍可流式渲染）。
+  // 返回 Promise 时面板进入 streaming 锁（期间禁止切换/新建/删除会话，防旧会话流式污染新视图）；
+  // 同步调用（无 Promise）不锁，保持旧行为。
+  onStream?: (text: string, chips: string[], push: (chunk: string) => void, sessionId?: string | null) => Promise<void> | void;
   // 模型切换（内置 agent 下拉）：列表来自 /api/agent/models；空字符串 = pi 默认模型
   models?: Array<{ id: string; provider: string; thinking: boolean }>;
   selectedModel?: string;
@@ -42,8 +44,17 @@ export function AgentPanel(props: {
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pickOpen, setPickOpen] = useState(false);
+  // 流式锁：onStream 返回 Promise（真实 agent 桥）或面板自行 agentChat 时置 true；
+  // 期间禁止会话切换/新建/删除——否则旧会话的流式 push 会污染新选中的视图
+  const [streaming, setStreaming] = useState(false);
   // 用户已发送标记：历史加载是异步的，若加载完成前用户已发消息，不覆盖进行中的对话
   const dirtyRef = useRef(false);
+
+  // 发送完成后重新拉取会话列表：后端在首条用户消息后自动命名会话并 bump updatedAt，
+  // 不刷新则当前会话一直显示「新会话」直到页面重载
+  const refreshSessions = () => {
+    void client.listAgentSessions().then((r) => setSessions(r.sessions)).catch(() => {});
+  };
 
   // 挂载与 historyKey 变化（切换项目）时：加载会话列表 → 无会话自动新建 → 加载当前会话消息；
   // 失败静默（保持空对话；发送时若 activeId 为 null 后端回退到当前会话兜底）
@@ -74,6 +85,7 @@ export function AgentPanel(props: {
   const currentTitle = sessions.find((s) => s.id === activeId)?.title ?? '新会话';
 
   const newSession = async () => {
+    if (streaming) return; // 流式中禁止：切换会打乱正在流式的会话上下文
     const r = await client.createAgentSession().catch(() => null);
     if (!r) return;
     setSessions(r.sessions);
@@ -84,6 +96,7 @@ export function AgentPanel(props: {
   };
 
   const selectSession = (id: string) => {
+    if (streaming) return; // 流式中禁止：旧会话流式会污染新选中的视图
     if (id === activeId) return;
     setActiveId(id);
     dirtyRef.current = false;
@@ -101,9 +114,15 @@ export function AgentPanel(props: {
   };
 
   const deleteSession = async (s: SessionMeta) => {
+    if (streaming) return; // 流式中禁止：在途流式 POST 会落盘到刚删除的会话
     if (!window.confirm(`删除会话「${s.title}」？其消息将一并删除。`)) return;
-    const r = await client.deleteAgentSession(s.id).catch(() => null);
+    let r = await client.deleteAgentSession(s.id).catch(() => null);
     if (!r) return;
+    if (!r.activeId) {
+      // 删光会话：自动新建一个空会话，避免下次发送聊进 UI 看不见的会话（后端自动创建，UI 无从得知）
+      const created = await client.createAgentSession().catch(() => null);
+      r = created ?? r;
+    }
     setSessions(r.sessions);
     setActiveId(r.activeId);
     setPickOpen(false);
@@ -137,11 +156,22 @@ export function AgentPanel(props: {
       });
     };
     if (props.onStream) {
-      props.onStream(text, props.chips, push, activeId);
+      const res = props.onStream(text, props.chips, push, activeId) as Promise<void> | void;
+      if (res && typeof res.then === 'function') {
+        // Promise 流式通道（真实 agent 桥）：进入流式锁，完成后解锁并刷新会话列表
+        setStreaming(true);
+        void res.then(
+          () => { setStreaming(false); refreshSessions(); },
+          () => { setStreaming(false); refreshSessions(); },
+        );
+      }
+      // 同步 onStream（无 Promise，如测试 mock）：不锁，保持旧行为
     } else {
       // 无外部流式通道：面板自行请求 agentChat（chips 名称保留，内容由外部注入）
+      setStreaming(true);
       void agentChat(text, props.chips.map((c) => ({ name: c, content: '' })), push, undefined, undefined, activeId)
-        .catch(() => push('\n（agent 连接失败）'));
+        .catch(() => push('\n（agent 连接失败）'))
+        .finally(() => { setStreaming(false); refreshSessions(); });
     }
   };
 

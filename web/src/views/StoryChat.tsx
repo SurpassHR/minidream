@@ -52,6 +52,12 @@ export function StoryChat(props: {
   const [busy, setBusy] = useState(false); // 发送/总结/回填共用 busy（防并发）
   const [action, setAction] = useState<'summarize' | 'backfill' | null>(null);
 
+  // 发送/总结/回填完成后重新拉取会话列表：后端在首条用户消息后自动命名会话并 bump updatedAt，
+  // 不刷新则当前会话一直显示「新会话」直到页面重载
+  const refreshSessions = () => {
+    void client.listStorySessions().then((r) => setSessions(r.sessions)).catch(() => {});
+  };
+
   // 项目切换/挂载时：加载会话列表 → 无会话自动新建 → 加载当前会话历史
   useEffect(() => {
     setMsgs([]);
@@ -127,8 +133,13 @@ export function StoryChat(props: {
   const deleteSession = async (s: SessionMeta) => {
     if (busy) return;
     if (!window.confirm(`删除会话「${s.title}」？其消息将一并删除。`)) return;
-    const r = await client.deleteStorySession(s.id).catch(() => null);
+    let r = await client.deleteStorySession(s.id).catch(() => null);
     if (!r) return;
+    if (!r.activeId) {
+      // 删光会话：自动新建一个空会话，避免下次发送聊进 UI 看不见的会话（后端自动创建，UI 无从得知）
+      const created = await client.createStorySession().catch(() => null);
+      r = created ?? r;
+    }
     setSessions(r.sessions);
     setActiveId(r.activeId);
     setMsgs([]);
@@ -148,7 +159,7 @@ export function StoryChat(props: {
     setMsgs((m) => [...m, { who: 'user', text }]);
     client.storyChat(text, appendStream, undefined, undefined, undefined, activeId)
       .catch(() => appendStream('\n\n（agent 连接失败）'))
-      .finally(() => setBusy(false));
+      .finally(() => { setBusy(false); refreshSessions(); });
   };
 
   // 跑一次「总结成稿」或「回填向导」：让 AI 基于全部对话输出六步答案。
@@ -187,6 +198,7 @@ export function StoryChat(props: {
     } finally {
       setBusy(false);
       setAction(null);
+      refreshSessions(); // 总结/回填也落盘消息：刷新列表同步标题/updatedAt
     }
   };
 

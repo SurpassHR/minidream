@@ -230,7 +230,8 @@ export default function App() {
       const node = useGraphStore.getState().graph?.nodes.find((n) => n.title === name.slice(2));
       return { name, content: JSON.stringify(node?.fields ?? {}) };
     });
-    void agentChat(text, payload, push, agentModel || undefined, thinkingLevel || undefined, sessionId)
+    // 返回 Promise：AgentPanel 据此进入/退出流式锁（期间禁止会话切换）
+    return agentChat(text, payload, push, agentModel || undefined, thinkingLevel || undefined, sessionId)
       .catch(() => push('\n（agent 连接失败）'));
   }, [agentModel, thinkingLevel]);
 

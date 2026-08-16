@@ -213,6 +213,113 @@ describe('AgentPanel 流式对话', () => {
     await waitFor(() => expect(screen.queryByText('新名字')).not.toBeInTheDocument());
     vi.restoreAllMocks();
   });
+
+  // —— Final round：流式锁 ——
+  // onStream 返回手动控制的 pending Promise：流式期间新建/点选/删除全部被锁，
+  // 流式结束后解锁（旧会话的流式 push 不会污染新选中的视图）。
+  it('流式中切换/新建/删除会话被锁：旧会话流式不污染新视图', async () => {
+    SESSIONS = [
+      { id: 's1', title: '会话甲', createdAt: 1, updatedAt: 2 },
+      { id: 's2', title: '会话乙', createdAt: 3, updatedAt: 4 },
+    ];
+    ACTIVE = 's1';
+    let resolveStream!: () => void;
+    const pending = new Promise<void>((r) => { resolveStream = r; });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<AgentPanel
+      chips={[]}
+      onChipsChange={() => {}}
+      onSend={() => [{ who: 'user', text: '分析' }, { who: 'agent', text: '' }]}
+      onStream={(_t, _c, _p) => pending}
+    />);
+    await waitFor(() => expect(screen.getByTestId('agent-session-current')).toHaveTextContent('会话甲'));
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const posts = () => fetchMock.mock.calls.filter(
+      (c) => String(c[0]).includes('/api/agent/sessions') && (c[1] as RequestInit)?.method === 'POST',
+    );
+    const gets = () => fetchMock.mock.calls.filter(
+      (c) => String(c[0]).includes('/api/agent/sessions') && (c[1] as RequestInit)?.method !== 'POST',
+    );
+    fireEvent.change(screen.getByPlaceholderText(/对画布提问/), { target: { value: '分析' } });
+    fireEvent.click(screen.getByText('发送'));
+    // 流式进行中：新建被锁（不发出 POST create）
+    fireEvent.click(screen.getByTestId('agent-session-new'));
+    expect(posts().length).toBe(0);
+    // 流式进行中：点选其他会话被锁（不拉取 s2 历史，当前会话不变）
+    fireEvent.click(screen.getByTestId('agent-session-current'));
+    fireEvent.click(screen.getByText('会话乙'));
+    const histS2 = fetchMock.mock.calls.filter(
+      (c) => String(c[0]).includes('/api/agent/history') && String(c[0]).includes('s2'),
+    );
+    expect(histS2.length).toBe(0);
+    expect(screen.getByTestId('agent-session-current')).toHaveTextContent('会话甲');
+    // 流式进行中：删除被锁（不发出 DELETE）
+    fireEvent.click(screen.getByTestId('agent-session-current'));
+    fireEvent.click(screen.getByTestId('agent-session-del-s1'));
+    const dels = fetchMock.mock.calls.filter(
+      (c) => String(c[0]).includes('/api/agent/sessions') && (c[1] as RequestInit)?.method === 'DELETE',
+    );
+    expect(dels.length).toBe(0);
+    // 流式结束（resolve）→ 解锁：新建生效
+    resolveStream();
+    await waitFor(() => expect(gets().length).toBe(2)); // 挂载 1 次 + 发送完成刷新 1 次
+    fireEvent.click(screen.getByTestId('agent-session-new'));
+    await waitFor(() => expect(posts().length).toBe(1));
+    await waitFor(() => expect(screen.getByTestId('agent-session-current')).toHaveTextContent('新会话'));
+    vi.restoreAllMocks();
+  });
+
+  // —— Final round：删光自动新建 ——
+  // DELETE 返回 activeId: null（会话删光）时，前端自动 POST 新建会话并加载其（空）历史；
+  // 否则下次发送会聊进 UI 看不见的会话（后端自动创建，UI 无从得知）。
+  it('删除最后一个会话后自动新建：列表恢复新会话并加载空历史', async () => {
+    SESSIONS = [{ id: 's1', title: '唯一会话', createdAt: 1, updatedAt: 2 }];
+    ACTIVE = 's1';
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<AgentPanel chips={[]} onChipsChange={() => {}} onSend={() => []} />);
+    await waitFor(() => expect(screen.getByTestId('agent-session-current')).toHaveTextContent('唯一会话'));
+    fireEvent.click(screen.getByTestId('agent-session-current'));
+    fireEvent.click(screen.getByTestId('agent-session-del-s1'));
+    // 自动新建（POST create）已发出
+    const posts = () => (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/agent/sessions') && (c[1] as RequestInit)?.method === 'POST',
+    );
+    await waitFor(() => expect(posts().length).toBeGreaterThan(0));
+    // 新会话回到列表（非「暂无会话」），空历史加载（无消息气泡）
+    fireEvent.click(screen.getByTestId('agent-session-current'));
+    expect(screen.queryByText('暂无会话')).not.toBeInTheDocument();
+    expect(screen.getByText('新会话')).toBeInTheDocument();
+    expect(document.querySelectorAll('.msg').length).toBe(0);
+    vi.restoreAllMocks();
+  });
+
+  // —— Final round：发送后刷新会话列表 ——
+  // 后端在首条用户消息后自动命名会话并 bump updatedAt；发送完成后前端须重新拉取列表，
+  // 否则当前会话一直停留在「新会话」直到刷新页面。
+  it('发送后刷新会话列表：标题随后端自动命名更新', async () => {
+    SESSIONS = [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }];
+    ACTIVE = 's1';
+    render(<AgentPanel
+      chips={[]}
+      onChipsChange={() => {}}
+      onSend={() => [{ who: 'user', text: '分析节奏' }, { who: 'agent', text: '' }]}
+      onStream={async (_t, _c, push) => {
+        // 模拟后端：首条用户消息后自动命名会话（标题 = 消息截断）
+        SESSIONS = [{ id: 's1', title: '分析节奏', createdAt: 1, updatedAt: 2 }];
+        push('结论');
+      }}
+    />);
+    await waitFor(() => expect(screen.getByTestId('agent-session-current')).toHaveTextContent('新会话'));
+    const gets = () => (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/agent/sessions') && (c[1] as RequestInit)?.method !== 'POST',
+    );
+    fireEvent.change(screen.getByPlaceholderText(/对画布提问/), { target: { value: '分析节奏' } });
+    fireEvent.click(screen.getByText('发送'));
+    // 流式完成 → 刷新列表：标题更新为后端自动命名
+    await waitFor(() => expect(screen.getByTestId('agent-session-current')).toHaveTextContent('分析节奏'));
+    // 第二次 GET /api/agent/sessions 已发出（发送后刷新）
+    expect(gets().length).toBe(2);
+  });
 });
 
 describe('ConfirmDialog', () => {

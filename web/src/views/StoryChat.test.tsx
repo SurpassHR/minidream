@@ -359,4 +359,104 @@ describe('StoryChat', () => {
     expect(delCalls.length).toBe(0);
     vi.restoreAllMocks();
   });
+
+  // —— Final round：删光自动新建 ——
+  // DELETE 返回 activeId: null（会话删光）时自动 POST 新建会话并加载其（空）历史。
+  it('删除最后一个会话后自动新建：列表恢复新会话并加载空历史', async () => {
+    SESSIONS = [{ id: 's1', title: '唯一会话', createdAt: 1, updatedAt: 2 }];
+    ACTIVE = 's1';
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('唯一会话'));
+    fireEvent.click(screen.getByTestId('session-del-s1'));
+    // 自动新建（POST create）已发出：新会话回到列表
+    await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('新会话'));
+    const posts = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/story/chat/sessions') && (c[1] as RequestInit)?.method === 'POST',
+    );
+    expect(posts.length).toBeGreaterThan(0);
+    // 空历史加载：EmptyState 显示
+    expect(screen.getByText(/还没有对话/)).toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+
+  // —— Final round：发送后刷新会话列表 ——
+  // 后端在首条用户消息后自动命名会话并 bump updatedAt；发送完成后前端须重新拉取列表。
+  it('发送后刷新会话列表：标题随后端自动命名更新', async () => {
+    SESSIONS = [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }];
+    ACTIVE = 's1';
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? 'GET';
+      if (u.includes('/api/story/chat/sessions')) {
+        return new Response(JSON.stringify({ sessions: SESSIONS, activeId: ACTIVE }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat/history')) {
+        return new Response(JSON.stringify({ messages: HISTORY }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat')) {
+        if (method === 'POST') {
+          // 模拟后端：首条用户消息后自动命名会话（标题 = 消息截断）
+          const body = JSON.parse(String(init?.body)) as { message: string };
+          SESSIONS = SESSIONS.map((s) => (s.id === ACTIVE ? { ...s, title: body.message.slice(0, 20) } : s));
+          return new Response(
+            'data: {"chunk":"奇幻冒险"}\n\ndata: [DONE]\n\n',
+            { status: 200, headers: { 'content-type': 'text/event-stream' } },
+          );
+        }
+        return new Response(JSON.stringify({}), { status: 404 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }));
+    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('新会话'));
+    const gets = () => (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/story/chat/sessions') && (c[1] as RequestInit)?.method !== 'POST',
+    );
+    const input = screen.getByTestId('chat-input');
+    fireEvent.change(input, { target: { value: '我的主角是精灵骑士' } });
+    fireEvent.click(screen.getByText('发送'));
+    // 流式输出渲染
+    await waitFor(() => expect(screen.getByText(/奇幻冒险/)).toBeInTheDocument());
+    // 发送完成 → 刷新列表：标题更新为后端自动命名
+    await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('我的主角是精灵骑士'));
+    // 第二次 GET /api/story/chat/sessions 已发出（发送后刷新；挂载 1 次 + 刷新 1 次）
+    expect(gets().length).toBe(2);
+  });
+
+  it('总结成稿完成后也刷新会话列表（标题同步）', async () => {
+    SESSIONS = [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }];
+    ACTIVE = 's1';
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? 'GET';
+      if (u.includes('/api/story/chat/sessions')) {
+        return new Response(JSON.stringify({ sessions: SESSIONS, activeId: ACTIVE }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat/history')) {
+        return new Response(JSON.stringify({ messages: HISTORY }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat')) {
+        if (method === 'POST') {
+          // 模拟后端：总结成稿落盘后会话标题/updatedAt 变化
+          SESSIONS = SESSIONS.map((s) => (s.id === ACTIVE ? { ...s, title: '总结成稿会话', updatedAt: 9 } : s));
+          return new Response(
+            'data: {"chunk":"theme: 战争与和解"}\n\ndata: [DONE]\n\n',
+            { status: 200, headers: { 'content-type': 'text/event-stream' } },
+          );
+        }
+        return new Response(JSON.stringify({}), { status: 404 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }));
+    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('新会话'));
+    const gets = () => (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/story/chat/sessions') && (c[1] as RequestInit)?.method !== 'POST',
+    );
+    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    // 总结完成 → 刷新列表：标题更新
+    await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('总结成稿会话'));
+    expect(gets().length).toBe(2);
+  });
 });
