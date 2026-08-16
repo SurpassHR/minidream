@@ -624,6 +624,19 @@
 .chat-msg.user .chat-bubble { background: var(--amber-dim); border-color: rgba(232, 163, 61, .3); }
 .chat-bubble p { margin: 0 0 6px; }
 .chat-bubble p:last-child { margin: 0; }
+/* markdown 元素基础排版：全局 reset 清零了默认边距，需为列表/标题/引用等显式恢复 */
+.chat-bubble ul, .chat-bubble ol { margin: 0 0 6px; padding-left: 20px; }
+.chat-bubble li { margin: 2px 0; }
+.chat-bubble h1, .chat-bubble h2, .chat-bubble h3, .chat-bubble h4 { margin: 10px 0 4px; font-weight: 600; line-height: 1.4; }
+.chat-bubble h1 { font-size: 15px; } .chat-bubble h2 { font-size: 14px; }
+.chat-bubble h3, .chat-bubble h4 { font-size: 13px; }
+.chat-bubble blockquote { margin: 0 0 6px; padding: 2px 10px; border-left: 3px solid var(--border-2); color: var(--text-dim); }
+.chat-bubble code { background: var(--panel-3); border-radius: 4px; padding: 1px 5px; font-size: 11px; }
+.chat-bubble table { border-collapse: collapse; margin: 0 0 6px; }
+.chat-bubble th, .chat-bubble td { border: 1px solid var(--border-2); padding: 4px 8px; }
+.chat-bubble a { color: var(--blue); }
+.chat-bubble img { max-width: 100%; border-radius: 6px; }
+.chat-bubble > :last-child { margin-bottom: 0; }
 .chat-bubble pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; overflow: auto; font-size: 11px; }
 .chat-thinking { font-family: var(--mono); font-size: 11px; color: var(--text-faint); align-self: flex-start; }
 .chat-input-row { display: flex; gap: 8px; align-items: flex-end; }
