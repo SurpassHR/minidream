@@ -154,4 +154,29 @@ describe('StoryChat', () => {
     render(<StoryChat projectName="demo" completedAt="2026-08-16T00:00:00.000Z" onBackfill={() => {}} onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByText(/✅ 已完成 · 已生成故事文档进素材库/)).toBeInTheDocument());
   });
+
+  it('总结成稿使用配置的 storyChat + storySummarize 提示词', async () => {
+    const onSummarized = vi.fn();
+    render(
+      <StoryChat
+        projectName="demo"
+        onBackfill={() => {}}
+        onSummarized={onSummarized}
+        prompts={{ storyChat: '定制编剧', storySummarize: '定制总结' }}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/story/chat'),
+      expect.objectContaining({ method: 'POST' }),
+    ));
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/story/chat') && (c[1] as RequestInit)?.method === 'POST',
+    );
+    const body = JSON.parse(String(calls.at(-1)![1]?.body)) as { message: string };
+    expect(body.message).toContain('定制编剧');
+    expect(body.message).toContain('定制总结');
+    expect(body.message).not.toContain('你是导演工作台的故事编剧');
+  });
 });

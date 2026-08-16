@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { client } from '../api/client';
 import type { StoryProgress } from '../types';
 import { agentChat } from '../api/agent';
-import { STORY_TELLER_SYSTEM } from './roles';
+import { resolvePrompt } from './roles';
 import { AiButton, ErrorBanner, LoadingState, RoleCard, RoleHeader } from './role-ui';
 import { StoryChat } from './StoryChat';
 import { ScriptViewer } from './ScriptViewer';
@@ -128,7 +128,7 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
     const answersText = Object.entries(story.answers)
       .map(([id, v]) => `${STORY_STEPS.find((s) => s.id === id)?.question ?? id}：${v}`)
       .join('\n');
-    const prompt = `${STORY_TELLER_SYSTEM}\n\n当前步骤问题：${step.question}\n已填写内容：\n${answersText || '（暂无）'}`;
+    const prompt = `${resolvePrompt(props.prompts, 'storyTeller')}\n\n当前步骤问题：${step.question}\n已填写内容：\n${answersText || '（暂无）'}`;
     void agentChat(prompt, [], (chunk) => {
       // 流式期间用户已切步（当前步骤 ≠ 发起步骤）：丢弃过期 chunk
       const curStepId = STORY_STEPS[Math.min(stepRef.current, STORY_STEPS.length - 1)]!.id;

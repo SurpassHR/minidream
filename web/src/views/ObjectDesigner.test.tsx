@@ -224,4 +224,20 @@ describe('ObjectDesignerView', () => {
     const body = JSON.parse(String(last.body)) as { patch: Record<string, unknown> };
     expect(body.patch.description).toBe('+A1+A2');
   });
+
+  it('AI 优化使用配置的 objectDesigner 提示词', async () => {
+    designs = [{ id: 'd1', kind: 'character', name: '精灵骑士', description: '', style: '', template: 'test-t2i', status: 'draft', createdAt: 1 }];
+    render(<ObjectDesignerView projectName="demo" prompts={{ objectDesigner: '定制物体提示词' }} />);
+    await waitFor(() => expect(screen.getByText('精灵骑士')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('精灵骑士'));
+    await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('精灵骑士'));
+    fireEvent.click(screen.getByText('✨ AI 优化描述'));
+    await waitFor(() => expect(screen.getByTestId('design-desc')).toHaveValue('+A1+A2'));
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/agent/chat'),
+    );
+    const body = JSON.parse(String(calls.at(-1)![1]?.body)) as { message: string };
+    expect(body.message).toContain('定制物体提示词');
+    expect(body.message).not.toContain('你是导演工作台的物体设计师角色');
+  });
 });

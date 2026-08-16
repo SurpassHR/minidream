@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { client } from '../api/client';
 import type { DesignKind, DesignObject } from '../types';
 import { agentChat } from '../api/agent';
-import { OBJECT_DESIGNER_SYSTEM } from './roles';
+import { resolvePrompt } from './roles';
 import { AiButton, EmptyState, ErrorBanner, Field, LoadingState, RoleCard, RoleHeader, StatusBadge } from './role-ui';
 
 const KIND_LABEL: Record<DesignKind, string> = {
@@ -108,7 +108,7 @@ export function ObjectDesignerView(props: { projectName: string; prompts?: Recor
     const id = selected.id; // 提前捕获：流式回调不依赖可能过期的 selected 闭包
     const baseDesc = selected.description;
     setAiBusy(true);
-    const prompt = `${OBJECT_DESIGNER_SYSTEM}\n\n对象名称：${selected.name}\n风格：${selected.style || '（未指定）'}\n现有描述：${selected.description || '（暂无）'}`;
+    const prompt = `${resolvePrompt(props.prompts, 'objectDesigner')}\n\n对象名称：${selected.name}\n风格：${selected.style || '（未指定）'}\n现有描述：${selected.description || '（暂无）'}`;
     // 本地累积最终描述（chunk 回调与 finally 共用；UI state 仍走函数式更新）
     let acc = baseDesc;
     void agentChat(prompt, [], (chunk) => {

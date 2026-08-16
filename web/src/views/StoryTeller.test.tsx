@@ -194,6 +194,19 @@ describe('StoryTellerView', () => {
     );
     vi.restoreAllMocks();
   });
+
+  it('AI 建议使用配置的 storyTeller 提示词', async () => {
+    render(<StoryTellerView projectName="demo" prompts={{ storyTeller: '定制建议系统提示词' }} />);
+    await waitFor(() => expect(screen.getByText(/故事主题是什么/)).toBeInTheDocument());
+    fireEvent.click(screen.getByText('✨ AI 建议'));
+    await waitFor(() => expect(screen.getByTestId('story-answer')).toHaveValue('建议文本'));
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/agent/chat'),
+    );
+    const body = JSON.parse(String(calls.at(-1)![1]?.body)) as { message: string };
+    expect(body.message).toContain('定制建议系统提示词');
+    expect(body.message).not.toContain('你是导演工作台的故事向导角色');
+  });
 });
 
 describe('StoryTellerView 模式切换', () => {

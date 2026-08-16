@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { client } from '../api/client';
-import { STORY_BACKFILL_PROMPT, STORY_CHAT_SYSTEM, STORY_SUMMARIZE_PROMPT } from './roles';
+import { resolvePrompt } from './roles';
 import { AiButton, EmptyState, ErrorBanner } from './role-ui';
 
 export interface ChatMsg { who: 'user' | 'agent'; text: string }
@@ -91,8 +91,10 @@ export function StoryChat(props: {
     setBusy(true);
     setAction(kind);
     setError('');
-    const system = kind === 'summarize' ? STORY_SUMMARIZE_PROMPT : STORY_BACKFILL_PROMPT;
-    const prompt = `${STORY_CHAT_SYSTEM}\n\n${system}`;
+    const system = kind === 'summarize'
+      ? resolvePrompt(props.prompts, 'storySummarize')
+      : resolvePrompt(props.prompts, 'storyBackfill');
+    const prompt = `${resolvePrompt(props.prompts, 'storyChat')}\n\n${system}`;
     const persistAs = kind === 'summarize' ? '（请总结成稿）' : '（请回填向导）';
     let acc = '';
     setMsgs((m) => [...m, { who: 'user', text: persistAs }]);
