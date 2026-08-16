@@ -397,9 +397,9 @@ export default function App() {
           </footer>
         </>
       ) : route === 'story-teller' ? (
-        <StoryTellerView projectName={graph?.projectName ?? ''} />
+        <StoryTellerView projectName={graph?.projectName ?? ''} prompts={settings.prompts} />
       ) : (
-        <ObjectDesignerView projectName={graph?.projectName ?? ''} />
+        <ObjectDesignerView projectName={graph?.projectName ?? ''} prompts={settings.prompts} />
       )}
       <ConfirmDialog
         open={confirm !== null}

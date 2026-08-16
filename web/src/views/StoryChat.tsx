@@ -28,6 +28,8 @@ export function StoryChat(props: {
   onSummarized: (answers: Record<string, string>) => void;
   // 故事完成时间（总结成稿入库后非空）：对话式顶部显示完成提示条
   completedAt?: string | null;
+  // 提示词库（角色系统提示词；未配置键回退内置默认）
+  prompts?: Record<string, string>;
 }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');

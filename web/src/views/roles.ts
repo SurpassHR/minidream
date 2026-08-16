@@ -52,3 +52,22 @@ scenes: 场景列表
 ending: 结局设定
 
 要求：忠实于对话内容，不要自行发挥；用中文。`;
+
+// 角色提示词库键表：键=消费键（设置里提示词库的条目名），值=内置默认（回退来源）
+export const ROLE_PROMPT_KEYS = {
+  storyTeller: STORY_TELLER_SYSTEM,
+  objectDesigner: OBJECT_DESIGNER_SYSTEM,
+  storyChat: STORY_CHAT_SYSTEM,
+  storySummarize: STORY_SUMMARIZE_PROMPT,
+  storyBackfill: STORY_BACKFILL_PROMPT,
+} as const;
+
+export type RolePromptKey = keyof typeof ROLE_PROMPT_KEYS;
+
+// 解析提示词：配置命中（非空串）用之，否则回退内置默认
+export function resolvePrompt(
+  prompts: Record<string, string> | undefined,
+  key: RolePromptKey,
+): string {
+  return prompts?.[key] || ROLE_PROMPT_KEYS[key];
+}

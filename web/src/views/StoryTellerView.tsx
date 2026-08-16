@@ -18,7 +18,7 @@ export const STORY_STEPS = [
 ] as const;
 
 // 防抖保存：输入停止 500ms 后 PUT
-export function StoryTellerView(props: { projectName: string }) {
+export function StoryTellerView(props: { projectName: string; prompts?: Record<string, string> }) {
   const [story, setStory] = useState<StoryProgress>({ step: 0, answers: {}, completedAt: null });
   const [draft, setDraft] = useState('');
   const [loaded, setLoaded] = useState(false);
@@ -231,6 +231,7 @@ export function StoryTellerView(props: { projectName: string }) {
               completedAt={story.completedAt}
               onBackfill={handleBackfill}
               onSummarized={handleSummarized}
+              prompts={props.prompts}
             />
           ) : (
             <>

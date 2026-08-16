@@ -106,4 +106,6 @@ export interface AppSettings {
   comfyUrl: string;
   agentModel: string;
   agentThinking: string;
+  // 提示词库（键=名称，值=内容）；键缺失=从未自定义（设置弹窗预填 5 角色默认）
+  prompts?: Record<string, string>;
 }

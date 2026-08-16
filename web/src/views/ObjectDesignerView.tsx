@@ -22,7 +22,7 @@ const STATUS_ICON: Record<DesignObject['status'], string> = {
   draft: '·', generating: '⏳', done: '✅', failed: '❌',
 };
 
-export function ObjectDesignerView(props: { projectName: string }) {
+export function ObjectDesignerView(props: { projectName: string; prompts?: Record<string, string> }) {
   const [designs, setDesigns] = useState<DesignObject[]>([]);
   const [activeKind, setActiveKind] = useState<DesignKind>('character');
   const [selected, setSelected] = useState<DesignObject | null>(null);
