@@ -403,6 +403,8 @@ export default function App() {
           prompts={settings.prompts}
           armorBreak={settings.armorBreak}
           armorBreakEnabled={settings.armorBreakEnabled}
+          agentModel={settings.agentModel}
+          thinkingLevel={settings.agentThinking}
         />
       ) : (
         <ObjectDesignerView

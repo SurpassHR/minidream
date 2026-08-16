@@ -40,6 +40,9 @@ export function StoryChat(props: {
   // 破甲预设：开启且文本非空时插入到所有系统提示词之前
   armorBreak?: string;
   armorBreakEnabled?: boolean;
+  // 默认模型与思考强度（来自全局设置；透传到 /api/story/chat body，缺省走 pi 默认）
+  agentModel?: string;
+  thinkingLevel?: string;
 }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
@@ -156,7 +159,7 @@ export function StoryChat(props: {
     setBusy(true);
     setError('');
     setMsgs((m) => [...m, { who: 'user', text }]);
-    client.storyChat(text, appendStream, undefined, undefined, undefined, activeId, resolvePrompt(props.prompts, 'storyTeller'))
+    client.storyChat(text, appendStream, props.agentModel || undefined, props.thinkingLevel || undefined, undefined, activeId, resolvePrompt(props.prompts, 'storyTeller'))
       .catch(() => appendStream('\n\n（agent 连接失败）'))
       .finally(() => { setBusy(false); refreshSessions(); });
   };
@@ -183,7 +186,7 @@ export function StoryChat(props: {
       await client.storyChat(prompt, (chunk) => {
         acc += chunk;
         appendStream(chunk);
-      }, undefined, undefined, '（请总结成稿）', activeId);
+      }, props.agentModel || undefined, props.thinkingLevel || undefined, '（请总结成稿）', activeId);
       const answers = parseStoryAnswers(acc);
       if (Object.keys(answers).length === 0) {
         setError('未识别到答案格式，请重试');

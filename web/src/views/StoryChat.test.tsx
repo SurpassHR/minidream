@@ -227,6 +227,32 @@ describe('StoryChat', () => {
     expect(CHAT_BODIES.at(-1)!.sessionId).toBe('s9');
   });
 
+  it('发送与总结成稿携带设置的模型与思考强度（agentModel/thinkingLevel 透传）', async () => {
+    SESSIONS = [{ id: 's9', title: '当前', createdAt: 1, updatedAt: 1 }];
+    ACTIVE = 's9';
+    render(
+      <StoryChat
+        projectName="demo"
+        onSummarized={() => {}}
+        agentModel="anthropic/claude-sonnet-4"
+        thinkingLevel="high"
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('session-item-s9')).toBeInTheDocument());
+    const input = screen.getByTestId('chat-input');
+    fireEvent.change(input, { target: { value: '主角是谁？' } });
+    fireEvent.click(screen.getByText('发送'));
+    await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(0));
+    const sendBody = CHAT_BODIES[0] as { model?: string; thinking?: string };
+    expect(sendBody.model).toBe('anthropic/claude-sonnet-4');
+    expect(sendBody.thinking).toBe('high');
+    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(1));
+    const sumBody = CHAT_BODIES.at(-1) as { model?: string; thinking?: string };
+    expect(sumBody.model).toBe('anthropic/claude-sonnet-4');
+    expect(sumBody.thinking).toBe('high');
+  });
+
   it('重命名/删除会话（确认后）', async () => {
     SESSIONS = [{ id: 's1', title: '旧名', createdAt: 1, updatedAt: 2 }];
     ACTIVE = 's1';

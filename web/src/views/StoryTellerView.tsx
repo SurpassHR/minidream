@@ -7,7 +7,7 @@ import { ScriptViewer } from './ScriptViewer';
 
 // story-teller 仅对话式：自由聊天 + 总结成稿入库（向导式已移除）。
 // story 状态只需 completedAt（完成横幅/剧本栏）；answers 由总结成稿写入后端。
-export function StoryTellerView(props: { projectName: string; prompts?: Record<string, string>; armorBreak?: string; armorBreakEnabled?: boolean }) {
+export function StoryTellerView(props: { projectName: string; prompts?: Record<string, string>; armorBreak?: string; armorBreakEnabled?: boolean; agentModel?: string; thinkingLevel?: string }) {
   const [story, setStory] = useState<StoryProgress>({ step: 0, answers: {}, completedAt: null });
   const [md, setMd] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -82,6 +82,8 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
             prompts={props.prompts}
             armorBreak={props.armorBreak}
             armorBreakEnabled={props.armorBreakEnabled}
+            agentModel={props.agentModel}
+            thinkingLevel={props.thinkingLevel}
           />
           {error && <ErrorBanner text={error} />}
         </div>
