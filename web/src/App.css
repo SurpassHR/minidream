@@ -684,3 +684,12 @@
 .tok-object { color: var(--amber); font-weight: 700; }
 .tok-angle { color: var(--blue); }
 .tok-square { color: var(--ok); }
+
+/* ===== 设置弹窗：提示词库 ===== */
+.settings-section { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 14px; }
+.settings-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.prompt-lib { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow: auto; }
+.prompt-entry { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--panel-2); }
+.prompt-entry-name { font-family: var(--mono); font-size: 12px; }
+.prompt-entry-text { font-family: var(--mono); font-size: 12px; line-height: 1.6; resize: vertical; }
+.prompt-entry-del { align-self: flex-end; font-size: 12px; }
