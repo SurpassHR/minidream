@@ -540,7 +540,8 @@ app.post('/api/story/chat', async (req, reply) => {
   };
   try {
     const idleMs = Number(process.env.DIRECTOR_AGENT_IDLE_MS) || 45_000;
-    await runAgentStream(cmd, prompt, sendCollect, {
+    // 注入项目上下文（kanban KANBAN_TASK_ID 语义）：agent 进程内可感知当前项目
+    const { idleKilled } = await runAgentStream(cmd, prompt, sendCollect, {
       idleTimeoutMs: idleMs,
       env: {
         DIRECTOR_PROJECT_DIR: ctx.projectDir,
@@ -549,7 +550,8 @@ app.post('/api/story/chat', async (req, reply) => {
     });
     flushPending();
     appendStoryChat(ctx.projectDir, 'agent', agentText);
-    if (agentText.trim().length === 0) send('\n\n（输出为空）');
+    if (idleKilled) send('\n\n（输出已空闲停止）');
+    else if (agentText.trim().length === 0) send('\n\n（输出为空）');
     reply.raw.write('data: [DONE]\n\n');
   } catch (err) {
     send(`（agent 启动失败：${err instanceof Error ? err.message : String(err)}）`);
