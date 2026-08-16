@@ -3,6 +3,7 @@ import { client } from '../api/client';
 import type { StoryProgress } from '../types';
 import { agentChat } from '../api/agent';
 import { STORY_TELLER_SYSTEM } from './roles';
+import { AiButton, ErrorBanner, LoadingState, RoleCard, RoleHeader } from './role-ui';
 
 // story-teller 向导步骤（镜像后端 src/story/steps.ts，前端渲染与校验用）
 export const STORY_STEPS = [
@@ -147,17 +148,35 @@ export function StoryTellerView(props: { projectName: string }) {
     }).catch((err) => setError(err instanceof Error ? err.message : '重置失败'));
   };
 
-  if (!loaded) return <div className="role-view" data-testid="story-teller-view"><div className="story-center">加载中…</div></div>;
+  if (!loaded) {
+    return <div className="role-view" data-testid="story-teller-view"><LoadingState /></div>;
+  }
 
   return (
     <div className="role-view story-view" data-testid="story-teller-view">
-      <div className="story-head">
-        <div className="story-title">故事向导 · 第 {story.step + 1}/{STORY_STEPS.length} 步</div>
-        <div className="story-progress">
-          {STORY_STEPS.map((s, i) => (
-            <span key={s.id} className={`seg${i <= story.step ? ' done' : ''}${i === story.step ? ' cur' : ''}`} />
-          ))}
-        </div>
+      <RoleHeader
+        eyebrow="STORY TELLER"
+        title="故事向导"
+        meta={<span className="story-step-meta">第 {story.step + 1}/{STORY_STEPS.length} 步</span>}
+      />
+      {/* 场记板步骤轨道：编号可点击跳转；完成=ok 绿+✓；当前=amber 发光 */}
+      <div className="story-track" role="tablist" aria-label="向导步骤">
+        {STORY_STEPS.map((s, i) => {
+          const done = i < story.step;
+          const cur = i === story.step;
+          return (
+            <button
+              key={s.id}
+              type="button"
+              className={`track-seg${done ? ' done' : ''}${cur ? ' cur' : ''}`}
+              title={`${s.question}${s.required ? '' : '（可留空）'}`}
+              onClick={() => goto(i)}
+            >
+              <span className="track-no">{String(i + 1).padStart(2, '0')}</span>
+              <span className="track-mark">{done ? '✓' : cur ? '●' : ''}</span>
+            </button>
+          );
+        })}
       </div>
       {story.completedAt && (
         <div className="story-banner">
@@ -165,7 +184,7 @@ export function StoryTellerView(props: { projectName: string }) {
           <button className="btn-ghost story-reset" onClick={reset}>重新生成</button>
         </div>
       )}
-      <div className="story-card">
+      <RoleCard className="story-card">
         <div className="story-q">❓ {step.question}</div>
         <div className="story-hint">{step.hint}</div>
         <textarea
@@ -176,7 +195,7 @@ export function StoryTellerView(props: { projectName: string }) {
           rows={6}
         />
         <div className="story-actions">
-          <button className="btn-ghost" disabled={aiBusy} onClick={aiSuggest}>✨ AI 建议</button>
+          <AiButton busy={aiBusy} onClick={aiSuggest}>✨ AI 建议</AiButton>
           <span className="story-save-hint">{saved ? '已保存 ✓' : ''}</span>
         </div>
         <div className="story-nav">
@@ -187,8 +206,8 @@ export function StoryTellerView(props: { projectName: string }) {
             <button className="btn-primary" onClick={() => void next()}>下一步 →</button>
           )}
         </div>
-        {error && <div className="story-error">{error}</div>}
-      </div>
+        {error && <ErrorBanner text={error} />}
+      </RoleCard>
     </div>
   );
 }

@@ -3,12 +3,24 @@ import { client } from '../api/client';
 import type { DesignKind, DesignObject } from '../types';
 import { agentChat } from '../api/agent';
 import { OBJECT_DESIGNER_SYSTEM } from './roles';
+import { AiButton, EmptyState, ErrorBanner, Field, LoadingState, RoleCard, RoleHeader, StatusBadge } from './role-ui';
 
 const KIND_LABEL: Record<DesignKind, string> = {
   character: '人物', scene: '场景', prop: '物品',
 };
 const KIND_ICON: Record<DesignKind, string> = { character: '👤', scene: '🏞', prop: '🎒' };
 const STYLE_PRESETS = ['吉卜力风', '写实', '赛博朋克', '水墨', '皮克斯 3D', '暗黑奇幻'];
+
+// 状态 → 徽章色与文案（统一视觉语言）
+const STATUS_TONE: Record<DesignObject['status'], 'dim' | 'warn' | 'ok' | 'err'> = {
+  draft: 'dim', generating: 'warn', done: 'ok', failed: 'err',
+};
+const STATUS_TEXT: Record<DesignObject['status'], string> = {
+  draft: '草稿', generating: '生成中…', done: '已生成', failed: '失败',
+};
+const STATUS_ICON: Record<DesignObject['status'], string> = {
+  draft: '·', generating: '⏳', done: '✅', failed: '❌',
+};
 
 export function ObjectDesignerView(props: { projectName: string }) {
   const [designs, setDesigns] = useState<DesignObject[]>([]);
@@ -133,23 +145,31 @@ export function ObjectDesignerView(props: { projectName: string }) {
     });
   };
 
-  if (!loaded) return <div className="role-view" data-testid="object-designer-view"><div className="story-center">加载中…</div></div>;
+  if (!loaded) {
+    return <div className="role-view" data-testid="object-designer-view"><LoadingState /></div>;
+  }
 
   const kinds: DesignKind[] = ['character', 'scene', 'prop'];
+  const doneCount = designs.filter((d) => d.status === 'done').length;
 
   return (
     <div className="role-view designer-view" data-testid="object-designer-view">
-      <div className="designer-head">
-        <div className="story-title">物体设计器 · {designs.length} 个设计 · {designs.filter((d) => d.status === 'done').length} 张参考图</div>
-      </div>
+      <RoleHeader
+        eyebrow="OBJECT DESIGNER"
+        title="物体设计器"
+        meta={<span className="designer-meta">{designs.length} 个设计 · {doneCount} 张参考图</span>}
+      />
       <div className="designer-body">
+        {/* 左列：三类对象分组（人物/场景/物品） */}
         <div className="designer-list">
           {kinds.map((k) => {
             const items = designs.filter((d) => d.kind === k);
             return (
               <div key={k} className="designer-group">
                 <div className={`designer-kind${activeKind === k ? ' active' : ''}`} onClick={() => setActiveKind(k)}>
-                  {KIND_ICON[k]} <span>{KIND_LABEL[k]}</span> ({items.length})
+                  <span className="kind-icon">{KIND_ICON[k]}</span>
+                  <span>{KIND_LABEL[k]}</span>
+                  <span className="kind-count">{items.length}</span>
                 </div>
                 <div className="designer-items">
                   {items.map((d) => (
@@ -158,72 +178,84 @@ export function ObjectDesignerView(props: { projectName: string }) {
                       className={`designer-item${selected?.id === d.id ? ' active' : ''}`}
                       onClick={() => setSelected(d)}
                     >
-                      <span>{d.status === 'done' ? '✅' : d.status === 'failed' ? '❌' : d.status === 'generating' ? '⏳' : '·'}</span>
+                      <span className="item-status">{STATUS_ICON[d.status]}</span>
                       <span className="designer-item-name">{d.name}</span>
                       {d.assetId && <span className="designer-thumb-mini" style={{ backgroundImage: `url(/api/assets/${d.assetId}/file)` }} />}
                     </div>
                   ))}
-                  {items.length === 0 && <div className="designer-empty">暂无设计</div>}
+                  {items.length === 0 && (
+                    <EmptyState
+                      icon={KIND_ICON[k]}
+                      text={`暂无设计`}
+                    />
+                  )}
                 </div>
               </div>
             );
           })}
           <button className="btn-ghost designer-add" onClick={() => setCreating(true)}>＋ 新建</button>
         </div>
+        {/* 右列：选中对象表单 / 定妆照灯箱 */}
         <div className="designer-form">
           {selected ? (
             <>
               <div className="designer-form-head">
-                <span>{KIND_ICON[selected.kind]} {KIND_LABEL[selected.kind]}</span>
-                <span className={`designer-status st-${selected.status}`}>
-                  {selected.status === 'draft' ? '草稿' : selected.status === 'generating' ? '生成中…' : selected.status === 'done' ? '已生成' : '失败'}
-                </span>
+                <span className="form-kind">{KIND_ICON[selected.kind]} <span>{KIND_LABEL[selected.kind]}</span></span>
+                <StatusBadge tone={STATUS_TONE[selected.status]}>{STATUS_TEXT[selected.status]}</StatusBadge>
               </div>
-              <label className="designer-label">名称
+              <Field label="名称">
                 <input className="ne-input" data-testid="design-name" value={selected.name}
                   onChange={(e) => persist({ name: e.target.value })} />
-              </label>
-              <label className="designer-label">风格
+              </Field>
+              <Field label="风格" hint="自由输入或选择常用风格">
                 <input className="ne-input" list="style-presets" value={selected.style}
                   placeholder="自由输入或选择常用风格"
                   onChange={(e) => persist({ style: e.target.value })} />
                 <datalist id="style-presets">
                   {STYLE_PRESETS.map((s) => <option key={s} value={s} />)}
                 </datalist>
-              </label>
-              <label className="designer-label">视觉描述
+              </Field>
+              <Field label="视觉描述" hint="外观、材质、光影…">
                 <textarea className="ne-input" data-testid="design-desc" rows={5} value={selected.description}
                   placeholder="描述外观、材质、光影…"
                   onChange={(e) => persist({ description: e.target.value })} />
-              </label>
-              <label className="designer-label">文生图模板
+              </Field>
+              <Field label="文生图模板">
                 <select className="ne-input" value={selected.template}
                   onChange={(e) => persist({ template: e.target.value })}>
                   <option value="">（选择模板…）</option>
                   {workflows.map((w) => <option key={w} value={w}>{w}</option>)}
                 </select>
                 {workflows.length === 0 && <div className="designer-tip">workflows/ 目录暂无模板，请放入 *.template.json（需含 $&#123;prompt&#125; 变量）</div>}
-              </label>
+              </Field>
               <div className="designer-actions">
-                <button className="btn-ghost" disabled={aiBusy} onClick={aiOptimize}>✨ AI 优化描述</button>
+                <AiButton busy={aiBusy} onClick={aiOptimize}>✨ AI 优化描述</AiButton>
                 <button className="btn-primary" disabled={selected.status === 'generating' || !selected.template} onClick={generate}>⚙ 生成参考图</button>
               </div>
               {selected.status === 'failed' && selected.error && (
-                <div className="story-error">生成失败：{selected.error}</div>
+                <ErrorBanner text={`生成失败：${selected.error}`} />
               )}
               {selected.status === 'done' && selected.assetId && (
                 <div className="designer-preview">
                   <img src={`/api/assets/${selected.assetId}/file`} alt="参考图" data-testid="design-preview-img" />
+                  <div className="preview-meta">
+                    <span>{selected.template || '—'}</span>
+                    <span>{selected.style || '未指定风格'}</span>
+                  </div>
                 </div>
               )}
               <button className="btn-ghost designer-del" onClick={remove}>删除对象</button>
             </>
           ) : (
-            <div className="designer-empty">← 选择或新建一个对象开始设计</div>
+            <EmptyState
+              icon="🎬"
+              text="选择或新建一个对象开始设计"
+              action={<button className="btn-ghost designer-add" onClick={() => setCreating(true)}>＋ 新建对象</button>}
+            />
           )}
         </div>
       </div>
-      {error && <div className="story-error designer-error">{error}</div>}
+      {error && <ErrorBanner text={error} />}
       {creating && (
         <div className="dialog-mask" onClick={() => setCreating(false)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>

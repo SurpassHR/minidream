@@ -503,54 +503,88 @@
   box-shadow: 0 0 0 3px rgba(232, 163, 61, .25);
 }
 
-/* ===== story-teller 向导 ===== */
-.story-view { display: flex; flex-direction: column; padding: 24px 32px; gap: 16px; }
-.story-center { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-faint); }
-.story-head { display: flex; align-items: center; gap: 16px; }
-.story-title { font-size: 14px; font-weight: 600; }
-.story-progress { display: flex; gap: 4px; flex: 1; max-width: 420px; }
-.story-progress .seg { height: 5px; flex: 1; border-radius: 3px; background: var(--border); transition: background .2s; }
-.story-progress .seg.done { background: var(--ok); }
-.story-progress .seg.cur { background: var(--amber); }
-.story-banner { padding: 10px 14px; border: 1px solid var(--ok); border-radius: 6px; background: rgba(46, 160, 67, .08); color: var(--ok); font-size: 13px; }
-.story-card { max-width: 720px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 24px; display: flex; flex-direction: column; gap: 14px; }
-.story-q { font-size: 16px; font-weight: 600; }
-.story-hint { font-size: 12px; color: var(--text-faint); }
-.story-answer { width: 100%; resize: vertical; }
-.story-actions { display: flex; align-items: center; gap: 12px; }
-.story-save-hint { font-size: 11px; color: var(--ok); }
-.story-nav { display: flex; justify-content: space-between; margin-top: 6px; }
-.story-error { color: var(--rec); font-size: 12px; }
+/* ===== 角色页共享组件（story-teller / object-designer 统一） ===== */
+.role-view { padding: 28px 36px; display: flex; flex-direction: column; gap: 18px; }
+.role-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.role-head-main { display: flex; flex-direction: column; gap: 3px; }
+.role-eyebrow { font-family: var(--mono); font-size: 10px; letter-spacing: .24em; text-transform: uppercase; color: var(--amber); }
+.role-title { font-size: 20px; font-weight: 600; color: var(--text); letter-spacing: .02em; }
+.role-head-meta { font-family: var(--mono); font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+.role-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+.role-field { display: flex; flex-direction: column; gap: 6px; }
+.role-field-label { font-family: var(--mono); font-size: 10px; letter-spacing: .12em; color: var(--text-dim); }
+.role-field .ne-input { width: 100%; }
+.role-field-hint { font-size: 11px; color: var(--text-faint); }
+.role-badge { font-family: var(--mono); font-size: 10px; padding: 2px 10px; border-radius: 999px; border: 1px solid; letter-spacing: .06em; }
+.role-badge.tone-ok { color: var(--ok); border-color: rgba(79, 174, 126, .4); background: rgba(79, 174, 126, .08); }
+.role-badge.tone-warn { color: var(--amber); border-color: rgba(232, 163, 61, .4); background: rgba(232, 163, 61, .08); }
+.role-badge.tone-err { color: var(--rec); border-color: rgba(224, 82, 82, .4); background: rgba(224, 82, 82, .08); }
+.role-badge.tone-dim { color: var(--text-faint); border-color: var(--border-2); background: transparent; }
+.role-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 18px 10px; border: 1px dashed var(--border-2); border-radius: 10px; color: var(--text-faint); font-size: 12px; text-align: center; }
+.role-empty-icon { font-size: 18px; opacity: .8; }
+.role-ai-btn { transition: all .15s; }
+.role-ai-btn:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); }
+.role-ai-btn:disabled { opacity: .5; cursor: default; }
+.role-error { color: var(--rec); font-size: 12px; padding: 8px 12px; border: 1px solid rgba(224, 82, 82, .25); border-radius: 6px; background: rgba(224, 82, 82, .06); line-height: 1.5; }
+.role-loading { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-faint); letter-spacing: .1em; }
 
-/* ===== object-designer 设计器 ===== */
-.designer-view { display: flex; flex-direction: column; padding: 24px 32px; gap: 16px; }
-.designer-head { font-size: 14px; font-weight: 600; }
-.designer-body { display: flex; gap: 24px; flex: 1; min-height: 0; }
-.designer-list { flex: 0 0 260px; display: flex; flex-direction: column; gap: 14px; overflow: auto; }
+/* ===== story-teller 向导（窄列聚焦 + 场记板步骤轨道） ===== */
+.story-view { max-width: 760px; margin: 0 auto; width: 100%; }
+.story-step-meta { font-family: var(--mono); color: var(--amber); }
+.story-track { display: flex; gap: 8px; margin-bottom: 2px; }
+.track-seg {
+  position: relative; flex: 1; height: 42px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-2); border-radius: 8px; background: var(--panel); cursor: pointer;
+  font-family: var(--mono); font-size: 12px; color: var(--text-faint); transition: all .18s;
+}
+.track-seg:hover { border-color: var(--text-dim); color: var(--text); }
+.track-seg.done { border-color: rgba(79, 174, 126, .45); color: var(--ok); background: rgba(79, 174, 126, .06); }
+.track-seg.cur {
+  border-color: var(--amber); color: var(--amber); background: rgba(232, 163, 61, .08);
+  box-shadow: 0 0 0 1px var(--amber), 0 0 14px rgba(232, 163, 61, .22); font-weight: 600;
+}
+.track-mark { position: absolute; top: 3px; right: 6px; font-size: 9px; line-height: 1; }
+.story-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border: 1px solid rgba(79, 174, 126, .4); border-radius: 8px; background: rgba(79, 174, 126, .08); color: var(--ok); font-size: 13px; }
+.story-card { max-width: 100%; }
+.story-q { font-size: 18px; font-weight: 600; }
+.story-hint { font-size: 12px; color: var(--text-faint); }
+.story-answer { width: 100%; resize: vertical; font-family: var(--sans); font-size: 13px; line-height: 1.7; }
+.story-actions { display: flex; align-items: center; gap: 12px; }
+.story-save-hint { font-size: 11px; color: var(--ok); font-family: var(--mono); }
+.story-nav { display: flex; justify-content: space-between; margin-top: 4px; }
+
+/* ===== object-designer 设计器（左分类右表单 + 定妆照灯箱） ===== */
+.designer-view { width: 100%; }
+.designer-meta { font-family: var(--mono); }
+.designer-body { display: flex; gap: 22px; flex: 1; min-height: 0; }
+.designer-list { flex: 0 0 268px; display: flex; flex-direction: column; gap: 16px; overflow: auto; padding-right: 4px; }
 .designer-group { display: flex; flex-direction: column; gap: 6px; }
-.designer-kind { font-size: 13px; font-weight: 600; color: var(--text-dim); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
-.designer-kind.active { color: var(--amber); }
-.designer-items { display: flex; flex-direction: column; gap: 4px; padding-left: 6px; }
-.designer-item {
+.designer-kind {
   display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px;
+  border-left: 3px solid transparent; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-dim);
+  transition: all .15s;
+}
+.designer-kind:hover { color: var(--text); }
+.designer-kind.active { border-left-color: var(--amber); background: rgba(232, 163, 61, .07); color: var(--text); }
+.kind-icon { font-size: 14px; }
+.kind-count { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--text-faint); background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 999px; padding: 1px 7px; }
+.designer-items { display: flex; flex-direction: column; gap: 4px; padding-left: 10px; }
+.designer-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px;
   border: 1px solid var(--border); font-size: 12px; cursor: pointer; transition: all .15s;
 }
-.designer-item:hover { border-color: var(--border-2); }
+.designer-item:hover { border-color: var(--border-2); background: var(--panel); }
 .designer-item.active { border-color: var(--amber); background: rgba(232, 163, 61, .06); }
-.designer-thumb-mini { width: 22px; height: 22px; border-radius: 4px; background-size: cover; background-position: center; border: 1px solid var(--border-2); }
-.designer-empty { color: var(--text-faint); font-size: 12px; padding: 8px; }
+.item-status { width: 14px; text-align: center; font-size: 11px; }
+.designer-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.designer-thumb-mini { width: 22px; height: 22px; border-radius: 4px; background-size: cover; background-position: center; border: 1px solid var(--border-2); flex: none; }
 .designer-add { align-self: flex-start; }
-.designer-form { flex: 1; max-width: 560px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
-.designer-form-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; }
-.designer-status { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border-2); color: var(--text-dim); }
-.designer-status.st-done { color: var(--ok); border-color: var(--ok); }
-.designer-status.st-failed { color: var(--rec); border-color: var(--rec); }
-.designer-status.st-generating { color: var(--amber); border-color: var(--amber); }
-.designer-label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }
-.designer-label .ne-input { width: 100%; }
+.designer-form { flex: 1; max-width: 620px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; overflow: auto; }
+.designer-form-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; padding-bottom: 2px; }
+.form-kind { display: flex; align-items: center; gap: 6px; }
 .designer-actions { display: flex; gap: 10px; }
 .designer-tip { font-size: 11px; color: var(--text-faint); }
-.designer-preview { border: 1px solid var(--border-2); border-radius: 8px; overflow: hidden; }
+.designer-preview { border: 1px solid var(--border-2); border-radius: 10px; overflow: hidden; background: var(--panel-2); }
 .designer-preview img { width: 100%; display: block; }
+.preview-meta { display: flex; justify-content: space-between; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--border); font-family: var(--mono); font-size: 10px; color: var(--text-faint); letter-spacing: .06em; }
 .designer-del { align-self: flex-start; }
-.designer-error { padding: 0 32px; }
