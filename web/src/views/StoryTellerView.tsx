@@ -173,16 +173,6 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
     }).catch((err) => setError(err instanceof Error ? err.message : '重置失败'));
   };
 
-  // 对话式回填向导：六步答案写入 story.json，切回向导式展示
-  const handleBackfill = (answers: Record<string, string>) => {
-    void client.saveStory({ answers }).then((s) => {
-      setStory(s);
-      setDraft(s.answers[STORY_STEPS[Math.min(s.step, STORY_STEPS.length - 1)]!.id] ?? '');
-      switchMode('wizard');
-      setError('');
-    }).catch((err) => setError(err instanceof Error ? err.message : '回填失败'));
-  };
-
   // 对话式总结成稿：解析答案 → 写入 story.json → complete 入库 → 刷新完成状态（留在对话式）
   const handleSummarized = (answers: Record<string, string>) => {
     void client.saveStory({ answers })
@@ -234,7 +224,6 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
             <StoryChat
               projectName={props.projectName}
               completedAt={story.completedAt}
-              onBackfill={handleBackfill}
               onSummarized={handleSummarized}
               prompts={props.prompts}
               armorBreak={props.armorBreak}

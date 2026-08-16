@@ -85,45 +85,20 @@ describe('parseStoryAnswers', () => {
 describe('StoryChat', () => {
   it('加载历史并渲染消息', async () => {
     presetLegacySession();
-    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
     expect(screen.getByText('好设定！')).toBeInTheDocument();
   });
 
   it('发送消息后流式渲染 agent 回复', async () => {
     presetLegacySession();
-    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
     const input = screen.getByTestId('chat-input');
     fireEvent.change(input, { target: { value: '主角是谁？' } });
     fireEvent.keyDown(input, { key: 'Enter' });
     // 新 mock 单帧 chunk（精灵骑士）+ DONE：断言随 mock 调整
     await waitFor(() => expect(screen.getByText(/精灵骑士/)).toBeInTheDocument());
-  });
-
-  it('回填向导：点击后解析 AI 输出并回调 onBackfill', async () => {
-    let backfilled: Record<string, string> | null = null;
-    // 覆盖 mock：/api/story/chat 返回六步格式
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      const u = String(url);
-      if (u.includes('/api/story/chat/sessions')) {
-        return new Response(JSON.stringify({ sessions: [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }], activeId: 's1' }), { status: 200 });
-      }
-      if (u.includes('/api/story/chat/history')) {
-        return new Response(JSON.stringify({ messages: [] }), { status: 200 });
-      }
-      if (u.includes('/api/story/chat')) {
-        return new Response(
-          'data: {"chunk":"theme: 战争与和解\\nprotagonist: 精灵骑士"}\n\ndata: [DONE]\n\n',
-          { status: 200, headers: { 'content-type': 'text/event-stream' } },
-        );
-      }
-      return new Response(JSON.stringify({}), { status: 404 });
-    }));
-    render(<StoryChat projectName="demo" onBackfill={(a) => { backfilled = a; }} onSummarized={() => {}} />);
-    await waitFor(() => expect(screen.getByText('↩ 回填向导')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('↩ 回填向导'));
-    await waitFor(() => expect(backfilled).toEqual({ theme: '战争与和解', protagonist: '精灵骑士' }));
   });
 
   it('总结成稿：解析后回调 onSummarized 携带答案', async () => {
@@ -144,7 +119,7 @@ describe('StoryChat', () => {
       }
       return new Response(JSON.stringify({}), { status: 404 });
     }));
-    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={(a) => { summarized = a; }} />);
+    render(<StoryChat projectName="demo" onSummarized={(a) => { summarized = a; }} />);
     await waitFor(() => expect(screen.getByText('✨ 总结成稿')).toBeInTheDocument());
     fireEvent.click(screen.getByText('✨ 总结成稿'));
     await waitFor(() => expect(summarized).toEqual({ theme: '战争与和解', protagonist: '精灵骑士' }));
@@ -165,7 +140,7 @@ describe('StoryChat', () => {
       }
       return new Response(JSON.stringify({}), { status: 404 });
     }));
-    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByText('✨ 总结成稿')).toBeInTheDocument());
     fireEvent.click(screen.getByText('✨ 总结成稿'));
     // 出现连接失败提示
@@ -174,47 +149,19 @@ describe('StoryChat', () => {
     expect(screen.queryByText('未识别到答案格式，请重试')).not.toBeInTheDocument();
   });
 
-  it('回填向导请求携带 persistAs 标记（不落盘长指令原文）', async () => {
-    let requestBody: string | null = null;
-    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
-      const u = String(url);
-      if (u.includes('/api/story/chat/sessions')) {
-        return new Response(JSON.stringify({ sessions: [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }], activeId: 's1' }), { status: 200 });
-      }
-      if (u.includes('/api/story/chat/history')) {
-        return new Response(JSON.stringify({ messages: [] }), { status: 200 });
-      }
-      if (u.includes('/api/story/chat')) {
-        requestBody = String(init?.body ?? '');
-        return new Response(
-          'data: {"chunk":"theme: 战争与和解"}\n\ndata: [DONE]\n\n',
-          { status: 200, headers: { 'content-type': 'text/event-stream' } },
-        );
-      }
-      return new Response(JSON.stringify({}), { status: 404 });
-    }));
-    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
-    await waitFor(() => expect(screen.getByText('↩ 回填向导')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('↩ 回填向导'));
-    await waitFor(() => expect(requestBody).not.toBeNull());
-    const parsed = JSON.parse(requestBody!) as { persistAs?: string };
-    expect(parsed.persistAs).toBe('（请回填向导）');
-  });
-
   it('completedAt 非空时显示完成提示条', async () => {
-    render(<StoryChat projectName="demo" completedAt="2026-08-16T00:00:00.000Z" onBackfill={() => {}} onSummarized={() => {}} />);
+    render(<StoryChat projectName="demo" completedAt="2026-08-16T00:00:00.000Z" onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByText(/✅ 已完成 · 已生成故事文档进素材库/)).toBeInTheDocument());
   });
 
-  it('总结成稿使用配置的 storyChat + storySummarize 提示词', async () => {
+  it('总结成稿使用配置的 storyTeller + storySummarize 提示词', async () => {
     const onSummarized = vi.fn();
     presetLegacySession();
     render(
       <StoryChat
         projectName="demo"
-        onBackfill={() => {}}
         onSummarized={onSummarized}
-        prompts={{ storyChat: '定制编剧', storySummarize: '定制总结' }}
+        prompts={{ storyTeller: '定制编剧', storySummarize: '定制总结' }}
       />,
     );
     await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
@@ -232,34 +179,9 @@ describe('StoryChat', () => {
     expect(body.message).not.toContain('你是导演工作台的故事编剧');
   });
 
-  it('回填向导使用配置的 storyChat + storyBackfill 提示词', async () => {
-    presetLegacySession();
-    render(
-      <StoryChat
-        projectName="demo"
-        onBackfill={() => {}}
-        onSummarized={() => {}}
-        prompts={{ storyChat: '定制编剧', storyBackfill: '定制回填' }}
-      />,
-    );
-    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('↩ 回填向导'));
-    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('/api/story/chat'),
-      expect.objectContaining({ method: 'POST' }),
-    ));
-    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
-      (c) => String(c[0]).includes('/api/story/chat') && (c[1] as RequestInit)?.method === 'POST',
-    );
-    const body = JSON.parse(String(calls.at(-1)![1]?.body)) as { message: string };
-    expect(body.message).toContain('定制编剧');
-    expect(body.message).toContain('定制回填');
-    expect(body.message).not.toContain('你是导演工作台的故事编剧');
-  });
-
   // —— Task 4 新增：左侧会话列表面板 ——
   it('会话面板：无会话自动新建；列表显示会话标题', async () => {
-    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByTestId('session-item-s1')).toBeInTheDocument());
     expect(screen.getByTestId('session-item-s1')).toHaveTextContent('新会话');
   });
@@ -271,7 +193,7 @@ describe('StoryChat', () => {
     ];
     ACTIVE = 'sa';
     HISTORY = [{ who: 'agent', text: '甲的历史', at: 2 }];
-    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByText('甲的历史')).toBeInTheDocument());
     // 切到 sb
     SESSIONS = [
@@ -288,13 +210,23 @@ describe('StoryChat', () => {
   it('发送/总结成稿携带当前 sessionId', async () => {
     SESSIONS = [{ id: 's9', title: '当前', createdAt: 1, updatedAt: 1 }];
     ACTIVE = 's9';
-    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    render(
+      <StoryChat
+        projectName="demo"
+        onSummarized={() => {}}
+        prompts={{ storyTeller: '你是导演工作台的故事编剧' }}
+      />,
+    );
     await waitFor(() => expect(screen.getByTestId('session-item-s9')).toBeInTheDocument());
     const input = screen.getByTestId('chat-input');
     fireEvent.change(input, { target: { value: '主角是谁？' } });
     fireEvent.click(screen.getByText('发送'));
     await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(0));
     expect(CHAT_BODIES[0]!.sessionId).toBe('s9');
+    // send 透传 systemPrompt=storyTeller（对话式统一角色提示词，经后端 systemPrompt 字段）
+    expect(
+      (CHAT_BODIES.at(-1) as { message: string; sessionId?: string; systemPrompt?: string }).systemPrompt,
+    ).toContain('你是导演工作台的故事编剧');
     fireEvent.click(screen.getByText('✨ 总结成稿'));
     await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(1));
     expect(CHAT_BODIES.at(-1)!.sessionId).toBe('s9');
@@ -305,7 +237,7 @@ describe('StoryChat', () => {
     ACTIVE = 's1';
     vi.spyOn(window, 'prompt').mockReturnValue('新名字');
     vi.spyOn(window, 'confirm').mockReturnValue(true);
-    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByText('旧名')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('session-rename-s1'));
     await waitFor(() => expect(screen.getByText('新名字')).toBeInTheDocument());
@@ -344,7 +276,7 @@ describe('StoryChat', () => {
       }
       return new Response(JSON.stringify({}), { status: 404 });
     }));
-    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByTestId('session-item-s1')).toBeInTheDocument());
     const input = screen.getByTestId('chat-input');
     fireEvent.change(input, { target: { value: '主角是谁？' } });
@@ -366,7 +298,7 @@ describe('StoryChat', () => {
     SESSIONS = [{ id: 's1', title: '唯一会话', createdAt: 1, updatedAt: 2 }];
     ACTIVE = 's1';
     vi.spyOn(window, 'confirm').mockReturnValue(true);
-    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('唯一会话'));
     fireEvent.click(screen.getByTestId('session-del-s1'));
     // 自动新建（POST create）已发出：新会话回到列表
@@ -408,7 +340,7 @@ describe('StoryChat', () => {
       }
       return new Response(JSON.stringify({}), { status: 404 });
     }));
-    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('新会话'));
     const gets = () => (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => String(c[0]).includes('/api/story/chat/sessions') && (c[1] as RequestInit)?.method !== 'POST',
@@ -449,7 +381,7 @@ describe('StoryChat', () => {
       }
       return new Response(JSON.stringify({}), { status: 404 });
     }));
-    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('新会话'));
     const gets = () => (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => String(c[0]).includes('/api/story/chat/sessions') && (c[1] as RequestInit)?.method !== 'POST',
@@ -463,7 +395,7 @@ describe('StoryChat', () => {
   it('破甲开启时总结成稿请求以预设文本开头', async () => {
     render(
       <StoryChat
-        projectName="demo" onBackfill={() => {}} onSummarized={() => {}}
+        projectName="demo" onSummarized={() => {}}
         armorBreak="破甲预设文本" armorBreakEnabled
       />,
     );

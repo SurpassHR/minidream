@@ -262,17 +262,6 @@ describe('StoryTellerView 模式切换', () => {
     expect(screen.getByTestId('story-teller-view').className).toContain('chat-mode');
   });
 
-  it('对话式回填向导：answers 写入后切回向导式并显示答案', async () => {
-    render(<StoryTellerView projectName="demo" />);
-    await waitFor(() => expect(screen.getByText(/故事主题是什么/)).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId('mode-chat'));
-    await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('↩ 回填向导'));
-    // 回填后应切回向导式并显示主题答案（mock SSE 返回 theme: 战争与和解）
-    await waitFor(() => expect(screen.getByTestId('story-answer')).toBeInTheDocument());
-    expect(screen.getByTestId('story-answer')).toHaveValue('战争与和解');
-  });
-
   it('对话式总结成稿：答案写入并 complete，完成后切回向导式显示已完成', async () => {
     render(<StoryTellerView projectName="demo" />);
     await waitFor(() => expect(screen.getByText(/故事主题是什么/)).toBeInTheDocument());

@@ -33,8 +33,6 @@ function fmtSessionDate(at: number): string {
 
 export function StoryChat(props: {
   projectName: string;
-  // 回填向导成功回调：携带解析出的答案（父组件写入 story.json 并切回向导式）
-  onBackfill: (answers: Record<string, string>) => void;
   // 总结成稿成功回调：携带解析出的答案（父组件先 saveStory 再 completeStory 入库）
   onSummarized: (answers: Record<string, string>) => void;
   // 故事完成时间（总结成稿入库后非空）：对话式顶部显示完成提示条
@@ -52,10 +50,10 @@ export function StoryChat(props: {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false); // 发送/总结/回填共用 busy（防并发）
-  const [action, setAction] = useState<'summarize' | 'backfill' | null>(null);
+  const [busy, setBusy] = useState(false); // 发送/总结共用 busy（防并发）
+  const [action, setAction] = useState<'summarize' | null>(null);
 
-  // 发送/总结/回填完成后重新拉取会话列表：后端在首条用户消息后自动命名会话并 bump updatedAt，
+  // 发送/总结完成后重新拉取会话列表：后端在首条用户消息后自动命名会话并 bump updatedAt，
   // 不刷新则当前会话一直显示「新会话」直到页面重载
   const refreshSessions = () => {
     void client.listStorySessions().then((r) => setSessions(r.sessions)).catch(() => {});
@@ -160,43 +158,37 @@ export function StoryChat(props: {
     setBusy(true);
     setError('');
     setMsgs((m) => [...m, { who: 'user', text }]);
-    client.storyChat(text, appendStream, undefined, undefined, undefined, activeId)
+    client.storyChat(text, appendStream, undefined, undefined, undefined, activeId, resolvePrompt(props.prompts, 'storyTeller'))
       .catch(() => appendStream('\n\n（agent 连接失败）'))
       .finally(() => { setBusy(false); refreshSessions(); });
   };
 
-  // 跑一次「总结成稿」或「回填向导」：让 AI 基于全部对话输出六步答案。
-  // 发送的 message 是组装好的角色+指令 prompt；persistAs 标记（「（请总结成稿）」/「（请回填向导）」）
+  // 跑一次「总结成稿」：让 AI 基于全部对话输出六步答案。
+  // 发送的 message 是组装好的角色+指令 prompt；persistAs 标记（「（请总结成稿）」）
   // 让后端落盘时用标记替代长指令原文——避免长指令消耗 100 条历史上限并污染下次对话上下文。
   // 流式累积输出 → 解析六步答案 → 回调父组件。
   // try/catch/finally：连接失败时只提示连接失败，跳过解析与回调（
   // 避免与「未识别到答案格式」同时出现两条矛盾提示）。
-  const runAction = async (kind: 'summarize' | 'backfill') => {
+  const runAction = async () => {
     if (busy) return;
     setBusy(true);
-    setAction(kind);
+    setAction('summarize');
     setError('');
-    const system = kind === 'summarize'
-      ? resolvePrompt(props.prompts, 'storySummarize')
-      : resolvePrompt(props.prompts, 'storyBackfill');
     const prompt = withArmorBreak(
-      `${resolvePrompt(props.prompts, 'storyChat')}\n\n${system}`,
+      `${resolvePrompt(props.prompts, 'storyTeller')}\n\n${resolvePrompt(props.prompts, 'storySummarize')}`,
       props.armorBreak,
       props.armorBreakEnabled,
     );
-    const persistAs = kind === 'summarize' ? '（请总结成稿）' : '（请回填向导）';
     let acc = '';
-    setMsgs((m) => [...m, { who: 'user', text: persistAs }]);
+    setMsgs((m) => [...m, { who: 'user', text: '（请总结成稿）' }]);
     try {
       await client.storyChat(prompt, (chunk) => {
         acc += chunk;
         appendStream(chunk);
-      }, undefined, undefined, persistAs, activeId);
+      }, undefined, undefined, '（请总结成稿）', activeId);
       const answers = parseStoryAnswers(acc);
       if (Object.keys(answers).length === 0) {
         setError('未识别到答案格式，请重试');
-      } else if (kind === 'backfill') {
-        props.onBackfill(answers);
       } else {
         props.onSummarized(answers);
       }
@@ -205,12 +197,11 @@ export function StoryChat(props: {
     } finally {
       setBusy(false);
       setAction(null);
-      refreshSessions(); // 总结/回填也落盘消息：刷新列表同步标题/updatedAt
+      refreshSessions(); // 总结也落盘消息：刷新列表同步标题/updatedAt
     }
   };
 
-  const summarize = () => runAction('summarize');
-  const backfill = () => runAction('backfill');
+  const summarize = () => runAction();
 
   if (!loaded) {
     return <div className="chat-wrap"><div className="role-loading">加载中…</div></div>;
@@ -276,9 +267,8 @@ export function StoryChat(props: {
           <button className="btn-primary" onClick={send} disabled={busy || !input.trim()}>发送</button>
         </div>
         <div className="chat-actions">
-          <AiButton busy={busy && action === 'summarize'} onClick={summarize}>✨ 总结成稿</AiButton>
-          <AiButton busy={busy && action === 'backfill'} onClick={backfill}>↩ 回填向导</AiButton>
-          <span className="chat-hint">总结成稿：对话 → 完整故事文档入库；回填向导：对话 → 六步答案写入向导</span>
+          <AiButton busy={busy} onClick={summarize}>✨ 总结成稿</AiButton>
+          <span className="chat-hint">总结成稿：对话 → 完整故事文档入库</span>
         </div>
         {error && <ErrorBanner text={error} />}
       </div>
