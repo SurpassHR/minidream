@@ -219,4 +219,21 @@ describe('API 全局设置', () => {
     const r2 = await a.inject({ method: 'GET', url: '/api/settings' });
     expect(r2.json().settings.agentThinking).toBe('medium');
   });
+
+  it('PUT /api/settings 携带 prompts 持久化并读回（整体替换）', async () => {
+    const r = await a.inject({
+      method: 'PUT', url: '/api/settings',
+      payload: { prompts: { storyTeller: '定制', custom: 'x' } },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().settings.prompts).toEqual({ storyTeller: '定制', custom: 'x' });
+    const g = await a.inject({ method: 'GET', url: '/api/settings' });
+    expect(g.json().settings.prompts).toEqual({ storyTeller: '定制', custom: 'x' });
+    // 整体替换：删 custom 并改 storyTeller
+    const r2 = await a.inject({
+      method: 'PUT', url: '/api/settings',
+      payload: { prompts: { storyTeller: '定制2' } },
+    });
+    expect(r2.json().settings.prompts).toEqual({ storyTeller: '定制2' });
+  });
 });

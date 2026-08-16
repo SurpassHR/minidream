@@ -56,3 +56,35 @@ describe('saveSettings', () => {
     expect(s.agentThinking).toBe('high');
   });
 });
+
+describe('prompts 提示词库', () => {
+  it('缺失 prompts 字段时返回 undefined（从未自定义）', () => {
+    expect(readSettings().prompts).toBeUndefined();
+  });
+
+  it('保存 prompts 整体替换（增/改/删）且总是写入', () => {
+    saveSettings({ prompts: { storyTeller: 'A', custom: 'B' } });
+    expect(readSettings().prompts).toEqual({ storyTeller: 'A', custom: 'B' });
+    // 整体替换：删 storyTeller、改 custom、加 storyChat
+    saveSettings({ prompts: { custom: 'B2', storyChat: 'C' } });
+    expect(readSettings().prompts).toEqual({ custom: 'B2', storyChat: 'C' });
+  });
+
+  it('空对象保留（已保存空库不复活）', () => {
+    saveSettings({ prompts: {} });
+    expect(readSettings().prompts).toEqual({});
+  });
+
+  it('非 string 值过滤；未传 prompts 保持现值', () => {
+    saveSettings({ prompts: { a: 'ok', b: 123 as never, c: null as never } });
+    expect(readSettings().prompts).toEqual({ a: 'ok' });
+    const s = saveSettings({ comfyUrl: 'http://x' });
+    expect(s.prompts).toEqual({ a: 'ok' });
+  });
+
+  it('损坏文件返回默认（prompts undefined，不抛错）', () => {
+    mkdirSync(join(fakeHome, '.director'), { recursive: true });
+    writeFileSync(join(fakeHome, '.director', 'settings.json'), '{broken', 'utf8');
+    expect(readSettings().prompts).toBeUndefined();
+  });
+});
