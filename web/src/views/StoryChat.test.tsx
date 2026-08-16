@@ -149,11 +149,6 @@ describe('StoryChat', () => {
     expect(screen.queryByText('未识别到答案格式，请重试')).not.toBeInTheDocument();
   });
 
-  it('completedAt 非空时显示完成提示条', async () => {
-    render(<StoryChat projectName="demo" completedAt="2026-08-16T00:00:00.000Z" onSummarized={() => {}} />);
-    await waitFor(() => expect(screen.getByText(/✅ 已完成 · 已生成故事文档进素材库/)).toBeInTheDocument());
-  });
-
   it('总结成稿使用配置的 storyTeller + storySummarize 提示词', async () => {
     const onSummarized = vi.fn();
     presetLegacySession();

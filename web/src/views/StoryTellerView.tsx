@@ -12,7 +12,6 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
   const [md, setMd] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
-  const [saved, setSaved] = useState(false);
 
   // 项目切换/挂载时加载进度（completedAt + md）
   useEffect(() => {
@@ -37,9 +36,7 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
       .then((r) => {
         setStory(r.story);
         setMd(r.md);
-        setSaved(true);
         setError('');
-        setTimeout(() => setSaved(false), 1200);
       })
       .catch((err) => setError(err instanceof Error ? err.message : '总结入库失败'));
   };
@@ -76,7 +73,6 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
           )}
           <StoryChat
             projectName={props.projectName}
-            completedAt={story.completedAt}
             onSummarized={handleSummarized}
             prompts={props.prompts}
             armorBreak={props.armorBreak}

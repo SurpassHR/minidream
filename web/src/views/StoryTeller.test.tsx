@@ -75,18 +75,19 @@ describe('StoryTellerView 对话式', () => {
     render(<StoryTellerView projectName="demo" />);
     await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
     fireEvent.click(screen.getByText('✨ 总结成稿'));
-    // 完成后 StoryTellerView 横幅与 StoryChat 内嵌完成提示条同时存在 → 用 getAllByText 断言存在
-    await waitFor(() => expect(screen.getAllByText(/已完成 · 已生成故事文档/).length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument());
     await waitFor(() => expect(screen.getByTestId('script-viewer')).toBeInTheDocument());
+    // ScriptViewer 接线回归防护：md 内容（来自 complete 响应）渲染到剧本栏
+    expect(screen.getByTestId('script-viewer')).toHaveTextContent('# demo · 故事设定');
   });
 
   it('重新生成：清空完成态与剧本栏', async () => {
     STORY_API.story = { step: 5, answers: { theme: 't' }, completedAt: '2026-08-15T00:00:00.000Z' };
     render(<StoryTellerView projectName="demo" />);
-    await waitFor(() => expect(screen.getAllByText(/已完成 · 已生成故事文档/).length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument());
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     fireEvent.click(screen.getByText('重新生成'));
-    await waitFor(() => expect(screen.queryAllByText(/已完成 · 已生成故事文档/)).toHaveLength(0));
+    await waitFor(() => expect(screen.queryByText(/已完成 · 已生成故事文档/)).not.toBeInTheDocument());
     expect(screen.getByTestId('script-sidebar')).toHaveTextContent('剧本将在这里展示');
     vi.restoreAllMocks();
   });
@@ -95,5 +96,7 @@ describe('StoryTellerView 对话式', () => {
     STORY_API.story = { step: 5, answers: { theme: 't' }, completedAt: '2026-08-15T00:00:00.000Z' };
     render(<StoryTellerView projectName="demo" />);
     await waitFor(() => expect(screen.getByTestId('script-viewer')).toBeInTheDocument());
+    // 已完成项目挂载：md 从 GET 响应恢复并渲染到剧本栏
+    expect(screen.getByTestId('script-viewer')).toHaveTextContent('# demo · 故事设定');
   });
 });

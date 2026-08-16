@@ -35,8 +35,6 @@ export function StoryChat(props: {
   projectName: string;
   // 总结成稿成功回调：携带解析出的答案（父组件先 saveStory 再 completeStory 入库）
   onSummarized: (answers: Record<string, string>) => void;
-  // 故事完成时间（总结成稿入库后非空）：对话式顶部显示完成提示条
-  completedAt?: string | null;
   // 提示词库（角色系统提示词；未配置键回退内置默认）
   prompts?: Record<string, string>;
   // 破甲预设：开启且文本非空时插入到所有系统提示词之前
@@ -231,9 +229,6 @@ export function StoryChat(props: {
         </div>
       </div>
       <div className="chat-main">
-        {props.completedAt && (
-          <div className="story-banner">✅ 已完成 · 已生成故事文档进素材库</div>
-        )}
         <div className="chat-msgs">
           {msgs.length === 0 && (
             <EmptyState icon="💬" text="还没有对话，从任意创意开始吧——主题、角色、情节都可以聊" />

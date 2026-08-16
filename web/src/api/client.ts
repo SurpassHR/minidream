@@ -387,7 +387,7 @@ export const client = {
   },
 
   // SSE 流式对话（协议同 /api/agent/chat，端点独立）；
-  // persistAs：系统动作（总结成稿/回填向导）的落盘标记，避免长指令污染对话历史；
+  // persistAs：系统动作（总结成稿）的落盘标记，避免长指令污染对话历史；
   // systemPrompt：可选的自定义系统提示词，缺省时后端回退内置角色文本
   async storyChat(
     message: string,
