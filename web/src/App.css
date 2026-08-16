@@ -569,7 +569,7 @@
 .role-loading { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-faint); letter-spacing: .1em; }
 
 /* ===== story-teller 向导（窄列聚焦 + 场记板步骤轨道） ===== */
-.story-view { max-width: 1180px; margin: 0 auto; width: 100%; }
+.story-view { max-width: min(1480px, 96vw); margin: 0 auto; width: 100%; }
 .story-step-meta { font-family: var(--mono); color: var(--amber); }
 .story-track { display: flex; gap: 8px; margin-bottom: 2px; }
 .track-seg {
@@ -594,9 +594,9 @@
 .story-nav { display: flex; justify-content: space-between; margin-top: 4px; }
 
 /* ===== object-designer 设计器（左分类右表单 + 定妆照灯箱） ===== */
-.designer-view { width: 100%; }
+.designer-view { max-width: min(1480px, 96vw); margin: 0 auto; width: 100%; }
 .designer-meta { font-family: var(--mono); }
-.designer-body { display: flex; gap: 22px; flex: 1; min-height: 0; }
+.designer-body { display: flex; gap: 22px; flex: 1; min-height: 0; justify-content: center; }
 .designer-list { flex: 0 0 268px; display: flex; flex-direction: column; gap: 16px; overflow: auto; padding-right: 4px; }
 .designer-group { display: flex; flex-direction: column; gap: 6px; }
 .designer-kind {
