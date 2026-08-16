@@ -31,6 +31,8 @@ export function SettingsModal(props: {
   const [agentThinking, setAgentThinking] = useState(props.settings.agentThinking);
   // 提示词库工作副本（有序条目数组；保存时组装 map）
   const [promptEntries, setPromptEntries] = useState<Array<{ key: string; value: string }>>([]);
+  const [armorBreak, setArmorBreak] = useState(props.settings.armorBreak ?? '');
+  const [armorBreakEnabled, setArmorBreakEnabled] = useState(props.settings.armorBreakEnabled ?? false);
   const [saving, setSaving] = useState(false);
 
   // 打开时同步外部 settings（切换项目/外部变更后重新打开取最新）；
@@ -43,6 +45,8 @@ export function SettingsModal(props: {
       setPromptEntries(props.settings.prompts === undefined
         ? Object.entries(ROLE_PROMPT_KEYS).map(([key, value]) => ({ key, value }))
         : Object.entries(props.settings.prompts).map(([key, value]) => ({ key, value })));
+      setArmorBreak(props.settings.armorBreak ?? '');
+      setArmorBreakEnabled(props.settings.armorBreakEnabled ?? false);
     }
   }, [props.open, props.settings]);
 
@@ -83,6 +87,8 @@ export function SettingsModal(props: {
       agentModel,
       agentThinking,
       prompts,
+      armorBreak,
+      armorBreakEnabled,
     }).then((s) => {
       props.onSaved(s);
       props.onClose();
@@ -140,6 +146,21 @@ export function SettingsModal(props: {
               <button type="button" className="btn-ghost" onClick={resetDefaults}>↺ 重置为默认提示词</button>
             </div>
             <span className="role-field-hint">AI 建议 / 物体优化 / 对话总结回填按名称引用；删除或留空该条目即回退内置默认；改名角色条目将不再被 AI 功能按名引用</span>
+            <div className="armor-break">
+              <label className="armor-break-head">
+                <input
+                  type="checkbox" data-testid="armor-break-enabled"
+                  checked={armorBreakEnabled}
+                  onChange={(e) => setArmorBreakEnabled(e.target.checked)}
+                />
+                <span className="role-field-label">⚔ 破甲预设 · 开启后插入到所有系统提示词之前</span>
+              </label>
+              <textarea
+                className="ne-input armor-break-text" data-testid="armor-break-text"
+                rows={3} value={armorBreak} placeholder="在此填写破甲预设文本…"
+                onChange={(e) => setArmorBreak(e.target.value)}
+              />
+            </div>
             <div className="prompt-lib">
               {promptEntries.map((e, i) => (
                 <div key={i} className="prompt-entry">

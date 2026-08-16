@@ -746,3 +746,9 @@
 .session-act:hover { color: var(--amber); }
 .session-empty { font-size: 11px; color: var(--text-faint); text-align: center; padding: 10px 0; }
 .chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+
+/* ===== 设置弹窗：破甲预设 ===== */
+.armor-break { display: flex; flex-direction: column; gap: 8px; }
+.armor-break-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.armor-break-head input { accent-color: var(--amber); }
+.armor-break-text { font-family: var(--mono); font-size: 12px; line-height: 1.6; resize: vertical; }

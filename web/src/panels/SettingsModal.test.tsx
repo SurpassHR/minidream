@@ -163,4 +163,33 @@ describe('SettingsModal', () => {
     const body = JSON.parse(String((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1]?.body));
     expect(body.prompts).toEqual({});
   });
+
+  it('渲染破甲预设 textarea 与开关（打开时同步外部值）', () => {
+    render(<SettingsModal
+      open
+      settings={{ ...DEFAULT_SETTINGS, armorBreak: '破甲文本', armorBreakEnabled: true }} models={[]}
+      onClose={() => {}} onSaved={() => {}} onError={() => {}}
+    />);
+    expect(screen.getByTestId('armor-break-text')).toHaveValue('破甲文本');
+    expect(screen.getByTestId('armor-break-enabled')).toBeChecked();
+  });
+
+  it('保存携带 armorBreak/armorBreakEnabled', async () => {
+    const onSaved = vi.fn();
+    const onClose = vi.fn();
+    render(<SettingsModal
+      open settings={DEFAULT_SETTINGS} models={[]}
+      onClose={onClose} onSaved={onSaved} onError={() => {}}
+    />);
+    fireEvent.change(screen.getByTestId('armor-break-text'), { target: { value: '新的破甲文本' } });
+    fireEvent.click(screen.getByTestId('armor-break-enabled'));
+    fireEvent.click(screen.getByText('保存'));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/settings',
+      expect.objectContaining({ method: 'PUT' }),
+    ));
+    const body = JSON.parse(String((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1]?.body));
+    expect(body.armorBreak).toBe('新的破甲文本');
+    expect(body.armorBreakEnabled).toBe(true);
+  });
 });
