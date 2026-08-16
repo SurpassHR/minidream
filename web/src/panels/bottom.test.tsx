@@ -26,7 +26,11 @@ describe('AgentPanel', () => {
     render(<AgentPanel chips={[]} onChipsChange={() => {}} onSend={onSend} />);
     fireEvent.change(screen.getByPlaceholderText(/对画布提问/), { target: { value: '分析分镜节奏' } });
     fireEvent.click(screen.getByText('发送'));
-    expect(onSend).toHaveBeenCalledWith('分析分镜节奏', []);
+    expect(onSend).toHaveBeenCalledTimes(1);
+    // 发送参数为 text + chips；第 3 参为会话 id（Task 3 新增，不作断言）
+    const args = onSend.mock.calls[0] as unknown as [string, string[], string | null];
+    expect(args[0]).toBe('分析分镜节奏');
+    expect(args[1]).toEqual([]);
     expect(screen.getByText('分析分镜节奏')).toBeInTheDocument();
   });
 });

@@ -101,6 +101,14 @@ export interface AssetRecord {
   importedAt: number;
 }
 
+// 会话元数据（镜像后端 src/sessions/store.ts）
+export interface SessionMeta {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // 全局设置（镜像后端 src/settings/settings-store.ts）：ComfyUI 地址 / agent 默认模型 / 思考强度
 export interface AppSettings {
   comfyUrl: string;

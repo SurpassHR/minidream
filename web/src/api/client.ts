@@ -1,6 +1,6 @@
 import type {
   DirectorEdge, DirectorNode, EdgeKind, GenTask, Graph, NodeType, ProjectInfo, SnapshotMeta,
-  StoryProgress, AssetRecord, DesignKind, DesignObject, AppSettings,
+  StoryProgress, AssetRecord, DesignKind, DesignObject, AppSettings, SessionMeta,
 } from '../types';
 
 class ApiError extends Error {
@@ -226,10 +226,35 @@ export const client = {
     return r.assets;
   },
 
-  // 项目聊天历史（按项目持久化在 .director/chat.json，重启/刷新不丢）
-  async listChatHistory(): Promise<Array<{ who: 'user' | 'agent'; text: string; at: number }>> {
-    const r = await req<{ messages: Array<{ who: 'user' | 'agent'; text: string; at: number }> }>('/api/agent/history');
-    return r.messages ?? [];
+  // —— AGENT 会话（多会话 CRUD；全部返回列表 + activeId）——
+  async listAgentSessions(): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
+    const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>('/api/agent/sessions');
+    return r;
+  },
+  async createAgentSession(): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
+    const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>('/api/agent/sessions', {
+      method: 'POST', body: JSON.stringify({}),
+    });
+    return r;
+  },
+  async renameAgentSession(id: string, title: string): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
+    const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>(`/api/agent/sessions/${id}`, {
+      method: 'PATCH', body: JSON.stringify({ title }),
+    });
+    return r;
+  },
+  async deleteAgentSession(id: string): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
+    const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>(`/api/agent/sessions/${id}`, {
+      method: 'DELETE', body: JSON.stringify({}),
+    });
+    return r;
+  },
+
+  // 项目聊天历史（按会话作用域：sessionId 缺省时后端回退到当前会话）
+  async listChatHistory(sessionId?: string | null): Promise<Array<{ who: 'user' | 'agent'; text: string; at: number }>> {
+    const q = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+    const r = await req<{ messages: Array<{ who: 'user' | 'agent'; text: string; at: number }> }>(`/api/agent/history${q}`);
+    return r.messages;
   },
 
   // 画布 → MMH3 Prompt YAML 导出（chain 拓扑序 = 剧情顺序；错误抛 YAML_EXPORT_FAILED）

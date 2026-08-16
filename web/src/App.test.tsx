@@ -6,7 +6,17 @@ beforeEach(() => {
   // 面板尺寸持久化隔离：拖拽测试不污染其他用例
   localStorage.clear();
   // mock fetch：/api/graph 返回空图；/api/snapshots 返回空；/api/comfy/health 返回已连接
-  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (String(url).includes('/api/agent/sessions')) {
+      // AgentPanel 多会话（Task 3）：GET 返回列表；POST 新建返回新列表（含 activeId）
+      if (init?.method === 'POST') {
+        return new Response(JSON.stringify({ sessions: [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }], activeId: 's1' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ sessions: [], activeId: null }), { status: 200 });
+    }
+    if (String(url).includes('/api/agent/history')) {
+      return new Response(JSON.stringify({ messages: [] }), { status: 200 });
+    }
     if (String(url).includes('/api/snapshots')) {
       return new Response(JSON.stringify({ snapshots: [] }), { status: 200 });
     }

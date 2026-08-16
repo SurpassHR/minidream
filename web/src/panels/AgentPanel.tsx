@@ -2,15 +2,28 @@ import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { client } from '../api/client';
+import { agentChat } from '../api/agent';
+import type { SessionMeta } from '../types';
 
 export interface ChatMsg { who: 'user' | 'agent'; text: string }
+
+// 会话更新时间 → 短日期：当天显示 HH:mm，否则 MM-DD
+function fmtSessionDate(at: number): string {
+  const d = new Date(at);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  return sameDay
+    ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    : `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 export function AgentPanel(props: {
   chips: string[];
   onChipsChange: (chips: string[]) => void;
-  onSend: (text: string, chips: string[]) => ChatMsg[];
-  // 可选流式通道：发送后由外部（真实 agent 桥）逐块推送文本，追加到消息流最后一条 agent 消息
-  onStream?: (text: string, chips: string[], push: (chunk: string) => void) => void;
+  onSend: (text: string, chips: string[], sessionId?: string | null) => ChatMsg[];
+  // 可选流式通道：发送后由外部（真实 agent 桥）逐块推送文本，追加到消息流最后一条 agent 消息；
+  // 未提供时面板自行请求 agentChat（测试/独立挂载仍可流式渲染）
+  onStream?: (text: string, chips: string[], push: (chunk: string) => void, sessionId?: string | null) => void;
   // 模型切换（内置 agent 下拉）：列表来自 /api/agent/models；空字符串 = pi 默认模型
   models?: Array<{ id: string; provider: string; thinking: boolean }>;
   selectedModel?: string;
@@ -25,40 +38,111 @@ export function AgentPanel(props: {
 }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
+  // 多会话：会话列表 + 当前会话 id + 会话条下拉开关
+  const [sessions, setSessions] = useState<SessionMeta[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [pickOpen, setPickOpen] = useState(false);
   // 用户已发送标记：历史加载是异步的，若加载完成前用户已发消息，不覆盖进行中的对话
   const dirtyRef = useRef(false);
 
-  // 挂载与 historyKey 变化（切换项目）时加载后端持久化的聊天历史；
-  // 切换项目先清空（避免残留上一项目消息）再加载；失败静默（保持空对话）
+  // 挂载与 historyKey 变化（切换项目）时：加载会话列表 → 无会话自动新建 → 加载当前会话消息；
+  // 失败静默（保持空对话；发送时若 activeId 为 null 后端回退到当前会话兜底）
   useEffect(() => {
     dirtyRef.current = false;
     setMsgs([]);
+    setPickOpen(false);
     let disposed = false;
-    void client.listChatHistory().then((history) => {
-      if (!disposed && !dirtyRef.current) {
-        setMsgs(history.map((h) => ({ who: h.who, text: h.text })));
-      }
-    }).catch(() => {});
+    const load = async () => {
+      try {
+        let r = await client.listAgentSessions();
+        if (!r.activeId) r = await client.createAgentSession();
+        if (disposed) return;
+        setSessions(r.sessions);
+        setActiveId(r.activeId);
+        if (r.activeId) {
+          const history = await client.listChatHistory(r.activeId);
+          if (!disposed && !dirtyRef.current) {
+            setMsgs(history.map((h) => ({ who: h.who, text: h.text })));
+          }
+        }
+      } catch { /* 加载失败静默：发送时兜底自动建会话 */ }
+    };
+    void load();
     return () => { disposed = true; };
   }, [props.historyKey]);
+
+  const currentTitle = sessions.find((s) => s.id === activeId)?.title ?? '新会话';
+
+  const newSession = async () => {
+    const r = await client.createAgentSession().catch(() => null);
+    if (!r) return;
+    setSessions(r.sessions);
+    setActiveId(r.activeId);
+    setPickOpen(false);
+    dirtyRef.current = false;
+    setMsgs([]);
+  };
+
+  const selectSession = (id: string) => {
+    if (id === activeId) return;
+    setActiveId(id);
+    dirtyRef.current = false;
+    setMsgs([]);
+    void client.listChatHistory(id).then((history) => {
+      setMsgs(history.map((h) => ({ who: h.who, text: h.text })));
+    }).catch(() => {});
+  };
+
+  const renameSession = async (s: SessionMeta) => {
+    const title = window.prompt('会话标题', s.title);
+    if (!title || title.trim() === '' || title === s.title) return;
+    const r = await client.renameAgentSession(s.id, title.trim()).catch(() => null);
+    if (r) setSessions(r.sessions);
+  };
+
+  const deleteSession = async (s: SessionMeta) => {
+    if (!window.confirm(`删除会话「${s.title}」？其消息将一并删除。`)) return;
+    const r = await client.deleteAgentSession(s.id).catch(() => null);
+    if (!r) return;
+    setSessions(r.sessions);
+    setActiveId(r.activeId);
+    setPickOpen(false);
+    dirtyRef.current = false;
+    setMsgs([]);
+    if (r.activeId) {
+      void client.listChatHistory(r.activeId).then((history) => {
+        setMsgs(history.map((h) => ({ who: h.who, text: h.text })));
+      }).catch(() => {});
+    }
+  };
 
   const send = () => {
     const text = input.trim();
     if (!text) return;
     dirtyRef.current = true;
     setInput('');
-    setMsgs((m) => [...m, ...props.onSend(text, props.chips)]);
+    setMsgs((m) => [...m, ...props.onSend(text, props.chips, activeId)]);
     // 流式通道：分块逐步追加到最后一条 agent 消息
-    props.onStream?.(text, props.chips, (chunk) => {
+    const push = (chunk: string) => {
       setMsgs((m) => {
         const next = [...m];
         const last = next[next.length - 1];
         if (last && last.who === 'agent') {
           next[next.length - 1] = { ...last, text: last.text + chunk };
+        } else {
+          // 无 agent 占位消息时（外部未提供占位）：新建一条 agent 消息承载流
+          next.push({ who: 'agent', text: chunk });
         }
         return next;
       });
-    });
+    };
+    if (props.onStream) {
+      props.onStream(text, props.chips, push, activeId);
+    } else {
+      // 无外部流式通道：面板自行请求 agentChat（chips 名称保留，内容由外部注入）
+      void agentChat(text, props.chips.map((c) => ({ name: c, content: '' })), push, undefined, undefined, activeId)
+        .catch(() => push('\n（agent 连接失败）'));
+    }
   };
 
   return (
@@ -111,6 +195,39 @@ export function AgentPanel(props: {
             >✕</span>
           </span>
         ))}
+      </div>
+      {/* 会话条（多会话下拉）：新建 / 点选 / 重命名 / 删除 */}
+      <div className="agent-sessions">
+        <button
+          type="button" className="btn-ghost agent-session-new" data-testid="agent-session-new"
+          title="新建会话" onClick={() => { void newSession(); }}
+        >＋ 新建</button>
+        <div className="agent-session-pick">
+          <button
+            type="button" className="agent-session-current" data-testid="agent-session-current"
+            onClick={() => setPickOpen(true)}
+          >会话：{currentTitle}</button>
+          {pickOpen && (
+            <>
+              <div className="agent-session-menu" data-testid="agent-session-menu">
+                {sessions.map((s) => (
+                  <div key={s.id} className={`agent-session-item${s.id === activeId ? ' active' : ''}`}>
+                    <button type="button" className="agent-session-select" onClick={() => { selectSession(s.id); setPickOpen(false); }}>
+                      <span className="agent-session-title">{s.title}</span>
+                      <span className="agent-session-date">{fmtSessionDate(s.updatedAt)}</span>
+                    </button>
+                    <button type="button" className="agent-session-act" data-testid={`agent-session-rename-${s.id}`}
+                      title="重命名" onClick={() => { void renameSession(s); }}>✎</button>
+                    <button type="button" className="agent-session-act" data-testid={`agent-session-del-${s.id}`}
+                      title="删除" onClick={() => { void deleteSession(s); }}>🗑</button>
+                  </div>
+                ))}
+                {sessions.length === 0 && <div className="agent-session-empty">暂无会话</div>}
+              </div>
+              <div className="agent-session-mask" onClick={() => setPickOpen(false)} />
+            </>
+          )}
+        </div>
       </div>
       <div className="msgs">
         {msgs.map((m, i) => (

@@ -220,17 +220,17 @@ export default function App() {
   }, []);
 
   // 真实 agent 流式发送：chips 是显示名（@xxx），发送时从画布查找节点内容注入上下文
-  const handleAgentSend = (text: string, _chipRefs: string[]): ChatMsg[] => [
+  const handleAgentSend = (text: string, _chipRefs: string[], _sessionId?: string | null): ChatMsg[] => [
     { who: 'user', text },
     { who: 'agent', text: '（正在请求 pi…）' },
   ];
 
-  const handleAgentStream = useCallback((text: string, chipRefs: string[], push: (chunk: string) => void) => {
+  const handleAgentStream = useCallback((text: string, chipRefs: string[], push: (chunk: string) => void, sessionId?: string | null) => {
     const payload = chipRefs.map((name) => {
       const node = useGraphStore.getState().graph?.nodes.find((n) => n.title === name.slice(2));
       return { name, content: JSON.stringify(node?.fields ?? {}) };
     });
-    void agentChat(text, payload, push, agentModel || undefined, thinkingLevel || undefined)
+    void agentChat(text, payload, push, agentModel || undefined, thinkingLevel || undefined, sessionId)
       .catch(() => push('\n（agent 连接失败）'));
   }, [agentModel, thinkingLevel]);
 
