@@ -107,6 +107,22 @@ describe('API 故事向导', () => {
     expect(listAssets()).toHaveLength(1);
   });
 
+  it('完成后 PUT /api/story 带 answers 返回 409（STORY_ALREADY_COMPLETED）且不写入', async () => {
+    await a.inject({
+      method: 'PUT', url: '/api/story',
+      payload: { answers: { theme: '精灵与哥布林' } },
+    });
+    await a.inject({ method: 'POST', url: '/api/story/complete', payload: {} });
+    const res = await a.inject({
+      method: 'PUT', url: '/api/story',
+      payload: { answers: { theme: '被改写' } },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('STORY_ALREADY_COMPLETED');
+    // answers 未被写入（GET 重建 md 仍与入库素材一致）
+    expect(readStory(dir).answers.theme).toBe('精灵与哥布林');
+  });
+
   it('POST /api/story/reset 清空进度与完成标记', async () => {
     await a.inject({
       method: 'PUT', url: '/api/story',

@@ -895,6 +895,7 @@ app.get('/api/assets/:id/file', async (req, reply) => {
     if (err instanceof DirectorError) {
       const status = err.code === 'CONFIRM_REQUIRED' ? 400
         : err.code === 'SNAPSHOT_FUTURE_EXISTS' ? 409
+        : err.code === 'STORY_ALREADY_COMPLETED' ? 409
         : err.code === 'NODE_NOT_FOUND' || err.code === 'EDGE_NOT_FOUND' ? 404
         : 400;
       reply.code(status).send({ code: err.code, message: err.message });

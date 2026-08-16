@@ -2,6 +2,7 @@
 // （与 chat.json 同级；缺失/损坏视为空进度，原子写 tmp+rename 防半写）
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { DirectorError } from '../types.js';
 import { STORY_STEPS } from './steps.js';
 
 export interface StoryProgress {
@@ -44,6 +45,11 @@ export function saveStory(
   patch: { step?: number; answers?: Record<string, string> },
 ): StoryProgress {
   const story = readStory(projectDir);
+  // 完成后拒绝 answers 写入（与 complete 409 语义一致，防 GET 重建 md 与入库素材漂移）；
+  // step 导航写入不受限（patch.answers 为空即放行）
+  if (story.completedAt && patch.answers) {
+    throw new DirectorError('STORY_ALREADY_COMPLETED', '故事已完成，如需重新生成请先重置');
+  }
   if (patch.step !== undefined) {
     story.step = Math.min(Math.max(Math.round(patch.step), 0), STORY_STEPS.length - 1);
   }

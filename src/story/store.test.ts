@@ -59,6 +59,24 @@ describe('completeStory', () => {
   });
 });
 
+describe('saveStory 完成后守卫', () => {
+  it('完成后带 answers 写入抛 STORY_ALREADY_COMPLETED，answers 不被写入', () => {
+    saveStory(dir, { answers: { theme: '精灵与哥布林' } });
+    completeStory(dir, '2026-08-15T00:00:00.000Z');
+    expect(() => saveStory(dir, { answers: { theme: '被改写' } }))
+      .toThrowError(expect.objectContaining({ code: 'STORY_ALREADY_COMPLETED' }));
+    expect(readStory(dir).answers.theme).toBe('精灵与哥布林');
+  });
+
+  it('完成后仅 step patch 仍生效（步骤导航写入不受限）', () => {
+    completeStory(dir, '2026-08-15T00:00:00.000Z');
+    saveStory(dir, { step: 2 });
+    const story = readStory(dir);
+    expect(story.step).toBe(2);
+    expect(story.completedAt).toBe('2026-08-15T00:00:00.000Z');
+  });
+});
+
 describe('buildStoryMarkdown', () => {
   it('按步骤顺序组装 Markdown 文档', () => {
     const md = buildStoryMarkdown('测试项目', {
