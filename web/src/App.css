@@ -696,9 +696,11 @@
 .settings-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .prompt-lib { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow: auto; }
 .prompt-entry { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--panel-2); }
-.prompt-entry-name { font-family: var(--mono); font-size: 12px; }
+.prompt-entry-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.prompt-entry-name { font-family: var(--mono); font-size: 12px; color: var(--text); display: flex; align-items: baseline; gap: 6px; }
+.prompt-entry-key { font-size: 10px; color: var(--text-faint); }
+.prompt-entry-reset { font-size: 11px; padding: 2px 8px; white-space: nowrap; }
 .prompt-entry-text { font-family: var(--mono); font-size: 12px; line-height: 1.6; resize: vertical; }
-.prompt-entry-del { align-self: flex-end; font-size: 12px; }
 
 /* ===== AGENT 面板：会话条（多会话下拉） ===== */
 .agent-sessions { display: flex; align-items: center; gap: 8px; padding: 0 9px; }

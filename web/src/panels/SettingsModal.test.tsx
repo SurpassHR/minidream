@@ -70,59 +70,62 @@ describe('SettingsModal', () => {
     expect(container.querySelector('.dialog-mask')).toBeNull();
   });
 
-  it('首次打开（prompts undefined）预填 5 角色条目（内容=内置默认）', () => {
+  it('始终显示 5 角色条目：名称只读（标签+键名），内容=内置默认', () => {
     render(<SettingsModal
       open settings={DEFAULT_SETTINGS} models={[]}
       onClose={() => {}} onSaved={() => {}} onError={() => {}}
     />);
-    // 5 个角色名称输入
+    // 5 个角色名称只读展示（键名 + 中文标签），无名称输入框
     for (const n of ['storyTeller', 'objectDesigner', 'storyChat', 'storySummarize', 'storyBackfill']) {
-      expect(screen.getByDisplayValue(n)).toBeInTheDocument();
+      expect(screen.getByText(n)).toBeInTheDocument();
+      expect(screen.getByTestId('prompt-name-0')).not.toHaveAttribute('onChange'); // 名称不可编辑（span 非 input）
     }
-    // 故事向导条目内容 = 内置默认
+    expect(screen.getByText('故事向导 · AI 建议')).toBeInTheDocument();
+    // 内容 = 内置默认
     expect(screen.getByDisplayValue(/MiniMax H3 Prompt Director/)).toBeInTheDocument();
+    // 无新增按钮
+    expect(screen.queryByTestId('prompt-add')).not.toBeInTheDocument();
   });
 
-  it('已保存 prompts 直接展示（含自定义条目），不预填', () => {
+  it('存储值优先：已存的键显示存储内容，缺失的键显示内置默认（角色常驻）', () => {
     render(<SettingsModal
       open
-      settings={{ ...DEFAULT_SETTINGS, prompts: { custom: '自定义内容' } }} models={[]}
+      settings={{ ...DEFAULT_SETTINGS, prompts: { storyTeller: '定制故事向导', custom: '自定义内容' } }} models={[]}
       onClose={() => {}} onSaved={() => {}} onError={() => {}}
     />);
-    expect(screen.getByDisplayValue('custom')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('自定义内容')).toBeInTheDocument();
-    expect(screen.queryByDisplayValue('storyTeller')).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue('定制故事向导')).toBeInTheDocument();
+    // storyBackfill 缺失 → 显示内置默认（角色条目常驻，不因存储缺失而消失）
+    expect(screen.getByText('storyBackfill')).toBeInTheDocument();
+    // 自定义键不再展示（仅 5 角色）
+    expect(screen.queryByDisplayValue('自定义内容')).not.toBeInTheDocument();
   });
 
-  it('新增/编辑/删除条目', () => {
+  it('编辑内容 + 条目级恢复默认', () => {
     render(<SettingsModal
       open settings={DEFAULT_SETTINGS} models={[]}
       onClose={() => {}} onSaved={() => {}} onError={() => {}}
     />);
-    // 新增：种子 5 条后新条目索引为 5（命名按 prev.length+1 → 新提示词 6）
-    fireEvent.click(screen.getByTestId('prompt-add'));
-    expect(screen.getByTestId('prompt-name-5')).toHaveValue('新提示词 6');
-    fireEvent.change(screen.getByTestId('prompt-name-5'), { target: { value: 'custom' } });
-    fireEvent.change(screen.getByTestId('prompt-text-5'), { target: { value: '自定义内容' } });
-    expect(screen.getByDisplayValue('自定义内容')).toBeInTheDocument();
-    // 删除索引 1（objectDesigner）
-    fireEvent.click(screen.getByTestId('prompt-del-1'));
-    expect(screen.queryByDisplayValue('objectDesigner')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByTestId('prompt-text-0'), { target: { value: '改过的故事向导' } });
+    expect(screen.getByDisplayValue('改过的故事向导')).toBeInTheDocument();
+    // 条目级「↺ 默认」恢复内置默认内容
+    fireEvent.click(screen.getByTestId('prompt-reset-0'));
+    expect(screen.getByDisplayValue(/MiniMax H3 Prompt Director/)).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('改过的故事向导')).not.toBeInTheDocument();
   });
 
-  it('重置为默认提示词：恢复 5 角色条目（自定义保留）', () => {
+  it('重置为默认提示词：全部恢复内置默认', () => {
     render(<SettingsModal
       open
-      settings={{ ...DEFAULT_SETTINGS, prompts: { storyTeller: '改过', custom: 'x' } }} models={[]}
+      settings={{ ...DEFAULT_SETTINGS, prompts: { storyTeller: '改过', storyChat: '也改过' } }} models={[]}
       onClose={() => {}} onSaved={() => {}} onError={() => {}}
     />);
     fireEvent.click(screen.getByText('↺ 重置为默认提示词'));
     expect(screen.getByDisplayValue(/MiniMax H3 Prompt Director/)).toBeInTheDocument();
-    expect(screen.getByDisplayValue('custom')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('storyBackfill')).toBeInTheDocument();
+    expect(screen.getByText('storyBackfill')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('也改过')).not.toBeInTheDocument();
   });
 
-  it('保存携带 prompts（整体 map；空名称行丢弃）', async () => {
+  it('保存携带 prompts：固定 5 角色键 map（空内容保留=回退默认）', async () => {
     const onSaved = vi.fn();
     const onClose = vi.fn();
     render(<SettingsModal
@@ -130,38 +133,35 @@ describe('SettingsModal', () => {
       onClose={onClose} onSaved={onSaved} onError={() => {}}
     />);
     fireEvent.change(screen.getByTestId('prompt-text-0'), { target: { value: '定制故事向导' } });
-    fireEvent.click(screen.getByTestId('prompt-add'));
-    fireEvent.change(screen.getByTestId('prompt-name-5'), { target: { value: 'custom' } });
-    fireEvent.change(screen.getByTestId('prompt-text-5'), { target: { value: '自定义内容' } });
-    fireEvent.change(screen.getByTestId('prompt-name-4'), { target: { value: '   ' } }); // 空名称 → 保存时丢弃
+    fireEvent.change(screen.getByTestId('prompt-text-4'), { target: { value: '' } }); // storyBackfill 清空
     fireEvent.click(screen.getByText('保存'));
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
       '/api/settings',
       expect.objectContaining({ method: 'PUT' }),
     ));
     const body = JSON.parse(String((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1]?.body));
+    expect(Object.keys(body.prompts).sort()).toEqual(
+      ['objectDesigner', 'storyBackfill', 'storyChat', 'storySummarize', 'storyTeller'],
+    );
     expect(body.prompts.storyTeller).toBe('定制故事向导');
-    expect(body.prompts.custom).toBe('自定义内容');
-    expect(body.prompts.storyBackfill).toBeUndefined(); // 空名称行已丢弃
-    expect(Object.keys(body.prompts).length).toBe(5); // storyTeller/objectDesigner/storyChat/storySummarize/custom（storyBackfill 空名被丢）
+    expect(body.prompts.storyBackfill).toBe(''); // 空内容保留（消费点回退默认）
   });
 
-  it('空库保存：删除全部条目后 prompts 为 {}（删除不复活）', async () => {
+  it('全部恢复默认后保存：prompts 为 5 键内置默认内容', async () => {
     render(<SettingsModal
       open settings={DEFAULT_SETTINGS} models={[]}
       onClose={() => {}} onSaved={() => {}} onError={() => {}}
     />);
-    // 逐条删除全部条目（删除后索引前移，始终删第 0 个）
-    while (screen.queryAllByTestId(/^prompt-del-/).length > 0) {
-      fireEvent.click(screen.queryAllByTestId(/^prompt-del-/)[0]);
-    }
+    fireEvent.change(screen.getByTestId('prompt-text-1'), { target: { value: '改动' } });
+    fireEvent.click(screen.getByText('↺ 重置为默认提示词'));
     fireEvent.click(screen.getByText('保存'));
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
       '/api/settings',
       expect.objectContaining({ method: 'PUT' }),
     ));
     const body = JSON.parse(String((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1]?.body));
-    expect(body.prompts).toEqual({});
+    expect(Object.keys(body.prompts)).toHaveLength(5);
+    expect(body.prompts.storyTeller).toContain('MiniMax H3 Prompt Director');
   });
 
   it('渲染破甲预设 textarea 与开关（打开时同步外部值）', () => {

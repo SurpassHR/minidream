@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react';
 import { client } from '../api/client';
 import type { AppSettings } from '../types';
-import { ROLE_PROMPT_KEYS } from '../views/roles';
+import { ROLE_PROMPT_KEYS, type RolePromptKey } from '../views/roles';
+
+// 角色提示词中文标签（UI 展示用；键固定唯一对应角色，名称不可编辑）
+const ROLE_PROMPT_LABELS: Record<RolePromptKey, string> = {
+  storyTeller: '故事向导 · AI 建议',
+  objectDesigner: '物体设计 · AI 优化',
+  storyChat: '对话编剧 · 总结/回填基础角色',
+  storySummarize: '总结成稿指令',
+  storyBackfill: '回填向导指令',
+};
 
 // 全局设置弹窗：ComfyUI 地址 + agent 默认模型 + 思考强度 + 提示词库。
 // 持久化到后端 ~/.director/settings.json（用户级，跨项目）；模型/思考强度是「默认值」，
@@ -29,22 +38,26 @@ export function SettingsModal(props: {
   const [comfyUrl, setComfyUrl] = useState(props.settings.comfyUrl);
   const [agentModel, setAgentModel] = useState(props.settings.agentModel);
   const [agentThinking, setAgentThinking] = useState(props.settings.agentThinking);
-  // 提示词库工作副本（有序条目数组；保存时组装 map）
-  const [promptEntries, setPromptEntries] = useState<Array<{ key: string; value: string }>>([]);
+  // 提示词库工作副本：固定 5 个角色条目（键唯一对应角色，名称不可编辑）；
+  // 内容 = 存储值 ?? 内置默认；空内容 = 消费点回退默认
+  const [promptEntries, setPromptEntries] = useState<Array<{ key: RolePromptKey; value: string }>>([]);
   const [armorBreak, setArmorBreak] = useState(props.settings.armorBreak ?? '');
   const [armorBreakEnabled, setArmorBreakEnabled] = useState(props.settings.armorBreakEnabled ?? false);
   const [saving, setSaving] = useState(false);
 
   // 打开时同步外部 settings（切换项目/外部变更后重新打开取最新）；
-  // prompts 键缺失（undefined）= 从未自定义 → 预填 5 角色默认条目
+  // 始终显示 5 角色条目：值 = 存储的 prompts 对应键 ?? 内置默认
   useEffect(() => {
     if (props.open) {
       setComfyUrl(props.settings.comfyUrl);
       setAgentModel(props.settings.agentModel);
       setAgentThinking(props.settings.agentThinking);
-      setPromptEntries(props.settings.prompts === undefined
-        ? Object.entries(ROLE_PROMPT_KEYS).map(([key, value]) => ({ key, value }))
-        : Object.entries(props.settings.prompts).map(([key, value]) => ({ key, value })));
+      setPromptEntries(
+        Object.entries(ROLE_PROMPT_KEYS).map(([key, def]) => ({
+          key,
+          value: props.settings.prompts?.[key] ?? def,
+        })),
+      );
       setArmorBreak(props.settings.armorBreak ?? '');
       setArmorBreakEnabled(props.settings.armorBreakEnabled ?? false);
     }
@@ -52,35 +65,26 @@ export function SettingsModal(props: {
 
   if (!props.open) return null;
 
-  const updateEntry = (i: number, patch: Partial<{ key: string; value: string }>) => {
-    setPromptEntries((prev) => prev.map((e, j) => (j === i ? { ...e, ...patch } : e)));
+  const updateEntry = (i: number, value: string) => {
+    setPromptEntries((prev) => prev.map((e, j) => (j === i ? { ...e, value } : e)));
   };
-  const removeEntry = (i: number) => {
-    setPromptEntries((prev) => prev.filter((_, j) => j !== i));
+  // 单个角色条目恢复默认（清空自定义内容；保存后该键值为默认/空 → 消费回退内置默认）
+  const resetOne = (key: RolePromptKey) => {
+    setPromptEntries((prev) => prev.map((e) => (e.key === key ? { ...e, value: ROLE_PROMPT_KEYS[key] } : e)));
   };
-  const addEntry = () => {
-    setPromptEntries((prev) => [...prev, { key: `新提示词 ${prev.length + 1}`, value: '' }]);
-  };
-  // 重置默认：5 角色条目（含默认内容）合并进工作副本，自定义条目保留
+  // 重置全部 5 角色条目为内置默认
   const resetDefaults = () => {
-    setPromptEntries((prev) => {
-      const next = [...prev];
-      for (const [key, value] of Object.entries(ROLE_PROMPT_KEYS)) {
-        const i = next.findIndex((e) => e.key === key);
-        if (i >= 0) next[i] = { key, value };
-        else next.push({ key, value });
-      }
-      return next;
-    });
+    setPromptEntries(
+      Object.entries(ROLE_PROMPT_KEYS).map(([key, value]) => ({ key, value })),
+    );
   };
 
   const save = () => {
     setSaving(true);
-    // 组装 prompts map：空名称行丢弃（无法按名引用）；空内容保留（消费点回退默认）
+    // 组装 prompts map：固定 5 角色键（键名恒有效）；空内容保留（消费点回退默认）
     const prompts: Record<string, string> = {};
     for (const e of promptEntries) {
-      const key = e.key.trim();
-      if (key) prompts[key] = e.value;
+      prompts[e.key] = e.value;
     }
     void client.saveSettings({
       comfyUrl: comfyUrl.trim(),
@@ -163,25 +167,26 @@ export function SettingsModal(props: {
             </div>
             <div className="prompt-lib">
               {promptEntries.map((e, i) => (
-                <div key={i} className="prompt-entry">
-                  <input
-                    className="ne-input prompt-entry-name" data-testid={`prompt-name-${i}`}
-                    value={e.key}
-                    onChange={(ev) => updateEntry(i, { key: ev.target.value })}
-                  />
+                <div key={e.key} className="prompt-entry">
+                  <div className="prompt-entry-head">
+                    {/* 名称固定只读：键唯一对应角色，不可编辑（改名会破坏消费引用） */}
+                    <span className="prompt-entry-name" data-testid={`prompt-name-${i}`}>
+                      {ROLE_PROMPT_LABELS[e.key] ?? e.key}
+                      <span className="prompt-entry-key">{e.key}</span>
+                    </span>
+                    <button
+                      type="button" className="btn-ghost prompt-entry-reset" data-testid={`prompt-reset-${i}`}
+                      title="恢复为内置默认内容" onClick={() => resetOne(e.key)}
+                    >↺ 默认</button>
+                  </div>
                   <textarea
                     className="ne-input prompt-entry-text" data-testid={`prompt-text-${i}`}
                     rows={3} value={e.value}
-                    onChange={(ev) => updateEntry(i, { value: ev.target.value })}
+                    onChange={(ev) => updateEntry(i, ev.target.value)}
                   />
-                  <button
-                    type="button" className="btn-ghost prompt-entry-del" data-testid={`prompt-del-${i}`}
-                    onClick={() => removeEntry(i)}
-                  >🗑 删除</button>
                 </div>
               ))}
             </div>
-            <button type="button" className="btn-ghost" data-testid="prompt-add" onClick={addEntry}>＋ 新增提示词</button>
           </div>
         </div>
         <div className="dialog-actions">
