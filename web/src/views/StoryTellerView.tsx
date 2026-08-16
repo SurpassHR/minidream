@@ -5,6 +5,7 @@ import { agentChat } from '../api/agent';
 import { STORY_TELLER_SYSTEM } from './roles';
 import { AiButton, ErrorBanner, LoadingState, RoleCard, RoleHeader } from './role-ui';
 import { StoryChat } from './StoryChat';
+import { ScriptViewer } from './ScriptViewer';
 
 // story-teller 向导步骤（镜像后端 src/story/steps.ts，前端渲染与校验用）
 export const STORY_STEPS = [
@@ -24,6 +25,8 @@ export function StoryTellerView(props: { projectName: string }) {
   const [aiBusy, setAiBusy] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  // 剧本 md（buildStoryMarkdown 产物）：完成时由 GET/complete 响应写入，reset 清空
+  const [md, setMd] = useState<string | null>(null);
   // 模式切换：向导式 / 对话式（localStorage 记住上次选择）
   const [mode, setMode] = useState<'wizard' | 'chat'>(() => {
     const savedMode = localStorage.getItem('dw:storyMode');
@@ -47,9 +50,10 @@ export function StoryTellerView(props: { projectName: string }) {
     let disposed = false;
     setLoaded(false);
     setError('');
-    void client.getStory().then((s) => {
+    void client.getStory().then(({ story: s, md: m }) => {
       if (disposed) return;
       setStory(s);
+      setMd(m ?? null);
       setDraft(s.answers[STORY_STEPS[Math.min(s.step, STORY_STEPS.length - 1)]!.id] ?? '');
       setLoaded(true);
     }).catch(() => {
@@ -141,6 +145,7 @@ export function StoryTellerView(props: { projectName: string }) {
       // 用 complete 返回值更新（含 completedAt），不额外 GET
       const r = await client.completeStory();
       setStory(r.story);
+      setMd(r.md);
       setSaved(true);
       setError('');
     } catch (err) {
@@ -153,6 +158,7 @@ export function StoryTellerView(props: { projectName: string }) {
     if (!window.confirm('重新生成将清空当前故事进度，确定？')) return;
     void client.resetStory().then((s) => {
       setStory(s);
+      setMd(null);
       setDraft('');
       setError('');
     }).catch((err) => setError(err instanceof Error ? err.message : '重置失败'));
@@ -174,6 +180,7 @@ export function StoryTellerView(props: { projectName: string }) {
       .then(() => client.completeStory())
       .then((r) => {
         setStory(r.story);
+        setMd(r.md);
         setSaved(true);
         setError('');
       })
@@ -196,82 +203,98 @@ export function StoryTellerView(props: { projectName: string }) {
             : <span className="story-step-meta">自由对话 · 探索故事方向</span>
         }
       />
-      {/* 模式切换：向导式 / 对话式 */}
-      <div className="role-mode-tabs" role="tablist" aria-label="向导模式">
-        <button
-          type="button"
-          className={`role-mode-tab${mode === 'wizard' ? ' active' : ''}`}
-          data-testid="mode-wizard"
-          onClick={() => switchMode('wizard')}
-        >⬡ 向导式</button>
-        <button
-          type="button"
-          className={`role-mode-tab${mode === 'chat' ? ' active' : ''}`}
-          data-testid="mode-chat"
-          onClick={() => switchMode('chat')}
-        >✦ 对话式</button>
-      </div>
-      {mode === 'chat' ? (
-        <StoryChat
-          projectName={props.projectName}
-          completedAt={story.completedAt}
-          onBackfill={handleBackfill}
-          onSummarized={handleSummarized}
-        />
-      ) : (
-        <>
-      {/* 场记板步骤轨道：编号可点击跳转；完成=ok 绿+✓；当前=amber 发光 */}
-      <div className="story-track" role="tablist" aria-label="向导步骤">
-        {STORY_STEPS.map((s, i) => {
-          const done = i < story.step;
-          const cur = i === story.step;
-          return (
+      <div className="story-layout">
+        <div className="story-main">
+          {/* 模式切换：向导式 / 对话式 */}
+          <div className="role-mode-tabs" role="tablist" aria-label="向导模式">
             <button
-              key={s.id}
               type="button"
-              className={`track-seg${done ? ' done' : ''}${cur ? ' cur' : ''}`}
-              title={`${s.question}${s.required ? '' : '（可留空）'}`}
-              onClick={() => goto(i)}
-            >
-              <span className="track-no">{String(i + 1).padStart(2, '0')}</span>
-              <span className="track-mark">{done ? '✓' : cur ? '●' : ''}</span>
-            </button>
-          );
-        })}
-      </div>
-      {story.completedAt && (
-        <div className="story-banner">
-          ✅ 已完成 · 已生成故事文档进素材库（{new Date(story.completedAt).toLocaleString()}）
-          <button className="btn-ghost story-reset" onClick={reset}>重新生成</button>
-        </div>
-      )}
-      <RoleCard className="story-card">
-        <div className="story-q">❓ {step.question}</div>
-        <div className="story-hint">{step.hint}</div>
-        <textarea
-          className="ne-input story-answer" data-testid="story-answer"
-          value={draft}
-          placeholder="在这里填写…"
-          onChange={(e) => { setDraft(e.target.value); persist(story, e.target.value); }}
-          rows={6}
-        />
-        <div className="story-actions">
-          <AiButton busy={aiBusy} onClick={aiSuggest}>✨ AI 建议</AiButton>
-          <span className="story-save-hint">{saved ? '已保存 ✓' : ''}</span>
-        </div>
-        <div className="story-nav">
-          <button className="btn-ghost" disabled={story.step === 0} onClick={() => void prev()}>← 上一步</button>
-          {isLast ? (
-            <button className="btn-primary" onClick={() => void complete()}>完成故事</button>
+              className={`role-mode-tab${mode === 'wizard' ? ' active' : ''}`}
+              data-testid="mode-wizard"
+              onClick={() => switchMode('wizard')}
+            >⬡ 向导式</button>
+            <button
+              type="button"
+              className={`role-mode-tab${mode === 'chat' ? ' active' : ''}`}
+              data-testid="mode-chat"
+              onClick={() => switchMode('chat')}
+            >✦ 对话式</button>
+          </div>
+          {mode === 'chat' ? (
+            <StoryChat
+              projectName={props.projectName}
+              completedAt={story.completedAt}
+              onBackfill={handleBackfill}
+              onSummarized={handleSummarized}
+            />
           ) : (
-            <button className="btn-primary" onClick={() => void next()}>下一步 →</button>
+            <>
+              {/* 场记板步骤轨道：编号可点击跳转；完成=ok 绿+✓；当前=amber 发光 */}
+              <div className="story-track" role="tablist" aria-label="向导步骤">
+                {STORY_STEPS.map((s, i) => {
+                  const done = i < story.step;
+                  const cur = i === story.step;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      className={`track-seg${done ? ' done' : ''}${cur ? ' cur' : ''}`}
+                      title={`${s.question}${s.required ? '' : '（可留空）'}`}
+                      onClick={() => goto(i)}
+                    >
+                      <span className="track-no">{String(i + 1).padStart(2, '0')}</span>
+                      <span className="track-mark">{done ? '✓' : cur ? '●' : ''}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {story.completedAt && (
+                <div className="story-banner">
+                  ✅ 已完成 · 已生成故事文档进素材库（{new Date(story.completedAt).toLocaleString()}）
+                  <button className="btn-ghost story-reset" onClick={reset}>重新生成</button>
+                </div>
+              )}
+              <RoleCard className="story-card">
+                <div className="story-q">❓ {step.question}</div>
+                <div className="story-hint">{step.hint}</div>
+                <textarea
+                  className="ne-input story-answer" data-testid="story-answer"
+                  value={draft}
+                  placeholder="在这里填写…"
+                  onChange={(e) => { setDraft(e.target.value); persist(story, e.target.value); }}
+                  rows={6}
+                />
+                <div className="story-actions">
+                  <AiButton busy={aiBusy} onClick={aiSuggest}>✨ AI 建议</AiButton>
+                  <span className="story-save-hint">{saved ? '已保存 ✓' : ''}</span>
+                </div>
+                <div className="story-nav">
+                  <button className="btn-ghost" disabled={story.step === 0} onClick={() => void prev()}>← 上一步</button>
+                  {isLast ? (
+                    <button className="btn-primary" onClick={() => void complete()}>完成故事</button>
+                  ) : (
+                    <button className="btn-primary" onClick={() => void next()}>下一步 →</button>
+                  )}
+                </div>
+              </RoleCard>
+            </>
           )}
+          {/* 错误横幅：对话式 / 向导式共用（提升到模式条件之外，避免 chat 模式静默失败） */}
+          {error && <ErrorBanner text={error} />}
         </div>
-      </RoleCard>
-        </>
-      )}
-      {/* 错误横幅：对话式 / 向导式共用（提升到模式条件之外，避免 chat 模式静默失败） */}
-      {error && <ErrorBanner text={error} />}
+        {/* 右侧剧本栏：常驻；完成后以代码视图展示 buildStoryMarkdown 产物 */}
+        <aside className="script-sidebar" data-testid="script-sidebar">
+          <div className="panel-title">剧本 <span className="mini">story_{props.projectName || '未命名项目'}.md</span></div>
+          {md ? (
+            <ScriptViewer text={md} />
+          ) : (
+            <div className="script-empty">
+              对话结束点击 ✨ 总结成稿（或向导完成故事）后，
+              剧本将在这里展示
+            </div>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }

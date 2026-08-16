@@ -569,7 +569,7 @@
 .role-loading { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-faint); letter-spacing: .1em; }
 
 /* ===== story-teller 向导（窄列聚焦 + 场记板步骤轨道） ===== */
-.story-view { max-width: 760px; margin: 0 auto; width: 100%; }
+.story-view { max-width: 1180px; margin: 0 auto; width: 100%; }
 .story-step-meta { font-family: var(--mono); color: var(--amber); }
 .story-track { display: flex; gap: 8px; margin-bottom: 2px; }
 .track-seg {
@@ -659,3 +659,28 @@
 .chat-input { flex: 1; resize: vertical; font-family: var(--sans); font-size: 13px; line-height: 1.6; }
 .chat-actions { display: flex; align-items: center; gap: 10px; }
 .chat-hint { font-size: 11px; color: var(--text-faint); margin-left: auto; }
+
+/* ===== story 右侧剧本栏（两栏布局 + 代码视图高亮） ===== */
+.story-layout { display: flex; gap: 22px; align-items: flex-start; }
+.story-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.script-sidebar {
+  flex: 0 0 380px; display: flex; flex-direction: column; gap: 10px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px;
+}
+.script-empty {
+  border: 1px dashed var(--border-2); border-radius: 10px; padding: 20px 14px;
+  font-size: 12px; color: var(--text-faint); text-align: center; line-height: 1.8;
+}
+.script-viewer {
+  overflow: auto; max-height: 62vh; background: var(--bg);
+  border: 1px solid var(--border-2); border-radius: 8px; padding: 8px 0;
+}
+.script-line { display: flex; font-family: var(--mono); font-size: 12px; line-height: 1.7; min-width: max-content; }
+.script-no {
+  flex: none; width: 46px; padding: 0 10px; text-align: right; color: var(--text-faint);
+  user-select: none; background: var(--panel-2); border-right: 1px solid var(--border);
+}
+.script-code { flex: none; padding: 0 12px; color: var(--text); white-space: pre; }
+.tok-object { color: var(--amber); font-weight: 700; }
+.tok-angle { color: var(--blue); }
+.tok-square { color: var(--ok); }

@@ -17,6 +17,7 @@ beforeEach(() => {
       return new Response(JSON.stringify({
         asset: { id: 'a1', kind: 'txt', name: 'story_demo.md', ext: '.md', size: 1, importedAt: 1 },
         story: { ...STORY_API.story, completedAt: '2026-08-15T00:00:00.000Z' },
+        md: '# demo · 故事设定\n\n## 主题\n战争与和解',
       }), { status: 201 });
     }
     // chat 分支必须先于 /api/story（chat URL 含 /api/story 子串，否则被 GET 分支吞掉）
@@ -40,7 +41,11 @@ beforeEach(() => {
           answers: { ...STORY_API.story.answers, ...(body.answers ?? {}) },
         };
       }
-      return new Response(JSON.stringify(STORY_API), { status: 200 });
+      // GET：已完成时携带 md（模拟后端行为）
+      return new Response(JSON.stringify({
+        ...STORY_API,
+        md: STORY_API.story.completedAt ? '# demo · 故事设定\n\n## 主题\n战争与和解' : null,
+      }), { status: 200 });
     }
     if (u.includes('/api/agent/chat')) {
       // 流式 agent：两帧 chunk（帧间 50ms 延迟模拟流式，期间允许切步）+ DONE
@@ -229,5 +234,43 @@ describe('StoryTellerView 模式切换', () => {
     // 切回向导式应显示已完成 banner（completeStory mock 返回 completedAt）
     fireEvent.click(screen.getByTestId('mode-wizard'));
     await waitFor(() => expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument());
+  });
+
+  it('对话式总结成稿完成后：右侧栏展示剧本 md', async () => {
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText(/故事主题是什么/)).toBeInTheDocument());
+    // 未完成：右侧栏占位
+    expect(screen.getByTestId('script-sidebar')).toHaveTextContent('剧本将在这里展示');
+    fireEvent.click(screen.getByTestId('mode-chat'));
+    await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    // 总结完成 → 右侧栏代码视图出现剧本
+    await waitFor(() => expect(screen.getByTestId('script-viewer')).toBeInTheDocument());
+    expect(screen.getByTestId('script-viewer')).toHaveTextContent('# demo · 故事设定');
+    expect(screen.getByTestId('script-viewer')).toHaveTextContent('## 主题');
+  });
+
+  it('已完成项目挂载：右侧栏从 GET 恢复剧本', async () => {
+    STORY_API.story = { step: 5, answers: { theme: 't', protagonist: 'p', antagonist: 'a', scenes: 's', ending: 'e' }, completedAt: '2026-08-15T00:00:00.000Z' };
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByTestId('script-viewer')).toBeInTheDocument());
+    expect(screen.getByTestId('script-viewer')).toHaveTextContent('# demo · 故事设定');
+  });
+
+  it('向导式完成故事后右侧栏展示剧本，重新生成后回占位', async () => {
+    STORY_API.story = { step: 5, answers: { theme: 't', protagonist: 'p', antagonist: 'a', scenes: 's', ending: 'e' }, completedAt: null };
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText(/结局如何/)).toBeInTheDocument());
+    const textarea = screen.getByTestId('story-answer');
+    fireEvent.change(textarea, { target: { value: '圆满结局' } });
+    fireEvent.click(screen.getByText('完成故事'));
+    await waitFor(() => expect(screen.getByTestId('script-viewer')).toBeInTheDocument());
+    expect(screen.getByTestId('script-viewer')).toHaveTextContent('# demo · 故事设定');
+    // 重新生成 → 占位
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    fireEvent.click(screen.getByText('重新生成'));
+    await waitFor(() => expect(screen.queryByTestId('script-viewer')).not.toBeInTheDocument());
+    expect(screen.getByTestId('script-sidebar')).toHaveTextContent('剧本将在这里展示');
+    vi.restoreAllMocks();
   });
 });

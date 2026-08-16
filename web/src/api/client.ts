@@ -266,9 +266,10 @@ export const client = {
   },
 
   // —— story-teller 向导 ——
-  async getStory(): Promise<StoryProgress> {
-    const r = await req<{ story: StoryProgress }>('/api/story');
-    return r.story;
+  // 响应携带 md（剧本全文）：GET 仅已完成时非 null；complete 恒为字符串（后端单一来源）
+  async getStory(): Promise<{ story: StoryProgress; md: string | null }> {
+    const r = await req<{ story: StoryProgress; md: string | null }>('/api/story');
+    return r;
   },
 
   async saveStory(patch: { step?: number; answers?: Record<string, string> }): Promise<StoryProgress> {
@@ -278,8 +279,8 @@ export const client = {
     return r.story;
   },
 
-  async completeStory(): Promise<{ asset: AssetRecord; story: StoryProgress }> {
-    return await req<{ asset: AssetRecord; story: StoryProgress }>('/api/story/complete', {
+  async completeStory(): Promise<{ asset: AssetRecord; story: StoryProgress; md: string }> {
+    return await req<{ asset: AssetRecord; story: StoryProgress; md: string }>('/api/story/complete', {
       method: 'POST', body: JSON.stringify({}),
     });
   },
