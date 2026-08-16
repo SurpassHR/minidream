@@ -125,4 +125,33 @@ describe('StoryChat', () => {
     // 不出现格式错误提示（旧实现会同时显示两条矛盾提示）
     expect(screen.queryByText('未识别到答案格式，请重试')).not.toBeInTheDocument();
   });
+
+  it('回填向导请求携带 persistAs 标记（不落盘长指令原文）', async () => {
+    let requestBody: string | null = null;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/api/story/chat/history')) {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat')) {
+        requestBody = String(init?.body ?? '');
+        return new Response(
+          'data: {"chunk":"theme: 战争与和解"}\n\ndata: [DONE]\n\n',
+          { status: 200, headers: { 'content-type': 'text/event-stream' } },
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }));
+    render(<StoryChat projectName="demo" onBackfill={() => {}} onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('↩ 回填向导')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('↩ 回填向导'));
+    await waitFor(() => expect(requestBody).not.toBeNull());
+    const parsed = JSON.parse(requestBody!) as { persistAs?: string };
+    expect(parsed.persistAs).toBe('（请回填向导）');
+  });
+
+  it('completedAt 非空时显示完成提示条', async () => {
+    render(<StoryChat projectName="demo" completedAt="2026-08-16T00:00:00.000Z" onBackfill={() => {}} onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/✅ 已完成 · 已生成故事文档进素材库/)).toBeInTheDocument());
+  });
 });

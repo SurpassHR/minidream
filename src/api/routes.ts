@@ -474,7 +474,7 @@ app.post('/api/story/reset', async () => {
 app.get('/api/story/chat/history', async () => ({ messages: readStoryChat(ctx.projectDir) }));
 
 app.post('/api/story/chat', async (req, reply) => {
-  const body = req.body as { message?: string; model?: string; thinking?: string };
+  const body = req.body as { message?: string; model?: string; thinking?: string; persistAs?: string };
   const message = (body.message ?? '').trim();
   if (!message) {
     return reply.code(400).send({ code: 'INVALID_PATCH', message: '消息不能为空' });
@@ -502,8 +502,10 @@ app.post('/api/story/chat', async (req, reply) => {
     connection: 'keep-alive',
   });
   const send = (text: string) => reply.raw.write(`data: ${JSON.stringify({ chunk: text })}\n\n`);
-  // 用户消息先落盘（不依赖 pi 是否正常退出）；agent 全文在流结束后落盘
-  appendStoryChat(ctx.projectDir, 'user', message);
+  // 用户消息先落盘（不依赖 pi 是否正常退出）；agent 全文在流结束后落盘。
+  // persistAs：系统动作（总结成稿/回填向导）的落盘标记——message 是长指令 prompt，
+  // 若原文落盘会快速消耗 100 条历史上限并污染下次对话的 20 条上下文窗口。
+  appendStoryChat(ctx.projectDir, 'user', body.persistAs ?? message);
   let agentText = '';
   let pending = '';
   let flushTimer: NodeJS.Timeout | null = null;

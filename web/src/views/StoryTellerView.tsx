@@ -209,6 +209,7 @@ export function StoryTellerView(props: { projectName: string }) {
       {mode === 'chat' ? (
         <StoryChat
           projectName={props.projectName}
+          completedAt={story.completedAt}
           onBackfill={handleBackfill}
           onSummarized={handleSummarized}
         />

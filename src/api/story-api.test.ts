@@ -130,4 +130,21 @@ describe('API 故事对话', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().code).toBe('INVALID_PATCH');
   });
+
+  it('POST /api/story/chat 带 persistAs：落盘用标记而非长指令原文', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_REPLY', 'mock');
+    const longInstruction = '你是导演工作台的故事编剧……'.repeat(10);
+    const res = await a.inject({
+      method: 'POST', url: '/api/story/chat',
+      payload: { message: longInstruction, persistAs: '（请总结成稿）' },
+    });
+    expect(res.statusCode).toBe(200);
+    // 历史中用户消息为标记而非长指令
+    const hist = await a.inject({ method: 'GET', url: '/api/story/chat/history' });
+    const messages = hist.json().messages;
+    expect(messages[0].who).toBe('user');
+    expect(messages[0].text).toBe('（请总结成稿）');
+    expect(messages[0].text).not.toContain('故事编剧');
+  });
 });

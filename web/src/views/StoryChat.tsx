@@ -26,6 +26,8 @@ export function StoryChat(props: {
   onBackfill: (answers: Record<string, string>) => void;
   // 总结成稿成功回调：携带解析出的答案（父组件先 saveStory 再 completeStory 入库）
   onSummarized: (answers: Record<string, string>) => void;
+  // 故事完成时间（总结成稿入库后非空）：对话式顶部显示完成提示条
+  completedAt?: string | null;
 }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
@@ -77,8 +79,8 @@ export function StoryChat(props: {
   };
 
   // 跑一次「总结成稿」或「回填向导」：让 AI 基于全部对话输出六步答案。
-  // 发送的 message 是组装好的角色+指令 prompt（后端会把它当用户消息落盘，
-  // 落盘文本用「（请总结成稿）」等标记，避免把长指令污染进对话历史）；
+  // 发送的 message 是组装好的角色+指令 prompt；persistAs 标记（「（请总结成稿）」/「（请回填向导）」）
+  // 让后端落盘时用标记替代长指令原文——避免长指令消耗 100 条历史上限并污染下次对话上下文。
   // 流式累积输出 → 解析六步答案 → 回调父组件。
   // try/catch/finally：连接失败时只提示连接失败，跳过解析与回调（
   // 避免与「未识别到答案格式」同时出现两条矛盾提示）。
@@ -89,13 +91,14 @@ export function StoryChat(props: {
     setError('');
     const system = kind === 'summarize' ? STORY_SUMMARIZE_PROMPT : STORY_BACKFILL_PROMPT;
     const prompt = `${STORY_CHAT_SYSTEM}\n\n${system}`;
+    const persistAs = kind === 'summarize' ? '（请总结成稿）' : '（请回填向导）';
     let acc = '';
-    setMsgs((m) => [...m, { who: 'user', text: kind === 'summarize' ? '（请总结成稿）' : '（请回填向导）' }]);
+    setMsgs((m) => [...m, { who: 'user', text: persistAs }]);
     try {
       await client.storyChat(prompt, (chunk) => {
         acc += chunk;
         appendStream(chunk);
-      });
+      }, undefined, undefined, persistAs);
       const answers = parseStoryAnswers(acc);
       if (Object.keys(answers).length === 0) {
         setError('未识别到答案格式，请重试');
@@ -121,6 +124,9 @@ export function StoryChat(props: {
 
   return (
     <div className="chat-wrap">
+      {props.completedAt && (
+        <div className="story-banner">✅ 已完成 · 已生成故事文档进素材库</div>
+      )}
       <div className="chat-msgs">
         {msgs.length === 0 && (
           <EmptyState icon="💬" text="还没有对话，从任意创意开始吧——主题、角色、情节都可以聊" />
