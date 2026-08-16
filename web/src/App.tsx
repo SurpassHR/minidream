@@ -1,7 +1,8 @@
 import './App.css';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import CanvasView from './canvas/CanvasView';
-import type { ProjectInfo } from './types';
+import type { ProjectInfo, AppSettings } from './types';
+import { SettingsModal } from './panels/SettingsModal';
 import { AssetLibrary, type AssetItem } from './panels/AssetLibrary';
 import { ProjectSwitcher } from './panels/ProjectSwitcher';
 import { AddProjectDialog } from './panels/AddProjectDialog';
@@ -36,9 +37,14 @@ export default function App() {
   const [addProjectOpen, setAddProjectOpen] = useState(false);
   // 内置 agent 模型：空字符串 = pi 默认模型；列表来自 /api/agent/models
   const [agentModels, setAgentModels] = useState<Array<{ id: string; provider: string; thinking: boolean }>>([]);
+  // agent 默认模型（全局设置 settings.json；AgentPanel 内可临时切换不回写）
   const [agentModel, setAgentModel] = useState('');
-  // 思考强度（pi --thinking）：空字符串 = pi 默认；localStorage 持久化
-  const [thinkingLevel, setThinkingLevel] = useState(() => localStorage.getItem('dw:agentThinking') ?? '');
+  // 思考强度（pi --thinking）：空字符串 = pi 默认；默认值来自全局设置
+  const [thinkingLevel, setThinkingLevel] = useState('');
+  // 全局设置（~/.director/settings.json）：comfyUrl / agentModel / agentThinking；设置弹窗读写
+  const [settings, setSettings] = useState<AppSettings>({ comfyUrl: '', agentModel: '', agentThinking: '' });
+  // 设置弹窗开关（顶栏 COMFYUI 徽章点击打开）
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // agent 活动回传（MCP 工具调用 → WS agent-activity）：显示在 AGENT 面板顶部
   const [agentActivity, setAgentActivity] = useState<{ text: string; at: number } | null>(null);
 
@@ -97,9 +103,14 @@ export default function App() {
     localStorage.removeItem(`dw:${kind}W`);
   };
 
-  // 拉取 pi 可用模型列表（内置面板模型下拉数据源）
+  // 拉取 pi 可用模型列表 + 全局设置（设置弹窗数据源；settings 应用为默认模型/思考强度）
   useEffect(() => {
     void client.listAgentModels().then(setAgentModels).catch(() => setAgentModels([]));
+    void client.getSettings().then((s) => {
+      setSettings(s);
+      if (s.agentModel) setAgentModel(s.agentModel);
+      if (s.agentThinking) setThinkingLevel(s.agentThinking);
+    }).catch(() => {});
   }, []);
 
   // —— 全局接线：启动时拉取图 + WS 事件同步（后端为唯一事实来源） ——
@@ -108,20 +119,20 @@ export default function App() {
   const upsertTask = useGraphStore((s) => s.upsertTask);
   // ComfyUI 连接状态三态：null=检测中、true=已连接、false=未连接
   const [comfyHealthy, setComfyHealthy] = useState<boolean | null>(null);
-  // 当前 ComfyUI 地址（点击徽章可自定义）
+  // 当前 ComfyUI 地址（来自健康检查/设置）
   const [comfyUrl, setComfyUrl] = useState('');
-  const [comfyEditOpen, setComfyEditOpen] = useState(false);
-  const [comfyEditValue, setComfyEditValue] = useState('');
 
-  // 保存自定义 ComfyUI 地址：热切换 + 立即刷新连接状态
-  const saveComfyConfig = () => {
-    void client.setComfyConfig(comfyEditValue.trim()).then((r) => {
-      setComfyUrl(r.baseUrl);
-      setComfyHealthy(r.healthy);
-      setComfyEditOpen(false);
-    }).catch(() => {
-      setComfyEditOpen(false);
-    });
+  // 保存设置回调：ComfyUI 地址已由后端热切换，这里同步健康状态
+  const handleSettingsSaved = (s: AppSettings) => {
+    setSettings(s);
+    if (s.comfyUrl) {
+      setComfyUrl(s.comfyUrl);
+      void client.comfyHealth().then((r) => setComfyHealthy(r.healthy));
+    }
+  };
+
+  const handleSettingsError = (msg: string) => {
+    console.error('保存设置失败', msg);
   };
 
   useEffect(() => {
@@ -322,11 +333,11 @@ export default function App() {
           onRemove={askRemoveProject}
         />
         {comfyHealthy === null ? (
-          <div className="badge"><span className="dot" style={{ background: 'var(--text-faint)' }} />COMFYUI&nbsp;检测中</div>
+          <div className="badge clickable" title="打开设置" onClick={() => setSettingsOpen(true)}><span className="dot" style={{ background: 'var(--text-faint)' }} />COMFYUI&nbsp;检测中</div>
         ) : comfyHealthy ? (
-          <div className="badge clickable" title="点击自定义地址" onClick={() => { setComfyEditValue(comfyUrl); setComfyEditOpen(true); }}><span className="dot ok" />COMFYUI&nbsp;已连接</div>
+          <div className="badge clickable" title="打开设置" onClick={() => setSettingsOpen(true)}><span className="dot ok" />COMFYUI&nbsp;已连接</div>
         ) : (
-          <div className="badge clickable" title="点击自定义地址" onClick={() => { setComfyEditValue(comfyUrl); setComfyEditOpen(true); }}><span className="dot" style={{ background: 'var(--rec)', boxShadow: '0 0 6px var(--rec)' }} />COMFYUI&nbsp;未连接</div>
+          <div className="badge clickable" title="打开设置" onClick={() => setSettingsOpen(true)}><span className="dot" style={{ background: 'var(--rec)', boxShadow: '0 0 6px var(--rec)' }} />COMFYUI&nbsp;未连接</div>
         )}
         <div className="spacer" />
         <button className="btn-ghost" onClick={() => setImportOpen(true)}>＋ 导入</button>
@@ -363,7 +374,7 @@ export default function App() {
             />
             <aside className="right" style={{ flexBasis: rightW }} data-testid="agent-panel">
               <div className="panel-title">AGENT · pi <span className="mini">mmh3 skills</span></div>
-              <AgentPanel chips={chips} onChipsChange={handleChipsChange} onSend={handleAgentSend} onStream={handleAgentStream} models={agentModels} selectedModel={agentModel} onModelChange={setAgentModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={(v) => { setThinkingLevel(v); localStorage.setItem('dw:agentThinking', v); }} historyKey={graph?.projectName ?? 'none'} activity={agentActivity} />
+              <AgentPanel chips={chips} onChipsChange={handleChipsChange} onSend={handleAgentSend} onStream={handleAgentStream} models={agentModels} selectedModel={agentModel} onModelChange={setAgentModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={setThinkingLevel} historyKey={graph?.projectName ?? 'none'} activity={agentActivity} />
             </aside>
           </main>
           <div
@@ -398,28 +409,15 @@ export default function App() {
         onClose={() => setAddProjectOpen(false)}
         onAdded={handleAddProject}
       />
-      {/* ComfyUI 地址自定义弹层 */}
-      {comfyEditOpen && (
-        <div className="dialog-mask" onClick={() => setComfyEditOpen(false)}>
-          <div className="dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="dialog-title">ComfyUI 地址</div>
-            <div className="dialog-body">
-              <input
-                className="ne-input"
-                placeholder="http://127.0.0.1:8188"
-                value={comfyEditValue}
-                onChange={(e) => setComfyEditValue(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') saveComfyConfig(); }}
-              />
-              <div className="tl-sub" style={{ marginTop: 6 }}>本机或远程 GPU 地址，保存后立即生效（写入 project 节点 comfyuiUrl）</div>
-            </div>
-            <div className="dialog-actions">
-              <button className="btn-ghost" onClick={() => setComfyEditOpen(false)}>取消</button>
-              <button className="btn-primary" onClick={saveComfyConfig}>保存</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 全局设置弹窗（ComfyUI / 默认模型 / 思考强度 → settings.json） */}
+      <SettingsModal
+        open={settingsOpen}
+        settings={settings}
+        models={agentModels}
+        onClose={() => setSettingsOpen(false)}
+        onSaved={handleSettingsSaved}
+        onError={handleSettingsError}
+      />
     </div>
   );
 }

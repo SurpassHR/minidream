@@ -100,3 +100,10 @@ export interface AssetRecord {
   size: number;
   importedAt: number;
 }
+
+// 全局设置（镜像后端 src/settings/settings-store.ts）：ComfyUI 地址 / agent 默认模型 / 思考强度
+export interface AppSettings {
+  comfyUrl: string;
+  agentModel: string;
+  agentThinking: string;
+}

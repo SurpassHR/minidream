@@ -44,6 +44,9 @@ beforeEach(() => {
     if (String(url).includes('/api/workflows')) {
       return new Response(JSON.stringify({ workflows: ['test-t2i'] }), { status: 200 });
     }
+    if (String(url).includes('/api/settings')) {
+      return new Response(JSON.stringify({ settings: { comfyUrl: '', agentModel: '', agentThinking: '' } }), { status: 200 });
+    }
     return new Response(JSON.stringify({ graph: { projectName: 't', nodes: [], edges: [] } }), { status: 200 });
   }));
   // mock WebSocket：App 挂载会发起 WS 连接

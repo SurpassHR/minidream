@@ -24,6 +24,7 @@ import type { ChatMessage } from '../agent/chat-history.js';
 import { readStory, saveStory, completeStory, resetStory, buildStoryMarkdown } from '../story/store.js';
 import { readStoryChat, appendStoryChat } from '../story/chat-store.js';
 import { listDesigns, createDesign, updateDesign, deleteDesign } from '../design/store.js';
+import { readSettings, saveSettings } from '../settings/settings-store.js';
 import type { DesignKind, DesignObject } from '../design/store.js';
 import {
   addProject, listProjects, removeProject, resolveSwitchTarget, resolveComfyUrl,
@@ -351,6 +352,39 @@ export function mountRoutes(
     ctx.comfy.setBaseUrl(url); // 热切换：后续生成与健康检查立即使用新地址
     const healthy = await ctx.comfy.health();
     return { ok: true, baseUrl: ctx.comfy.baseUrl, healthy };
+  });
+
+  // —— 全局设置（~/.director/settings.json，用户级跨项目）——
+  // ComfyUI 地址 / agent 默认模型 / 思考强度；前端设置 modal 读写
+  app.get('/api/settings', async () => ({ settings: readSettings() }));
+
+  app.put('/api/settings', async (req) => {
+    const body = req.body as {
+      comfyUrl?: string; agentModel?: string; agentThinking?: string;
+    };
+    const settings = saveSettings({
+      comfyUrl: typeof body.comfyUrl === 'string' ? body.comfyUrl : undefined,
+      agentModel: typeof body.agentModel === 'string' ? body.agentModel : undefined,
+      agentThinking: typeof body.agentThinking === 'string' ? body.agentThinking : undefined,
+    });
+    // ComfyUI 地址变化 → 写回当前项目节点 + 热切换（复用 comfy/config 行为）
+    if (settings.comfyUrl) {
+      applyMutation(ctx.projectDir, actor, `配置 ComfyUI 地址 ${settings.comfyUrl}`, (g) => {
+        const proj = g.nodes.find((n) => n.type === 'project');
+        if (proj) {
+          proj.fields.comfyuiUrl = settings.comfyUrl;
+          proj.version += 1;
+        } else {
+          createNode(g, {
+            type: 'project', title: g.projectName,
+            fields: { comfyuiUrl: settings.comfyUrl },
+            position: { x: 40, y: 40 },
+          });
+        }
+      });
+      ctx.comfy.setBaseUrl(settings.comfyUrl);
+    }
+    return { settings };
   });
 
   app.post('/api/generation/submit', async (req, reply) => {

@@ -1,6 +1,6 @@
 import type {
   DirectorEdge, DirectorNode, EdgeKind, GenTask, Graph, NodeType, ProjectInfo, SnapshotMeta,
-  StoryProgress, AssetRecord, DesignKind, DesignObject,
+  StoryProgress, AssetRecord, DesignKind, DesignObject, AppSettings,
 } from '../types';
 
 class ApiError extends Error {
@@ -175,6 +175,20 @@ export const client = {
       method: 'POST', body: JSON.stringify({ baseUrl }),
     });
     return { healthy: r.healthy, baseUrl: r.baseUrl };
+  },
+
+  // —— 全局设置（~/.director/settings.json）——
+  // ComfyUI 地址 / agent 默认模型 / 思考强度（默认值，AgentPanel 可临时改）
+  async getSettings(): Promise<AppSettings> {
+    const r = await req<{ settings: AppSettings }>('/api/settings');
+    return r.settings;
+  },
+
+  async saveSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+    const r = await req<{ settings: AppSettings }>('/api/settings', {
+      method: 'PUT', body: JSON.stringify(patch),
+    });
+    return r.settings;
   },
 
   // 项目列表：手动添加的项目注册表（含分镜/时长统计），默认不自动发现

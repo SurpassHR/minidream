@@ -148,3 +148,27 @@ describe('API 故事对话', () => {
     expect(messages[0].text).not.toContain('故事编剧');
   });
 });
+
+describe('API 全局设置', () => {
+  it('GET /api/settings 默认值', async () => {
+    const res = await a.inject({ method: 'GET', url: '/api/settings' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().settings).toEqual({ comfyUrl: '', agentModel: '', agentThinking: '' });
+  });
+
+  it('PUT /api/settings 保存并读回（comfyUrl 热切换写回 project 节点）', async () => {
+    const res = await a.inject({
+      method: 'PUT', url: '/api/settings',
+      payload: { comfyUrl: 'http://127.0.0.1:59999', agentModel: 'anthropic/claude-sonnet-4', agentThinking: 'medium' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().settings.agentModel).toBe('anthropic/claude-sonnet-4');
+    // project 节点已写入 comfyuiUrl
+    const g = await a.inject({ method: 'GET', url: '/api/graph' });
+    const proj = g.json().graph.nodes.find((n: { type: string }) => n.type === 'project');
+    expect(proj?.fields.comfyuiUrl).toBe('http://127.0.0.1:59999');
+    // 读回持久化
+    const r2 = await a.inject({ method: 'GET', url: '/api/settings' });
+    expect(r2.json().settings.agentThinking).toBe('medium');
+  });
+});
