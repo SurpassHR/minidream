@@ -275,11 +275,11 @@ export function StoryTellerView(props: { projectName: string }) {
                   <span className="story-save-hint">{saved ? '已保存 ✓' : ''}</span>
                 </div>
                 <div className="story-nav">
-                  <button className="btn-ghost" disabled={story.step === 0} onClick={() => void prev()}>← 上一步</button>
+                  <button className="btn-ghost" disabled={story.step === 0 || Boolean(story.completedAt)} onClick={() => void prev()}>← 上一步</button>
                   {isLast ? (
                     <button className="btn-primary" disabled={Boolean(story.completedAt)} onClick={() => void complete()}>完成故事</button>
                   ) : (
-                    <button className="btn-primary" onClick={() => void next()}>下一步 →</button>
+                    <button className="btn-primary" disabled={Boolean(story.completedAt)} onClick={() => void next()}>下一步 →</button>
                   )}
                 </div>
               </RoleCard>

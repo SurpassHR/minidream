@@ -284,6 +284,17 @@ describe('StoryTellerView 模式切换', () => {
     expect(screen.getByTestId('story-answer')).toBeDisabled();
     expect(screen.getByText('✨ AI 建议')).toBeDisabled();
     expect(screen.getByText('完成故事')).toBeDisabled();
+    // 上一步也禁用：完成后 flushDraft 会 PUT answers（被 409 拒绝，误导报错）
+    // （末步无「下一步 →」，其禁用由下一用例覆盖）
+    expect(screen.getByText('← 上一步')).toBeDisabled();
+  });
+
+  it('完成后非末步：下一步 → 按钮禁用（flushDraft 会 PUT answers）', async () => {
+    STORY_API.story = { step: 2, answers: { theme: 't', protagonist: 'p' }, completedAt: '2026-08-15T00:00:00.000Z' };
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument());
+    expect(screen.getByText('下一步 →')).toBeDisabled();
+    expect(screen.getByText('← 上一步')).toBeDisabled();
   });
 
   it('向导式完成故事后右侧栏展示剧本，重新生成后回占位', async () => {
