@@ -313,4 +313,47 @@ export const client = {
     const r = await req<{ workflows: string[] }>('/api/workflows');
     return r.workflows;
   },
+
+  // —— 故事向导对话式 ——
+  // 对话历史（独立 story-chat.json，与 AGENT 面板 chat.json 隔离）
+  async getStoryChatHistory(): Promise<Array<{ who: 'user' | 'agent'; text: string; at: number }>> {
+    const r = await req<{ messages: Array<{ who: 'user' | 'agent'; text: string; at: number }> }>('/api/story/chat/history');
+    return r.messages ?? [];
+  },
+
+  // SSE 流式对话（协议同 /api/agent/chat，端点独立）
+  async storyChat(
+    message: string,
+    onChunk: (text: string) => void,
+    model?: string,
+    thinking?: string,
+  ): Promise<void> {
+    const res = await fetch('/api/story/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message, model, thinking }),
+    });
+    if (!res.ok || !res.body) throw new Error(`story chat 请求失败: ${res.status}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const frame = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 2);
+        if (!frame.startsWith('data: ')) continue;
+        const payload = frame.slice(6);
+        if (payload === '[DONE]') return;
+        try {
+          onChunk((JSON.parse(payload) as { chunk: string }).chunk);
+        } catch {
+          // 忽略坏帧
+        }
+      }
+    }
+  },
 };
