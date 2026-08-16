@@ -57,7 +57,12 @@ export function StoryTellerView(props: { projectName: string }) {
       setDraft(s.answers[STORY_STEPS[Math.min(s.step, STORY_STEPS.length - 1)]!.id] ?? '');
       setLoaded(true);
     }).catch(() => {
-      if (!disposed) { setError('加载故事进度失败'); setLoaded(true); }
+      if (!disposed) {
+        // GET 失败：清空剧本栏（切项目后不得残留上一项目已完成的 md）
+        setMd(null);
+        setError('加载故事进度失败');
+        setLoaded(true);
+      }
     });
     return () => {
       disposed = true;
@@ -261,17 +266,18 @@ export function StoryTellerView(props: { projectName: string }) {
                   className="ne-input story-answer" data-testid="story-answer"
                   value={draft}
                   placeholder="在这里填写…"
+                  disabled={Boolean(story.completedAt)}
                   onChange={(e) => { setDraft(e.target.value); persist(story, e.target.value); }}
                   rows={6}
                 />
                 <div className="story-actions">
-                  <AiButton busy={aiBusy} onClick={aiSuggest}>✨ AI 建议</AiButton>
+                  <AiButton busy={aiBusy} disabled={Boolean(story.completedAt)} onClick={aiSuggest}>✨ AI 建议</AiButton>
                   <span className="story-save-hint">{saved ? '已保存 ✓' : ''}</span>
                 </div>
                 <div className="story-nav">
                   <button className="btn-ghost" disabled={story.step === 0} onClick={() => void prev()}>← 上一步</button>
                   {isLast ? (
-                    <button className="btn-primary" onClick={() => void complete()}>完成故事</button>
+                    <button className="btn-primary" disabled={Boolean(story.completedAt)} onClick={() => void complete()}>完成故事</button>
                   ) : (
                     <button className="btn-primary" onClick={() => void next()}>下一步 →</button>
                   )}

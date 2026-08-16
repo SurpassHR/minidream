@@ -49,10 +49,10 @@ export function EmptyState(props: { icon: string; text: string; action?: ReactNo
   );
 }
 
-// AI 辅助按钮（✨ 统一）：busy 时禁用并显示思考中
-export function AiButton(props: { busy: boolean; onClick: () => void; children: ReactNode }) {
+// AI 辅助按钮（✨ 统一）：busy 时禁用并显示思考中；disabled 供调用方附加禁用（如完成后只读）
+export function AiButton(props: { busy: boolean; onClick: () => void; children: ReactNode; disabled?: boolean }) {
   return (
-    <button className="btn-ghost role-ai-btn" disabled={props.busy} onClick={props.onClick}>
+    <button className="btn-ghost role-ai-btn" disabled={props.busy || props.disabled} onClick={props.onClick}>
       {props.busy ? '⏳ 思考中…' : props.children}
     </button>
   );

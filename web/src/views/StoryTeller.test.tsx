@@ -3,6 +3,8 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { StoryTellerView } from './StoryTellerView';
 
 const STORY_API: { story: { step: number; answers: Record<string, string>; completedAt: string | null } } = { story: { step: 0, answers: {}, completedAt: null } };
+// GET /api/story 失败开关：置 true 后 GET 分支返回 500（模拟切项目后加载失败）
+let GET_STORY_FAIL = false;
 
 beforeEach(() => {
   localStorage.clear();
@@ -41,7 +43,8 @@ beforeEach(() => {
           answers: { ...STORY_API.story.answers, ...(body.answers ?? {}) },
         };
       }
-      // GET：已完成时携带 md（模拟后端行为）
+      // GET：已完成时携带 md（模拟后端行为）；GET_STORY_FAIL 时模拟加载失败
+      if (GET_STORY_FAIL) return new Response(JSON.stringify({}), { status: 500 });
       return new Response(JSON.stringify({
         ...STORY_API,
         md: STORY_API.story.completedAt ? '# demo · 故事设定\n\n## 主题\n战争与和解' : null,
@@ -71,6 +74,7 @@ describe('StoryTellerView', () => {
   beforeEach(() => {
     // 重置共享 mock 数据（用例之间隔离）
     STORY_API.story = { step: 0, answers: {}, completedAt: null };
+    GET_STORY_FAIL = false;
   });
 
   it('渲染第一步问题与进度', async () => {
@@ -196,6 +200,7 @@ describe('StoryTellerView 模式切换', () => {
   beforeEach(() => {
     // 重置共享 mock 数据（用例之间隔离）
     STORY_API.story = { step: 0, answers: {}, completedAt: null };
+    GET_STORY_FAIL = false;
   });
 
   it('默认向导式，切到对话式后显示聊天区', async () => {
@@ -255,6 +260,30 @@ describe('StoryTellerView 模式切换', () => {
     render(<StoryTellerView projectName="demo" />);
     await waitFor(() => expect(screen.getByTestId('script-viewer')).toBeInTheDocument());
     expect(screen.getByTestId('script-viewer')).toHaveTextContent('# demo · 故事设定');
+  });
+
+  it('GET 失败不残留陈旧剧本：切项目后右侧栏回占位并显示错误横幅', async () => {
+    STORY_API.story = { step: 5, answers: { theme: 't', protagonist: 'p', antagonist: 'a', scenes: 's', ending: 'e' }, completedAt: '2026-08-15T00:00:00.000Z' };
+    const { rerender } = render(<StoryTellerView projectName="demoA" />);
+    // 项目 A 已完成：右侧栏展示剧本
+    await waitFor(() => expect(screen.getByTestId('script-viewer')).toBeInTheDocument());
+    expect(screen.getByTestId('script-viewer')).toHaveTextContent('# demo · 故事设定');
+    // 切到项目 B 且 GET 失败：不得残留项目 A 的剧本
+    GET_STORY_FAIL = true;
+    rerender(<StoryTellerView projectName="demoB" />);
+    await waitFor(() => expect(screen.getByText('加载故事进度失败')).toBeInTheDocument());
+    expect(screen.queryByTestId('script-viewer')).not.toBeInTheDocument();
+    expect(screen.getByTestId('script-sidebar')).toHaveTextContent('剧本将在这里展示');
+  });
+
+  it('完成后向导只读：textarea / ✨ AI 建议 / 完成故事 按钮禁用', async () => {
+    STORY_API.story = { step: 5, answers: { theme: 't', protagonist: 'p', antagonist: 'a', scenes: 's', ending: 'e' }, completedAt: '2026-08-15T00:00:00.000Z' };
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument());
+    // 向导式下完成后不可再编辑 answers（防 GET 重建 md 与入库素材漂移）
+    expect(screen.getByTestId('story-answer')).toBeDisabled();
+    expect(screen.getByText('✨ AI 建议')).toBeDisabled();
+    expect(screen.getByText('完成故事')).toBeDisabled();
   });
 
   it('向导式完成故事后右侧栏展示剧本，重新生成后回占位', async () => {
