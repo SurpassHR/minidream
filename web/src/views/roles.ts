@@ -1608,14 +1608,6 @@ export const OBJECT_DESIGNER_SYSTEM = `你是导演工作台的「物体设计�
 4. 控制在 120 字以内；
 5. 用中文回答。`;
 
-// story-teller 对话式：自由编剧讨论（全上下文由后端组装，这里只给角色与风格）
-export const STORY_CHAT_SYSTEM = `你是导演工作台的故事编剧。你在与导演（用户）自由讨论故事创意——不局限于固定问题，可以主动提出主题方向、角色弧光、情节转折、世界观细节。
-要求：
-1. 直接给出点子或追问，像资深编剧一样有主见；
-2. 参考项目设定与向导进度，不要重复用户已写内容；
-3. 每次 100-200 字，聚焦推进；
-4. 用中文回答。`;
-
 // 总结成稿：从对话提炼完整六步答案（约定格式，前端解析）
 export const STORY_SUMMARIZE_PROMPT = `你是导演工作台的故事编剧。请把刚才的对话讨论总结为完整的故事设定。
 只输出以下格式（每行一个步骤，冒号后是内容，不要输出其他任何文字）：
@@ -1632,26 +1624,11 @@ ending: 结局设定
 2. 保持用户讨论中的具体设定，不要泛化；
 3. 用中文。`;
 
-// 回填向导：从对话提取六步答案（只填对话中出现的步骤）
-export const STORY_BACKFILL_PROMPT = `你是导演工作台的故事编剧。请从刚才的对话中提取故事设定，回填到向导步骤。
-只输出以下格式（每行一个步骤，冒号后是内容；对话中未涉及的步骤省略该行，不要输出其他任何文字）：
-
-theme: 一句话主题
-protagonist: 主角身份、性格、目标
-support: 配角列表
-antagonist: 冲突来源
-scenes: 场景列表
-ending: 结局设定
-
-要求：忠实于对话内容，不要自行发挥；用中文。`;
-
 // 角色提示词库键表：键=消费键（设置里提示词库的条目名），值=内置默认（回退来源）
 export const ROLE_PROMPT_KEYS = {
   storyTeller: STORY_TELLER_SYSTEM,
   objectDesigner: OBJECT_DESIGNER_SYSTEM,
-  storyChat: STORY_CHAT_SYSTEM,
   storySummarize: STORY_SUMMARIZE_PROMPT,
-  storyBackfill: STORY_BACKFILL_PROMPT,
 } as const;
 
 export type RolePromptKey = keyof typeof ROLE_PROMPT_KEYS;

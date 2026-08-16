@@ -387,7 +387,8 @@ export const client = {
   },
 
   // SSE 流式对话（协议同 /api/agent/chat，端点独立）；
-  // persistAs：系统动作（总结成稿/回填向导）的落盘标记，避免长指令污染对话历史
+  // persistAs：系统动作（总结成稿/回填向导）的落盘标记，避免长指令污染对话历史；
+  // systemPrompt：可选的自定义系统提示词，缺省时后端回退内置角色文本
   async storyChat(
     message: string,
     onChunk: (text: string) => void,
@@ -395,11 +396,12 @@ export const client = {
     thinking?: string,
     persistAs?: string,
     sessionId?: string | null,
+    systemPrompt?: string,
   ): Promise<void> {
     const res = await fetch('/api/story/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message, model, thinking, persistAs, sessionId: sessionId ?? undefined }),
+      body: JSON.stringify({ message, model, thinking, persistAs, sessionId: sessionId ?? undefined, systemPrompt: systemPrompt ?? undefined }),
     });
     if (!res.ok || !res.body) throw new Error(`story chat 请求失败: ${res.status}`);
     const reader = res.body.getReader();

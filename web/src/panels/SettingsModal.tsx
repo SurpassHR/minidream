@@ -5,11 +5,9 @@ import { ROLE_PROMPT_KEYS, type RolePromptKey } from '../views/roles';
 
 // 角色提示词中文标签（UI 展示用；键固定唯一对应角色，名称不可编辑）
 const ROLE_PROMPT_LABELS: Record<RolePromptKey, string> = {
-  storyTeller: '故事向导 · AI 建议',
+  storyTeller: '故事向导 · 对话式',
   objectDesigner: '物体设计 · AI 优化',
-  storyChat: '对话编剧 · 总结/回填基础角色',
   storySummarize: '总结成稿指令',
-  storyBackfill: '回填向导指令',
 };
 
 // 全局设置弹窗：ComfyUI 地址 + agent 默认模型 + 思考强度 + 提示词库。
@@ -38,7 +36,7 @@ export function SettingsModal(props: {
   const [comfyUrl, setComfyUrl] = useState(props.settings.comfyUrl);
   const [agentModel, setAgentModel] = useState(props.settings.agentModel);
   const [agentThinking, setAgentThinking] = useState(props.settings.agentThinking);
-  // 提示词库工作副本：固定 5 个角色条目（键唯一对应角色，名称不可编辑）；
+  // 提示词库工作副本：固定 3 个角色条目（键唯一对应角色，名称不可编辑）；
   // 内容 = 存储值 ?? 内置默认；空内容 = 消费点回退默认
   const [promptEntries, setPromptEntries] = useState<Array<{ key: RolePromptKey; value: string }>>([]);
   const [armorBreak, setArmorBreak] = useState(props.settings.armorBreak ?? '');
@@ -46,7 +44,7 @@ export function SettingsModal(props: {
   const [saving, setSaving] = useState(false);
 
   // 打开时同步外部 settings（切换项目/外部变更后重新打开取最新）；
-  // 始终显示 5 角色条目：值 = 存储的 prompts 对应键 ?? 内置默认
+  // 始终显示 3 角色条目：值 = 存储的 prompts 对应键 ?? 内置默认
   useEffect(() => {
     if (props.open) {
       setComfyUrl(props.settings.comfyUrl);
@@ -72,7 +70,7 @@ export function SettingsModal(props: {
   const resetOne = (key: RolePromptKey) => {
     setPromptEntries((prev) => prev.map((e) => (e.key === key ? { ...e, value: ROLE_PROMPT_KEYS[key] } : e)));
   };
-  // 重置全部 5 角色条目为内置默认
+  // 重置全部 3 角色条目为内置默认
   const resetDefaults = () => {
     setPromptEntries(
       Object.entries(ROLE_PROMPT_KEYS).map(([key, value]) => ({ key, value })),
@@ -81,7 +79,7 @@ export function SettingsModal(props: {
 
   const save = () => {
     setSaving(true);
-    // 组装 prompts map：固定 5 角色键（键名恒有效）；空内容保留（消费点回退默认）
+    // 组装 prompts map：固定 3 角色键（键名恒有效）；空内容保留（消费点回退默认）
     const prompts: Record<string, string> = {};
     for (const e of promptEntries) {
       prompts[e.key] = e.value;
@@ -149,7 +147,7 @@ export function SettingsModal(props: {
               <span className="role-field-label">提示词库 · 角色系统提示词</span>
               <button type="button" className="btn-ghost" onClick={resetDefaults}>↺ 重置为默认提示词</button>
             </div>
-            <span className="role-field-hint">AI 建议 / 物体优化 / 对话总结回填按名称引用；删除或留空该条目即回退内置默认；改名角色条目将不再被 AI 功能按名引用</span>
+            <span className="role-field-hint">故事对话 / 物体优化 / 总结成稿按名称引用；删除或留空该条目即回退内置默认；改名角色条目将不再被 AI 功能按名引用</span>
             <div className="armor-break">
               <label className="armor-break-head">
                 <input

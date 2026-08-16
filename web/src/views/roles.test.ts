@@ -12,13 +12,12 @@ describe('resolvePrompt', () => {
   });
 
   it('空串视为未配置', () => {
-    expect(resolvePrompt({ storyChat: '' }, 'storyChat')).toBe(ROLE_PROMPT_KEYS.storyChat);
+    expect(resolvePrompt({ storySummarize: '' }, 'storySummarize')).toBe(ROLE_PROMPT_KEYS.storySummarize);
   });
 
-  it('5 个角色键均有非空内置默认', () => {
-    expect(Object.keys(ROLE_PROMPT_KEYS)).toHaveLength(5);
+  it('3 个角色键均有非空内置默认', () => {
     expect(Object.keys(ROLE_PROMPT_KEYS).sort()).toEqual(
-      ['objectDesigner', 'storyBackfill', 'storyChat', 'storySummarize', 'storyTeller'],
+      ['objectDesigner', 'storySummarize', 'storyTeller'],
     );
     for (const v of Object.values(ROLE_PROMPT_KEYS)) {
       expect(v.trim().length).toBeGreaterThan(0);

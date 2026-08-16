@@ -70,17 +70,18 @@ describe('SettingsModal', () => {
     expect(container.querySelector('.dialog-mask')).toBeNull();
   });
 
-  it('始终显示 5 角色条目：名称只读（标签+键名），内容=内置默认', () => {
+  it('始终显示 3 角色条目：名称只读（标签+键名），内容=内置默认', () => {
     render(<SettingsModal
       open settings={DEFAULT_SETTINGS} models={[]}
       onClose={() => {}} onSaved={() => {}} onError={() => {}}
     />);
-    // 5 个角色名称只读展示（键名 + 中文标签），无名称输入框
-    for (const n of ['storyTeller', 'objectDesigner', 'storyChat', 'storySummarize', 'storyBackfill']) {
+    // 3 个角色名称只读展示（键名 + 中文标签），无名称输入框
+    for (const n of ['storyTeller', 'objectDesigner', 'storySummarize']) {
       expect(screen.getByText(n)).toBeInTheDocument();
       expect(screen.getByTestId('prompt-name-0')).not.toHaveAttribute('onChange'); // 名称不可编辑（span 非 input）
     }
-    expect(screen.getByText('故事向导 · AI 建议')).toBeInTheDocument();
+    expect(screen.getByText('故事向导 · 对话式')).toBeInTheDocument();
+    expect(screen.queryByText('storyChat')).not.toBeInTheDocument();
     // 内容 = 内置默认
     expect(screen.getByDisplayValue(/MiniMax H3 Prompt Director/)).toBeInTheDocument();
     // 无新增按钮
@@ -94,9 +95,9 @@ describe('SettingsModal', () => {
       onClose={() => {}} onSaved={() => {}} onError={() => {}}
     />);
     expect(screen.getByDisplayValue('定制故事向导')).toBeInTheDocument();
-    // storyBackfill 缺失 → 显示内置默认（角色条目常驻，不因存储缺失而消失）
-    expect(screen.getByText('storyBackfill')).toBeInTheDocument();
-    // 自定义键不再展示（仅 5 角色）
+    // storySummarize 缺失 → 显示内置默认（角色条目常驻，不因存储缺失而消失）
+    expect(screen.getByText('storySummarize')).toBeInTheDocument();
+    // 自定义键不再展示（仅 3 角色）
     expect(screen.queryByDisplayValue('自定义内容')).not.toBeInTheDocument();
   });
 
@@ -116,16 +117,16 @@ describe('SettingsModal', () => {
   it('重置为默认提示词：全部恢复内置默认', () => {
     render(<SettingsModal
       open
-      settings={{ ...DEFAULT_SETTINGS, prompts: { storyTeller: '改过', storyChat: '也改过' } }} models={[]}
+      settings={{ ...DEFAULT_SETTINGS, prompts: { storyTeller: '改过', storySummarize: '也改过' } }} models={[]}
       onClose={() => {}} onSaved={() => {}} onError={() => {}}
     />);
     fireEvent.click(screen.getByText('↺ 重置为默认提示词'));
     expect(screen.getByDisplayValue(/MiniMax H3 Prompt Director/)).toBeInTheDocument();
-    expect(screen.getByText('storyBackfill')).toBeInTheDocument();
+    expect(screen.getByText('storySummarize')).toBeInTheDocument();
     expect(screen.queryByDisplayValue('也改过')).not.toBeInTheDocument();
   });
 
-  it('保存携带 prompts：固定 5 角色键 map（空内容保留=回退默认）', async () => {
+  it('保存携带 prompts：固定 3 角色键 map（空内容保留=回退默认）', async () => {
     const onSaved = vi.fn();
     const onClose = vi.fn();
     render(<SettingsModal
@@ -133,7 +134,7 @@ describe('SettingsModal', () => {
       onClose={onClose} onSaved={onSaved} onError={() => {}}
     />);
     fireEvent.change(screen.getByTestId('prompt-text-0'), { target: { value: '定制故事向导' } });
-    fireEvent.change(screen.getByTestId('prompt-text-4'), { target: { value: '' } }); // storyBackfill 清空
+    fireEvent.change(screen.getByTestId('prompt-text-2'), { target: { value: '' } }); // storySummarize 清空
     fireEvent.click(screen.getByText('保存'));
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
       '/api/settings',
@@ -141,13 +142,13 @@ describe('SettingsModal', () => {
     ));
     const body = JSON.parse(String((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1]?.body));
     expect(Object.keys(body.prompts).sort()).toEqual(
-      ['objectDesigner', 'storyBackfill', 'storyChat', 'storySummarize', 'storyTeller'],
+      ['objectDesigner', 'storySummarize', 'storyTeller'],
     );
     expect(body.prompts.storyTeller).toBe('定制故事向导');
-    expect(body.prompts.storyBackfill).toBe(''); // 空内容保留（消费点回退默认）
+    expect(body.prompts.storySummarize).toBe(''); // 空内容保留（消费点回退默认）
   });
 
-  it('全部恢复默认后保存：prompts 为 5 键内置默认内容', async () => {
+  it('全部恢复默认后保存：prompts 为 3 键内置默认内容', async () => {
     render(<SettingsModal
       open settings={DEFAULT_SETTINGS} models={[]}
       onClose={() => {}} onSaved={() => {}} onError={() => {}}
@@ -160,7 +161,7 @@ describe('SettingsModal', () => {
       expect.objectContaining({ method: 'PUT' }),
     ));
     const body = JSON.parse(String((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1]?.body));
-    expect(Object.keys(body.prompts)).toHaveLength(5);
+    expect(Object.keys(body.prompts)).toHaveLength(3);
     expect(body.prompts.storyTeller).toContain('MiniMax H3 Prompt Director');
   });
 
