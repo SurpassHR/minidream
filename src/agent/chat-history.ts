@@ -9,7 +9,7 @@ import {
   type ChatMessage, type SessionFile, type SessionMeta,
 } from '../sessions/store.js';
 
-export type { ChatMessage, SessionFile, SessionMeta } from '../sessions/store.js';
+export type { ChatMessage, ChatSession, SessionFile, SessionMeta } from '../sessions/store.js';
 
 const MAX_MESSAGES = 300;
 
