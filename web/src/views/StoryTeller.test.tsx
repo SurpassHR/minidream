@@ -19,6 +19,17 @@ beforeEach(() => {
         story: { ...STORY_API.story, completedAt: '2026-08-15T00:00:00.000Z' },
       }), { status: 201 });
     }
+    // chat 分支必须先于 /api/story（chat URL 含 /api/story 子串，否则被 GET 分支吞掉）
+    if (u.includes('/api/story/chat')) {
+      // GET history → 空历史；POST chat → SSE 六步答案帧（回填/总结用）
+      if (init?.method === 'POST') {
+        return new Response(
+          'data: {"chunk":"theme: 战争与和解"}\n\ndata: [DONE]\n\n',
+          { status: 200, headers: { 'content-type': 'text/event-stream' } },
+        );
+      }
+      return new Response(JSON.stringify({ messages: [] }), { status: 200 });
+    }
     if (u.includes('/api/story')) {
       // PUT 合并更新共享 mock 数据（step / answers），返回更新后进度——模拟真实后端合并写
       if (init?.method === 'PUT') {
@@ -173,5 +184,46 @@ describe('StoryTellerView', () => {
       expect.objectContaining({ method: 'POST' }),
     );
     vi.restoreAllMocks();
+  });
+});
+
+describe('StoryTellerView 模式切换', () => {
+  beforeEach(() => {
+    // 重置共享 mock 数据（用例之间隔离）
+    STORY_API.story = { step: 0, answers: {}, completedAt: null };
+  });
+
+  it('默认向导式，切到对话式后显示聊天区', async () => {
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText(/故事主题是什么/)).toBeInTheDocument());
+    // 默认向导式
+    expect(screen.getByTestId('story-answer')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('mode-chat'));
+    await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
+    expect(screen.queryByTestId('story-answer')).not.toBeInTheDocument();
+  });
+
+  it('对话式回填向导：answers 写入后切回向导式并显示答案', async () => {
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText(/故事主题是什么/)).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('mode-chat'));
+    await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('↩ 回填向导'));
+    // 回填后应切回向导式并显示主题答案（mock SSE 返回 theme: 战争与和解）
+    await waitFor(() => expect(screen.getByTestId('story-answer')).toBeInTheDocument());
+    expect(screen.getByTestId('story-answer')).toHaveValue('战争与和解');
+  });
+
+  it('对话式总结成稿：答案写入并 complete，完成后切回向导式显示已完成', async () => {
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText(/故事主题是什么/)).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('mode-chat'));
+    await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    // 总结完成后留在对话式
+    await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
+    // 切回向导式应显示已完成 banner（completeStory mock 返回 completedAt）
+    fireEvent.click(screen.getByTestId('mode-wizard'));
+    await waitFor(() => expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument());
   });
 });

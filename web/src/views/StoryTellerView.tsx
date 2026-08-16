@@ -4,6 +4,7 @@ import type { StoryProgress } from '../types';
 import { agentChat } from '../api/agent';
 import { STORY_TELLER_SYSTEM } from './roles';
 import { AiButton, ErrorBanner, LoadingState, RoleCard, RoleHeader } from './role-ui';
+import { StoryChat } from './StoryChat';
 
 // story-teller 向导步骤（镜像后端 src/story/steps.ts，前端渲染与校验用）
 export const STORY_STEPS = [
@@ -23,6 +24,15 @@ export function StoryTellerView(props: { projectName: string }) {
   const [aiBusy, setAiBusy] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  // 模式切换：向导式 / 对话式（localStorage 记住上次选择）
+  const [mode, setMode] = useState<'wizard' | 'chat'>(() => {
+    const savedMode = localStorage.getItem('dw:storyMode');
+    return savedMode === 'chat' ? 'chat' : 'wizard';
+  });
+  const switchMode = (m: 'wizard' | 'chat') => {
+    setMode(m);
+    localStorage.setItem('dw:storyMode', m);
+  };
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // AI 建议发起时的步骤 id：流式期间用户切步后丢弃过期 chunk（防污染新步骤草稿）
   const aiStepRef = useRef<string | null>(null);
@@ -148,6 +158,28 @@ export function StoryTellerView(props: { projectName: string }) {
     }).catch((err) => setError(err instanceof Error ? err.message : '重置失败'));
   };
 
+  // 对话式回填向导：六步答案写入 story.json，切回向导式展示
+  const handleBackfill = (answers: Record<string, string>) => {
+    void client.saveStory({ answers }).then((s) => {
+      setStory(s);
+      setDraft(s.answers[STORY_STEPS[Math.min(s.step, STORY_STEPS.length - 1)]!.id] ?? '');
+      switchMode('wizard');
+      setError('');
+    }).catch((err) => setError(err instanceof Error ? err.message : '回填失败'));
+  };
+
+  // 对话式总结成稿：解析答案 → 写入 story.json → complete 入库 → 刷新完成状态（留在对话式）
+  const handleSummarized = (answers: Record<string, string>) => {
+    void client.saveStory({ answers })
+      .then(() => client.completeStory())
+      .then((r) => {
+        setStory(r.story);
+        setSaved(true);
+        setError('');
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : '总结入库失败'));
+  };
+
   if (!loaded) {
     return <div className="role-view" data-testid="story-teller-view"><LoadingState /></div>;
   }
@@ -159,6 +191,29 @@ export function StoryTellerView(props: { projectName: string }) {
         title="故事向导"
         meta={<span className="story-step-meta">第 {story.step + 1}/{STORY_STEPS.length} 步</span>}
       />
+      {/* 模式切换：向导式 / 对话式 */}
+      <div className="role-mode-tabs" role="tablist" aria-label="向导模式">
+        <button
+          type="button"
+          className={`role-mode-tab${mode === 'wizard' ? ' active' : ''}`}
+          data-testid="mode-wizard"
+          onClick={() => switchMode('wizard')}
+        >⬡ 向导式</button>
+        <button
+          type="button"
+          className={`role-mode-tab${mode === 'chat' ? ' active' : ''}`}
+          data-testid="mode-chat"
+          onClick={() => switchMode('chat')}
+        >✦ 对话式</button>
+      </div>
+      {mode === 'chat' ? (
+        <StoryChat
+          projectName={props.projectName}
+          onBackfill={handleBackfill}
+          onSummarized={handleSummarized}
+        />
+      ) : (
+        <>
       {/* 场记板步骤轨道：编号可点击跳转；完成=ok 绿+✓；当前=amber 发光 */}
       <div className="story-track" role="tablist" aria-label="向导步骤">
         {STORY_STEPS.map((s, i) => {
@@ -208,6 +263,8 @@ export function StoryTellerView(props: { projectName: string }) {
         </div>
         {error && <ErrorBanner text={error} />}
       </RoleCard>
+        </>
+      )}
     </div>
   );
 }
