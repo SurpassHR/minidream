@@ -340,6 +340,12 @@ export default function App() {
           <div className="badge clickable" title="打开设置" onClick={() => setSettingsOpen(true)}><span className="dot" style={{ background: 'var(--rec)', boxShadow: '0 0 6px var(--rec)' }} />COMFYUI&nbsp;未连接</div>
         )}
         <div className="spacer" />
+        <button
+          className="btn-ghost settings-btn"
+          data-testid="settings-open"
+          title="设置：ComfyUI 地址 / 默认模型 / 思考强度"
+          onClick={() => setSettingsOpen(true)}
+        >⚙ 设置</button>
         <button className="btn-ghost" onClick={() => setImportOpen(true)}>＋ 导入</button>
         <button className="run-btn"><span className="tri">▶</span>运行流水线</button>
       </header>

@@ -85,6 +85,14 @@ describe('App 布局骨架', () => {
     expect(screen.getByRole('button', { name: /运行流水线/ })).toBeInTheDocument();
   });
 
+  it('顶栏设置按钮打开设置弹窗', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByTestId('settings-open'));
+    expect(await screen.findByText('COMFYUI 地址')).toBeInTheDocument();
+    expect(screen.getByText('默认模型')).toBeInTheDocument();
+    expect(screen.getByText('思考强度')).toBeInTheDocument();
+  });
+
   it('ComfyUI 健康检查后显示已连接徽章', async () => {
     render(<App />);
     expect(await screen.findByText(/COMFYUI/)).toBeInTheDocument();
