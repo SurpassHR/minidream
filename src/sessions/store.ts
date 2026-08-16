@@ -27,10 +27,18 @@ export function readSessions(file: string): SessionFile {
   if (!existsSync(file)) return { sessions: [], activeId: null };
   try {
     const data = JSON.parse(readFileSync(file, 'utf8'));
-    // 旧结构：扁平消息数组 → 迁移为单个「会话 1」
+    // 旧结构：扁平消息数组 → 迁移为单个「会话 1」并**立即落盘**——
+    // 惰性迁移会让每次读取生成不同的新 id（GET 返回的 id 在随后发送时永远命中不了，
+    // 导致每句话都被归为新会话）；立即写回后 id 稳定。
     if (Array.isArray(data)) {
-      const id = newId();
-      return { sessions: [{ id, title: '会话 1', createdAt: Date.now(), updatedAt: Date.now(), messages: data }], activeId: id };
+      const now = Date.now();
+      const f: SessionFile = {
+        sessions: [{ id: newId(), title: '会话 1', createdAt: now, updatedAt: now, messages: data }],
+        activeId: null,
+      };
+      f.activeId = f.sessions[0]!.id;
+      try { writeSessions(file, f); } catch { /* 只读目录等：返回内存结果，不抛 */ }
+      return f;
     }
     if (typeof data !== 'object' || data === null) return { sessions: [], activeId: null };
     const sessions = Array.isArray(data.sessions) ? data.sessions : [];
@@ -113,6 +121,11 @@ export function appendMessage(
   if (!trimmed) return readSessions(file);
   const f = readSessions(file);
   let s = f.sessions.find((x) => x.id === sessionId);
+  if (!s && sessionId !== null) {
+    // 未知非空 sessionId（跨标签页/陈旧 id）：回退到当前 active 会话，避免静默新建
+    // 造成"每句话一个会话"；无 active 时仍走下方自动创建
+    s = f.sessions.find((x) => x.id === f.activeId);
+  }
   if (!s) {
     // 无会话自动创建：标题 = 首条用户消息截断 20 字
     const now = Date.now();

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -129,3 +129,43 @@ describe('sessionList / activeMessages', () => {
     expect(activeMessages(file, 'missing')).toEqual([]);
   });
 });
+
+describe('回归：迁移 id 稳定 + 未知 id 回退（修复前 FAIL）', () => {
+  it('GET 返回的 id 在随后 append 中命中（迁移立即落盘）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sess-repro-'));
+    const file = join(dir, 'story-chat.json');
+    writeFileSync(file, JSON.stringify([{ who: 'user', text: '旧消息', at: 1 }]), 'utf8');
+
+    const list1 = sessionList(file);
+    const X = list1.activeId!;
+    const after = appendMessage(file, X, 'user', '新消息', 100);
+    const hit = after.sessions.find((s) => s.id === X);
+    expect(hit).toBeDefined();
+    expect(hit!.messages.map((m) => m.text)).toEqual(['旧消息', '新消息']);
+    // 磁盘已落盘新结构
+    expect(readFileSync(file, 'utf8')).toContain('sessions');
+    // 二次读取 id 稳定
+    expect(readSessions(file).activeId).toBe(X);
+  });
+
+  it('未知非空 sessionId：回退到 active 会话（不新建）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sess-repro-'));
+    const file = join(dir, 'c.json');
+    const f1 = createSession(file);
+    const active = f1.activeId!;
+    const after = appendMessage(file, 'stale-id', 'user', '新消息', 100);
+    expect(after.sessions).toHaveLength(1);
+    expect(after.activeId).toBe(active);
+    expect(after.sessions[0]!.messages.map((m) => m.text)).toEqual(['新消息']);
+  });
+
+  it('未知非空 sessionId 且无会话：自动创建（保持语义）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sess-repro-'));
+    const file = join(dir, 'c.json');
+    const after = appendMessage(file, 'stale-id', 'user', '新消息', 100);
+    expect(after.sessions).toHaveLength(1);
+    expect(after.sessions[0]!.title).toBe('新消息');
+    expect(after.activeId).toBe(after.sessions[0]!.id);
+  });
+});
+
