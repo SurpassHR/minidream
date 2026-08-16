@@ -444,6 +444,19 @@ describe('API agent 模型', () => {
     expect(messages.some((m) => m.who === 'agent' && m.text === '第一段流式输出')).toBe(true);
     vi.unstubAllEnvs();
   });
+
+  it('POST /api/agent/chat：模型报错且无输出时提示具体错误（非笼统空输出）', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent-error.mjs')}`);
+    const res = await a.inject({
+      method: 'POST', url: '/api/agent/chat',
+      payload: { message: '模型错误测试' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toContain('（模型调用失败：403 Your request was blocked.）');
+    expect(res.payload).not.toContain('（输出为空）');
+    expect(res.payload).toContain('[DONE]');
+    vi.unstubAllEnvs();
+  });
 });
 
 describe('API agent 会话', () => {

@@ -195,6 +195,19 @@ describe('API 故事对话', () => {
     expect(messages[0].text).toBe('（请总结成稿）');
     expect(messages[0].text).not.toContain('故事编剧');
   });
+
+  it('POST /api/story/chat：模型报错且无输出时提示具体错误（非笼统空输出）', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent-error.mjs')}`);
+    const res = await a.inject({
+      method: 'POST', url: '/api/story/chat',
+      payload: { message: '模型错误测试', sessionId: null },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toContain('（模型调用失败：403 Your request was blocked.）');
+    expect(res.payload).not.toContain('（输出为空）');
+    expect(res.payload).toContain('[DONE]');
+    vi.unstubAllEnvs();
+  });
 });
 
 describe('API 故事会话', () => {

@@ -618,6 +618,8 @@ app.post('/api/story/chat', async (req, reply) => {
     if (pending.length >= 120) flushPending();
     else if (!flushTimer) flushTimer = setTimeout(flushPending, 60);
   };
+  // 模型调用错误（403 等）：pi 在 message 事件里带 errorMessage；空输出时展示具体原因
+  let modelError = '';
   const sendCollect = (line: string): boolean => {
     const t = line.trim();
     if (t.startsWith('{')) {
@@ -625,7 +627,11 @@ app.post('/api/story/chat', async (req, reply) => {
         const ev = JSON.parse(t) as {
           type?: string;
           assistantMessageEvent?: { type?: string; delta?: string };
+          message?: { errorMessage?: string };
         };
+        if ((ev.type === 'message_start' || ev.type === 'message_end') && typeof ev.message?.errorMessage === 'string' && ev.message.errorMessage) {
+          modelError = ev.message.errorMessage;
+        }
         if (ev.type === 'message_update' && ev.assistantMessageEvent?.type === 'text_delta') {
           const delta = ev.assistantMessageEvent.delta ?? '';
           if (delta) pushDelta(delta);
@@ -652,7 +658,9 @@ app.post('/api/story/chat', async (req, reply) => {
     flushPending();
     appendStoryChat(ctx.projectDir, sessionId, 'agent', agentText);
     if (idleKilled) send('\n\n（输出已空闲停止）');
-    else if (agentText.trim().length === 0) send('\n\n（输出为空）');
+    else if (agentText.trim().length === 0) {
+      send(modelError ? `\n\n（模型调用失败：${modelError}）` : '\n\n（输出为空）');
+    }
     reply.raw.write('data: [DONE]\n\n');
   } catch (err) {
     send(`（agent 启动失败：${err instanceof Error ? err.message : String(err)}）`);
@@ -887,6 +895,8 @@ app.get('/api/assets/:id/file', async (req, reply) => {
     // 行回调：json 模式解析 message_update/text_delta 增量；agent_end 表示输出完成
     // （提前终止进程，不等 pi 自然退出）；其他事件忽略；非 JSON 行（自定义命令/mock）
     // 按原行转发（兼容旧行为）。返回 true 时 runAgentStream 会 kill 子进程。
+    // 模型调用错误（403 等）：pi 在 message 事件里带 errorMessage；空输出时展示具体原因
+    let modelError = '';
     const sendCollect = (line: string): boolean => {
       const t = line.trim();
       if (t.startsWith('{')) {
@@ -894,7 +904,11 @@ app.get('/api/assets/:id/file', async (req, reply) => {
           const ev = JSON.parse(t) as {
             type?: string;
             assistantMessageEvent?: { type?: string; delta?: string };
+            message?: { errorMessage?: string };
           };
+          if ((ev.type === 'message_start' || ev.type === 'message_end') && typeof ev.message?.errorMessage === 'string' && ev.message.errorMessage) {
+            modelError = ev.message.errorMessage;
+          }
           if (ev.type === 'message_update' && ev.assistantMessageEvent?.type === 'text_delta') {
             const delta = ev.assistantMessageEvent.delta ?? '';
             if (delta) pushDelta(delta);
@@ -921,6 +935,9 @@ app.get('/api/assets/:id/file', async (req, reply) => {
       flushPending();
       appendChatMessage(ctx.projectDir, sessionId, 'agent', agentText);
       if (idleKilled) send('\n\n（输出已空闲停止）');
+      else if (agentText.trim().length === 0) {
+        send(modelError ? `\n\n（模型调用失败：${modelError}）` : '\n\n（输出为空）');
+      }
       reply.raw.write('data: [DONE]\n\n');
     } catch (err) {
       send(`（agent 启动失败：${err instanceof Error ? err.message : String(err)}）`);
