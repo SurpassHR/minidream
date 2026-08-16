@@ -44,7 +44,7 @@ export type DirectorErrorCode =
   | 'NODE_NOT_FOUND' | 'EDGE_NOT_FOUND' | 'EDGE_EXISTS'
   | 'CONFIRM_REQUIRED' | 'FILE_CONFLICT' | 'INVALID_PATCH'
   | 'PROJECT_NOT_FOUND' | 'PROJECT_NOT_ADDABLE' | 'EDGE_INVALID'
-  | 'YAML_EXPORT_FAILED' | 'STORY_ALREADY_COMPLETED';
+  | 'YAML_EXPORT_FAILED' | 'STORY_ALREADY_COMPLETED' | 'SESSION_NOT_FOUND';
 
 export class DirectorError extends Error {
   constructor(public code: DirectorErrorCode, message: string) {
