@@ -116,4 +116,7 @@ export interface AppSettings {
   agentThinking: string;
   // 提示词库（键=名称，值=内容）；键缺失=从未自定义（设置弹窗预填 5 角色默认）
   prompts?: Record<string, string>;
+  // 破甲预设：开启且文本非空时插入到所有系统提示词之前
+  armorBreak?: string;
+  armorBreakEnabled?: boolean;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ROLE_PROMPT_KEYS, resolvePrompt } from './roles';
+import { ROLE_PROMPT_KEYS, resolvePrompt, withArmorBreak } from './roles';
 
 describe('resolvePrompt', () => {
   it('命中配置值', () => {
@@ -23,5 +23,22 @@ describe('resolvePrompt', () => {
     for (const v of Object.values(ROLE_PROMPT_KEYS)) {
       expect(v.trim().length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('withArmorBreak', () => {
+  it('关闭开关：原样返回', () => {
+    expect(withArmorBreak('系统提示词', '破甲文本', false)).toBe('系统提示词');
+    expect(withArmorBreak('系统提示词', '破甲文本', undefined)).toBe('系统提示词');
+  });
+
+  it('开启但文本为空/全空白：原样返回', () => {
+    expect(withArmorBreak('系统提示词', '', true)).toBe('系统提示词');
+    expect(withArmorBreak('系统提示词', '   ', true)).toBe('系统提示词');
+    expect(withArmorBreak('系统提示词', undefined, true)).toBe('系统提示词');
+  });
+
+  it('开启且文本非空：前置插入（trim + 双换行分隔）', () => {
+    expect(withArmorBreak('系统提示词', '  破甲预设  ', true)).toBe('破甲预设\n\n系统提示词');
   });
 });

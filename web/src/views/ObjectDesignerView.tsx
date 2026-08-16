@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { client } from '../api/client';
 import type { DesignKind, DesignObject } from '../types';
 import { agentChat } from '../api/agent';
-import { resolvePrompt } from './roles';
+import { resolvePrompt, withArmorBreak } from './roles';
 import { AiButton, EmptyState, ErrorBanner, Field, LoadingState, RoleCard, RoleHeader, StatusBadge } from './role-ui';
 
 const KIND_LABEL: Record<DesignKind, string> = {
@@ -22,7 +22,7 @@ const STATUS_ICON: Record<DesignObject['status'], string> = {
   draft: '·', generating: '⏳', done: '✅', failed: '❌',
 };
 
-export function ObjectDesignerView(props: { projectName: string; prompts?: Record<string, string> }) {
+export function ObjectDesignerView(props: { projectName: string; prompts?: Record<string, string>; armorBreak?: string; armorBreakEnabled?: boolean }) {
   const [designs, setDesigns] = useState<DesignObject[]>([]);
   const [activeKind, setActiveKind] = useState<DesignKind>('character');
   const [selected, setSelected] = useState<DesignObject | null>(null);
@@ -108,7 +108,11 @@ export function ObjectDesignerView(props: { projectName: string; prompts?: Recor
     const id = selected.id; // 提前捕获：流式回调不依赖可能过期的 selected 闭包
     const baseDesc = selected.description;
     setAiBusy(true);
-    const prompt = `${resolvePrompt(props.prompts, 'objectDesigner')}\n\n对象名称：${selected.name}\n风格：${selected.style || '（未指定）'}\n现有描述：${selected.description || '（暂无）'}`;
+    const prompt = withArmorBreak(
+      `${resolvePrompt(props.prompts, 'objectDesigner')}\n\n对象名称：${selected.name}\n风格：${selected.style || '（未指定）'}\n现有描述：${selected.description || '（暂无）'}`,
+      props.armorBreak,
+      props.armorBreakEnabled,
+    );
     // 本地累积最终描述（chunk 回调与 finally 共用；UI state 仍走函数式更新）
     let acc = baseDesc;
     void agentChat(prompt, [], (chunk) => {

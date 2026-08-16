@@ -211,6 +211,30 @@ describe('StoryTellerView', () => {
     expect(body.message).toContain('定制建议系统提示词');
     expect(body.message).not.toContain('你是导演工作台的故事向导角色');
   });
+
+  it('破甲开启时 AI 建议请求以预设文本开头', async () => {
+    render(<StoryTellerView projectName="demo" armorBreak="破甲预设文本" armorBreakEnabled />);
+    await waitFor(() => expect(screen.getByText(/故事主题是什么/)).toBeInTheDocument());
+    fireEvent.click(screen.getByText('✨ AI 建议'));
+    await waitFor(() => expect(screen.getByTestId('story-answer')).toHaveValue('建议文本'));
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/agent/chat'),
+    );
+    const body = JSON.parse(String(calls.at(-1)![1]?.body)) as { message: string };
+    expect(body.message).toMatch(/^破甲预设文本\n\n/);
+  });
+
+  it('破甲关闭时 AI 建议请求不含预设文本', async () => {
+    render(<StoryTellerView projectName="demo" armorBreak="破甲预设文本" />);
+    await waitFor(() => expect(screen.getByText(/故事主题是什么/)).toBeInTheDocument());
+    fireEvent.click(screen.getByText('✨ AI 建议'));
+    await waitFor(() => expect(screen.getByTestId('story-answer')).toHaveValue('建议文本'));
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/agent/chat'),
+    );
+    const body = JSON.parse(String(calls.at(-1)![1]?.body)) as { message: string };
+    expect(body.message).not.toContain('破甲预设文本');
+  });
 });
 
 describe('StoryTellerView 模式切换', () => {

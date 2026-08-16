@@ -459,4 +459,17 @@ describe('StoryChat', () => {
     await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('总结成稿会话'));
     expect(gets().length).toBe(2);
   });
+
+  it('破甲开启时总结成稿请求以预设文本开头', async () => {
+    render(
+      <StoryChat
+        projectName="demo" onBackfill={() => {}} onSummarized={() => {}}
+        armorBreak="破甲预设文本" armorBreakEnabled
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('session-item-s1')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(0));
+    expect(CHAT_BODIES.at(-1)!.message).toMatch(/^破甲预设文本\n\n/);
+  });
 });

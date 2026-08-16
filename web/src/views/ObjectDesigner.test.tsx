@@ -240,4 +240,19 @@ describe('ObjectDesignerView', () => {
     expect(body.message).toContain('定制物体提示词');
     expect(body.message).not.toContain('你是导演工作台的物体设计师角色');
   });
+
+  it('破甲开启时 AI 优化请求以预设文本开头', async () => {
+    designs = [{ id: 'd1', kind: 'character', name: '精灵骑士', description: '', style: '', template: 'test-t2i', status: 'draft', createdAt: 1 }];
+    render(<ObjectDesignerView projectName="demo" armorBreak="破甲预设文本" armorBreakEnabled />);
+    await waitFor(() => expect(screen.getByText('精灵骑士')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('精灵骑士'));
+    await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('精灵骑士'));
+    fireEvent.click(screen.getByText('✨ AI 优化描述'));
+    await waitFor(() => expect(screen.getByTestId('design-desc')).toHaveValue('+A1+A2'));
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/agent/chat'),
+    );
+    const body = JSON.parse(String(calls.at(-1)![1]?.body)) as { message: string };
+    expect(body.message).toMatch(/^破甲预设文本\n\n/);
+  });
 });

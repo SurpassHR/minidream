@@ -71,3 +71,13 @@ export function resolvePrompt(
 ): string {
   return prompts?.[key] || ROLE_PROMPT_KEYS[key];
 }
+
+// 破甲预设：开启且文本非空时，插入到 prompt 最前面（所有系统提示词之前）
+export function withArmorBreak(
+  prompt: string,
+  armorBreak?: string,
+  armorBreakEnabled?: boolean,
+): string {
+  const t = armorBreak?.trim();
+  return armorBreakEnabled && t ? `${t}\n\n${prompt}` : prompt;
+}

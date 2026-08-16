@@ -398,9 +398,19 @@ export default function App() {
           </footer>
         </>
       ) : route === 'story-teller' ? (
-        <StoryTellerView projectName={graph?.projectName ?? ''} prompts={settings.prompts} />
+        <StoryTellerView
+          projectName={graph?.projectName ?? ''}
+          prompts={settings.prompts}
+          armorBreak={settings.armorBreak}
+          armorBreakEnabled={settings.armorBreakEnabled}
+        />
       ) : (
-        <ObjectDesignerView projectName={graph?.projectName ?? ''} prompts={settings.prompts} />
+        <ObjectDesignerView
+          projectName={graph?.projectName ?? ''}
+          prompts={settings.prompts}
+          armorBreak={settings.armorBreak}
+          armorBreakEnabled={settings.armorBreakEnabled}
+        />
       )}
       <ConfirmDialog
         open={confirm !== null}

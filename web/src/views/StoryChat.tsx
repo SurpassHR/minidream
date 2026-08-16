@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { client } from '../api/client';
-import { resolvePrompt } from './roles';
+import { resolvePrompt, withArmorBreak } from './roles';
 import { AiButton, EmptyState, ErrorBanner } from './role-ui';
 import type { SessionMeta } from '../types';
 
@@ -41,6 +41,9 @@ export function StoryChat(props: {
   completedAt?: string | null;
   // 提示词库（角色系统提示词；未配置键回退内置默认）
   prompts?: Record<string, string>;
+  // 破甲预设：开启且文本非空时插入到所有系统提示词之前
+  armorBreak?: string;
+  armorBreakEnabled?: boolean;
 }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
@@ -176,7 +179,11 @@ export function StoryChat(props: {
     const system = kind === 'summarize'
       ? resolvePrompt(props.prompts, 'storySummarize')
       : resolvePrompt(props.prompts, 'storyBackfill');
-    const prompt = `${resolvePrompt(props.prompts, 'storyChat')}\n\n${system}`;
+    const prompt = withArmorBreak(
+      `${resolvePrompt(props.prompts, 'storyChat')}\n\n${system}`,
+      props.armorBreak,
+      props.armorBreakEnabled,
+    );
     const persistAs = kind === 'summarize' ? '（请总结成稿）' : '（请回填向导）';
     let acc = '';
     setMsgs((m) => [...m, { who: 'user', text: persistAs }]);

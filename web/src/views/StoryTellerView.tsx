@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { client } from '../api/client';
 import type { StoryProgress } from '../types';
 import { agentChat } from '../api/agent';
-import { resolvePrompt } from './roles';
+import { resolvePrompt, withArmorBreak } from './roles';
 import { AiButton, ErrorBanner, LoadingState, RoleCard, RoleHeader } from './role-ui';
 import { StoryChat } from './StoryChat';
 import { ScriptViewer } from './ScriptViewer';
@@ -18,7 +18,7 @@ export const STORY_STEPS = [
 ] as const;
 
 // 防抖保存：输入停止 500ms 后 PUT
-export function StoryTellerView(props: { projectName: string; prompts?: Record<string, string> }) {
+export function StoryTellerView(props: { projectName: string; prompts?: Record<string, string>; armorBreak?: string; armorBreakEnabled?: boolean }) {
   const [story, setStory] = useState<StoryProgress>({ step: 0, answers: {}, completedAt: null });
   const [draft, setDraft] = useState('');
   const [loaded, setLoaded] = useState(false);
@@ -128,7 +128,11 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
     const answersText = Object.entries(story.answers)
       .map(([id, v]) => `${STORY_STEPS.find((s) => s.id === id)?.question ?? id}：${v}`)
       .join('\n');
-    const prompt = `${resolvePrompt(props.prompts, 'storyTeller')}\n\n当前步骤问题：${step.question}\n已填写内容：\n${answersText || '（暂无）'}`;
+    const prompt = withArmorBreak(
+      `${resolvePrompt(props.prompts, 'storyTeller')}\n\n当前步骤问题：${step.question}\n已填写内容：\n${answersText || '（暂无）'}`,
+      props.armorBreak,
+      props.armorBreakEnabled,
+    );
     void agentChat(prompt, [], (chunk) => {
       // 流式期间用户已切步（当前步骤 ≠ 发起步骤）：丢弃过期 chunk
       const curStepId = STORY_STEPS[Math.min(stepRef.current, STORY_STEPS.length - 1)]!.id;
@@ -233,6 +237,8 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
               onBackfill={handleBackfill}
               onSummarized={handleSummarized}
               prompts={props.prompts}
+              armorBreak={props.armorBreak}
+              armorBreakEnabled={props.armorBreakEnabled}
             />
           ) : (
             <>
