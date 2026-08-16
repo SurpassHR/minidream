@@ -1,16 +1,15 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-
-// —— 聊天历史：按项目持久化 ——
+// —— AGENT 聊天历史：按项目多会话持久化 ——
 // 存储到 <projectDir>/.director/chat.json（与图数据/快照同级的运行时数据目录）：
 // 重启服务器 / 刷新页面不丢失；切换项目时历史随项目加载，互不串扰。
-// 聊天记录不参与画布快照（快照只管 nodes/edges），独立文件、独立读写。
+// 结构见 src/sessions/store.ts（多会话 + 旧扁平数组迁移）。
+import { join } from 'node:path';
+import {
+  activeMessages, appendMessage, createSession, deleteSession,
+  renameSession, sessionList,
+  type ChatMessage, type SessionFile, type SessionMeta,
+} from '../sessions/store.js';
 
-export interface ChatMessage {
-  who: 'user' | 'agent';
-  text: string;
-  at: number;
-}
+export type { ChatMessage, SessionFile, SessionMeta } from '../sessions/store.js';
 
 const MAX_MESSAGES = 300;
 
@@ -18,32 +17,31 @@ function chatFile(projectDir: string): string {
   return join(projectDir, '.director', 'chat.json');
 }
 
-// 读取项目聊天历史；文件缺失或损坏时返回空列表（防御式）
-export function readChatHistory(projectDir: string): ChatMessage[] {
-  const f = chatFile(projectDir);
-  if (!existsSync(f)) return [];
-  try {
-    const data = JSON.parse(readFileSync(f, 'utf8')) as ChatMessage[];
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
+// 读取项目聊天历史（指定会话；缺省当前 active）；文件缺失或损坏返回空列表（防御式）
+export function readChatHistory(projectDir: string, sessionId?: string | null): ChatMessage[] {
+  return activeMessages(chatFile(projectDir), sessionId);
 }
 
-// 追加一条消息；超过上限裁剪最早的消息（保留最近 MAX_MESSAGES 条）；原子写（tmp + rename）
-export function appendChatMessage(projectDir: string, who: 'user' | 'agent', text: string): ChatMessage[] {
-  const trimmed = trim(text);
-  if (!trimmed) return readChatHistory(projectDir);
-  const messages = [...readChatHistory(projectDir), { who, text: trimmed, at: Date.now() }];
-  const kept = messages.length > MAX_MESSAGES ? messages.slice(messages.length - MAX_MESSAGES) : messages;
-  const f = chatFile(projectDir);
-  mkdirSync(dirname(f), { recursive: true });
-  const tmp = `${f}.tmp`;
-  writeFileSync(tmp, JSON.stringify(kept, null, 2), 'utf8');
-  renameSync(tmp, f);
-  return kept;
+// 追加一条消息到指定会话（无会话自动创建）；超过上限裁剪最早；原子写
+// sessionId 为 null 时落到当前 active 会话（无任何会话才自动创建）——
+// 保证一次对话的 user/agent 两条写同落一个会话（旧 API 不带 sessionId 的向后兼容）
+export function appendChatMessage(projectDir: string, sessionId: string | null, who: ChatMessage['who'], text: string): SessionFile {
+  const id = sessionId ?? sessionList(chatFile(projectDir)).activeId;
+  return appendMessage(chatFile(projectDir), id, who, text, MAX_MESSAGES);
 }
 
-function trim(s: string): string {
-  return s.trim();
+export function listChatSessions(projectDir: string): { sessions: SessionMeta[]; activeId: string | null } {
+  return sessionList(chatFile(projectDir));
+}
+
+export function createChatSession(projectDir: string): SessionFile {
+  return createSession(chatFile(projectDir));
+}
+
+export function renameChatSession(projectDir: string, id: string, title: string): SessionFile {
+  return renameSession(chatFile(projectDir), id, title);
+}
+
+export function deleteChatSession(projectDir: string, id: string): SessionFile {
+  return deleteSession(chatFile(projectDir), id);
 }

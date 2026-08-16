@@ -446,6 +446,45 @@ describe('API agent 模型', () => {
   });
 });
 
+describe('API agent 会话', () => {
+  it('sessions CRUD：新建/重命名/删除/回退 activeId', async () => {
+    const r1 = await a.inject({ method: 'POST', url: '/api/agent/sessions', payload: {} });
+    expect(r1.statusCode).toBe(200);
+    const id1 = r1.json().activeId;
+    const r2 = await a.inject({ method: 'POST', url: '/api/agent/sessions', payload: {} });
+    const id2 = r2.json().activeId;
+    expect(id1).not.toBe(id2);
+    // 重命名 id1
+    const r3 = await a.inject({ method: 'PATCH', url: `/api/agent/sessions/${id1}`, payload: { title: '会话甲' } });
+    expect(r3.json().sessions.find((s: { id: string }) => s.id === id1).title).toBe('会话甲');
+    // 删除当前（id2）→ 回退 id1
+    const r4 = await a.inject({ method: 'DELETE', url: `/api/agent/sessions/${id2}`, payload: {} });
+    expect(r4.statusCode).toBe(200);
+    expect(r4.json().activeId).toBe(id1);
+    // 删除不存在 → 404
+    const r5 = await a.inject({ method: 'DELETE', url: '/api/agent/sessions/nope', payload: {} });
+    expect(r5.statusCode).toBe(404);
+    expect(r5.json().code).toBe('SESSION_NOT_FOUND');
+  });
+
+  it('chat 落盘到指定会话；history?sessionId 读回', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_REPLY', '回显');
+    const r = await a.inject({ method: 'POST', url: '/api/agent/sessions', payload: {} });
+    const sid = r.json().activeId as string;
+    await a.inject({ method: 'POST', url: '/api/agent/chat', payload: { message: '你好', sessionId: sid } });
+    const h = await a.inject({ method: 'GET', url: `/api/agent/history?sessionId=${sid}` });
+    expect(h.statusCode).toBe(200);
+    const messages = h.json().messages;
+    expect(messages).toHaveLength(2);
+    expect(messages[0].text).toBe('你好');
+    // 不带 sessionId 也返回当前 active 会话（向后兼容）
+    const h2 = await a.inject({ method: 'GET', url: '/api/agent/history' });
+    expect(h2.json().messages).toHaveLength(2);
+    vi.unstubAllEnvs();
+  });
+});
+
 describe('API ComfyUI 配置', () => {
   it('POST /api/comfy/config 写 project 节点并热切换地址', async () => {
     const res = await a.inject({

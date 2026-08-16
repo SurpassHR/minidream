@@ -2,52 +2,53 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { appendChatMessage, readChatHistory } from './chat-history.js';
+import {
+  appendChatMessage, createChatSession, deleteChatSession,
+  listChatSessions, readChatHistory, renameChatSession,
+} from './chat-history.js';
 
-describe('聊天历史（按项目持久化）', () => {
-  let root: string;
-  let projA: string;
-  let projB: string;
+let dir: string;
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), 'director-chat-hist-'));
+  mkdirSync(join(dir, '.director'), { recursive: true });
+});
+afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'director-chat-'));
-    projA = join(root, 'proj-a');
-    projB = join(root, 'proj-b');
+describe('chat-history 会话封装', () => {
+  it('旧扁平数组历史迁移为「会话 1」并可读回', () => {
+    writeFileSync(join(dir, '.director', 'chat.json'), JSON.stringify([
+      { who: 'user', text: '旧消息', at: 1 },
+    ]), 'utf8');
+    const hist = readChatHistory(dir);
+    expect(hist).toEqual([{ who: 'user', text: '旧消息', at: 1 }]);
   });
 
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
+  it('appendChatMessage 落入指定会话；跨会话隔离', () => {
+    const f1 = createChatSession(dir);            // s1
+    const s1 = f1.activeId!;
+    const f2 = createChatSession(dir);            // s2（当前）
+    const s2 = f2.activeId!;
+    appendChatMessage(dir, s1, 'user', '给 s1 的消息');
+    appendChatMessage(dir, s2, 'user', '给 s2 的消息');
+    expect(readChatHistory(dir, s1).map((m) => m.text)).toEqual(['给 s1 的消息']);
+    expect(readChatHistory(dir, s2).map((m) => m.text)).toEqual(['给 s2 的消息']);
+    // 不带 sessionId → 当前 active（s2）
+    expect(readChatHistory(dir).map((m) => m.text)).toEqual(['给 s2 的消息']);
   });
 
-  it('append 后 read 往返；写入项目目录 .director/chat.json', () => {
-    appendChatMessage(projA, 'user', '分析节奏');
-    appendChatMessage(projA, 'agent', '**结论**：递进');
-    const history = readChatHistory(projA);
-    expect(history).toHaveLength(2);
-    expect(history[0]).toMatchObject({ who: 'user', text: '分析节奏' });
-    expect(history[1]).toMatchObject({ who: 'agent', text: '**结论**：递进' });
-    expect(typeof history[0]?.at).toBe('number');
+  it('appendChatMessage 无会话时自动创建（sessionId null）', () => {
+    const f = appendChatMessage(dir, null, 'user', '第一条消息');
+    expect(f.sessions).toHaveLength(1);
+    expect(f.sessions[0]!.title).toBe('第一条消息');
   });
 
-  it('按项目隔离：不同项目目录的历史互不串扰', () => {
-    appendChatMessage(projA, 'user', 'A 的消息');
-    appendChatMessage(projB, 'user', 'B 的消息');
-    expect(readChatHistory(projA).map((m) => m.text)).toEqual(['A 的消息']);
-    expect(readChatHistory(projB).map((m) => m.text)).toEqual(['B 的消息']);
-  });
-
-  it('超过上限时裁剪最早的消息（保留最近 300 条）', () => {
-    for (let i = 0; i < 305; i++) appendChatMessage(projA, 'user', `m${i}`);
-    const history = readChatHistory(projA);
-    expect(history).toHaveLength(300);
-    expect(history[0]?.text).toBe('m5');
-    expect(history[299]?.text).toBe('m304');
-  });
-
-  it('文件损坏或缺失时容错返回空列表', () => {
-    expect(readChatHistory(projA)).toEqual([]);
-    mkdirSync(join(projA, '.director'), { recursive: true });
-    writeFileSync(join(projA, '.director', 'chat.json'), '{broken json', 'utf8');
-    expect(readChatHistory(projA)).toEqual([]);
+  it('listChatSessions 元数据 + rename/delete 走封装', () => {
+    const f1 = createChatSession(dir);
+    const id = f1.activeId!;
+    renameChatSession(dir, id, '改名后');
+    expect(listChatSessions(dir).sessions[0]!.title).toBe('改名后');
+    const f2 = deleteChatSession(dir, id);
+    expect(f2.sessions).toEqual([]);
+    expect(f2.activeId).toBeNull();
   });
 });

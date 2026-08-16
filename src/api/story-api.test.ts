@@ -197,6 +197,52 @@ describe('API 故事对话', () => {
   });
 });
 
+describe('API 故事会话', () => {
+  it('story 会话 CRUD 同构：新建/重命名/删除/回退 activeId', async () => {
+    const r1 = await a.inject({ method: 'POST', url: '/api/story/chat/sessions', payload: {} });
+    expect(r1.statusCode).toBe(200);
+    const id1 = r1.json().activeId;
+    const r2 = await a.inject({ method: 'POST', url: '/api/story/chat/sessions', payload: {} });
+    const id2 = r2.json().activeId;
+    expect(id1).not.toBe(id2);
+    // 重命名 id1
+    const r3 = await a.inject({ method: 'PATCH', url: `/api/story/chat/sessions/${id1}`, payload: { title: '剧本会话甲' } });
+    expect(r3.json().sessions.find((s: { id: string }) => s.id === id1).title).toBe('剧本会话甲');
+    // 删除当前（id2）→ 回退 id1
+    const r4 = await a.inject({ method: 'DELETE', url: `/api/story/chat/sessions/${id2}`, payload: {} });
+    expect(r4.statusCode).toBe(200);
+    expect(r4.json().activeId).toBe(id1);
+    // 删除不存在 → 404
+    const r5 = await a.inject({ method: 'DELETE', url: '/api/story/chat/sessions/nope', payload: {} });
+    expect(r5.statusCode).toBe(404);
+    expect(r5.json().code).toBe('SESSION_NOT_FOUND');
+  });
+
+  it('story chat 落盘到指定会话；history?sessionId 读回；跨会话隔离', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_REPLY', '回显');
+    const r1 = await a.inject({ method: 'POST', url: '/api/story/chat/sessions', payload: {} });
+    const sid1 = r1.json().activeId as string;
+    const r2 = await a.inject({ method: 'POST', url: '/api/story/chat/sessions', payload: {} });
+    const sid2 = r2.json().activeId as string;
+    // 两个会话各自发消息，互不串
+    await a.inject({ method: 'POST', url: '/api/story/chat', payload: { message: '会话甲的消息', sessionId: sid1 } });
+    await a.inject({ method: 'POST', url: '/api/story/chat', payload: { message: '会话乙的消息', sessionId: sid2 } });
+    const h1 = await a.inject({ method: 'GET', url: `/api/story/chat/history?sessionId=${sid1}` });
+    expect(h1.statusCode).toBe(200);
+    const m1 = h1.json().messages;
+    expect(m1).toHaveLength(2);
+    expect(m1[0].text).toBe('会话甲的消息');
+    expect(m1.some((m: { text: string }) => m.text.includes('会话乙'))).toBe(false);
+    const h2 = await a.inject({ method: 'GET', url: `/api/story/chat/history?sessionId=${sid2}` });
+    expect(h2.json().messages[0].text).toBe('会话乙的消息');
+    expect(h2.json().messages.some((m: { text: string }) => m.text.includes('会话甲'))).toBe(false);
+    // 不带 sessionId → 当前 active（sid2）
+    const h3 = await a.inject({ method: 'GET', url: '/api/story/chat/history' });
+    expect(h3.json().messages[0].text).toBe('会话乙的消息');
+  });
+});
+
 describe('API 全局设置', () => {
   it('GET /api/settings 默认值', async () => {
     const res = await a.inject({ method: 'GET', url: '/api/settings' });

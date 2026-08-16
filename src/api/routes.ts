@@ -19,10 +19,16 @@ import { ComfyUIClient } from '../comfy/client.js';
 import { listAssets, importAssetFile, importAssetText, deleteAsset, readAssetText, assetFilePath } from '../assets/assets-store.js';
 import { buildWorkflow } from '../comfy/workflow.js';
 import { buildAgentPrompt, runAgentCollect, runAgentStream } from '../agent/bridge.js';
-import { appendChatMessage, readChatHistory } from '../agent/chat-history.js';
+import {
+  appendChatMessage, createChatSession, deleteChatSession,
+  listChatSessions, readChatHistory, renameChatSession,
+} from '../agent/chat-history.js';
 import type { ChatMessage } from '../agent/chat-history.js';
 import { readStory, saveStory, completeStory, resetStory, buildStoryMarkdown } from '../story/store.js';
-import { readStoryChat, appendStoryChat } from '../story/chat-store.js';
+import {
+  appendStoryChat, createStorySession, deleteStorySession,
+  listStorySessions, readStoryChat, renameStorySession,
+} from '../story/chat-store.js';
 import { listDesigns, createDesign, updateDesign, deleteDesign } from '../design/store.js';
 import { readSettings, saveSettings } from '../settings/settings-store.js';
 import type { DesignKind, DesignObject } from '../design/store.js';
@@ -472,7 +478,31 @@ export function mountRoutes(
   });
 
 // 项目聊天历史：按项目持久化（.director/chat.json），重启不丢；切换项目随项目加载
-app.get('/api/agent/history', async () => ({ messages: readChatHistory(ctx.projectDir) }));
+// —— AGENT 会话（多会话：列表/新建/重命名/删除；历史按会话作用域）——
+app.get('/api/agent/sessions', async () => listChatSessions(ctx.projectDir));
+
+app.post('/api/agent/sessions', async () => {
+  const f = createChatSession(ctx.projectDir);
+  return listChatSessions(ctx.projectDir);
+});
+
+app.patch('/api/agent/sessions/:id', async (req) => {
+  const { id } = req.params as { id: string };
+  const body = req.body as { title?: string };
+  renameChatSession(ctx.projectDir, id, body.title ?? '');
+  return listChatSessions(ctx.projectDir);
+});
+
+app.delete('/api/agent/sessions/:id', async (req) => {
+  const { id } = req.params as { id: string };
+  deleteChatSession(ctx.projectDir, id);
+  return listChatSessions(ctx.projectDir);
+});
+
+app.get('/api/agent/history', async (req) => {
+  const { sessionId } = req.query as { sessionId?: string };
+  return { messages: readChatHistory(ctx.projectDir, sessionId ?? null) };
+});
 
 // —— 故事向导（story-teller 角色页）——
 // 进度存 .director/story.json；complete 时组装 Markdown 入库为 story_<项目名>.md 素材
@@ -513,10 +543,31 @@ app.post('/api/story/reset', async () => {
 
 // —— 故事向导对话式（story-chat）——
 // 历史独立存 .director/story-chat.json（与 AGENT 面板 chat.json 隔离）
-app.get('/api/story/chat/history', async () => ({ messages: readStoryChat(ctx.projectDir) }));
+// —— STORY 会话（多会话：列表/新建/重命名/删除；历史按会话作用域）——
+app.get('/api/story/chat/sessions', async () => listStorySessions(ctx.projectDir));
+app.post('/api/story/chat/sessions', async () => {
+  createStorySession(ctx.projectDir);
+  return listStorySessions(ctx.projectDir);
+});
+app.patch('/api/story/chat/sessions/:id', async (req) => {
+  const { id } = req.params as { id: string };
+  const body = req.body as { title?: string };
+  renameStorySession(ctx.projectDir, id, body.title ?? '');
+  return listStorySessions(ctx.projectDir);
+});
+app.delete('/api/story/chat/sessions/:id', async (req) => {
+  const { id } = req.params as { id: string };
+  deleteStorySession(ctx.projectDir, id);
+  return listStorySessions(ctx.projectDir);
+});
+
+app.get('/api/story/chat/history', async (req) => {
+  const { sessionId } = req.query as { sessionId?: string };
+  return { messages: readStoryChat(ctx.projectDir, sessionId ?? null) };
+});
 
 app.post('/api/story/chat', async (req, reply) => {
-  const body = req.body as { message?: string; model?: string; thinking?: string; persistAs?: string };
+  const body = req.body as { message?: string; model?: string; thinking?: string; persistAs?: string; sessionId?: string };
   const message = (body.message ?? '').trim();
   if (!message) {
     return reply.code(400).send({ code: 'INVALID_PATCH', message: '消息不能为空' });
@@ -524,7 +575,8 @@ app.post('/api/story/chat', async (req, reply) => {
   // 组装对话上下文：项目名 + 向导答案 + 最近历史（全上下文）
   const graph = loadGraph(ctx.projectDir);
   const story = readStory(ctx.projectDir);
-  const history = readStoryChat(ctx.projectDir);
+  const sessionId = body.sessionId ?? null;
+  const history = readStoryChat(ctx.projectDir, sessionId);
   const prompt = buildStoryChatPrompt(graph.projectName, story.answers, history, message);
 
   const cmd = (process.env.DIRECTOR_PI_CMD ?? 'pi --mode json').split(' ').filter(Boolean);
@@ -547,7 +599,7 @@ app.post('/api/story/chat', async (req, reply) => {
   // 用户消息先落盘（不依赖 pi 是否正常退出）；agent 全文在流结束后落盘。
   // persistAs：系统动作（总结成稿/回填向导）的落盘标记——message 是长指令 prompt，
   // 若原文落盘会快速消耗 100 条历史上限并污染下次对话的 20 条上下文窗口。
-  appendStoryChat(ctx.projectDir, 'user', body.persistAs ?? message);
+  appendStoryChat(ctx.projectDir, sessionId, 'user', body.persistAs ?? message);
   let agentText = '';
   let pending = '';
   let flushTimer: NodeJS.Timeout | null = null;
@@ -593,7 +645,7 @@ app.post('/api/story/chat', async (req, reply) => {
       },
     });
     flushPending();
-    appendStoryChat(ctx.projectDir, 'agent', agentText);
+    appendStoryChat(ctx.projectDir, sessionId, 'agent', agentText);
     if (idleKilled) send('\n\n（输出已空闲停止）');
     else if (agentText.trim().length === 0) send('\n\n（输出为空）');
     reply.raw.write('data: [DONE]\n\n');
@@ -774,6 +826,7 @@ app.get('/api/assets/:id/file', async (req, reply) => {
       chips?: Array<{ name: string; content: string }>;
       model?: string;
       thinking?: string;
+      sessionId?: string;
     };
     // 画布摘要：节点类型计数（agent 上下文，避免全量图塞爆提示词）
     const graph = loadGraph(ctx.projectDir);
@@ -807,8 +860,9 @@ app.get('/api/assets/:id/file', async (req, reply) => {
       connection: 'keep-alive',
     });
     const send = (text: string) => reply.raw.write(`data: ${JSON.stringify({ chunk: text })}\n\n`);
+    const sessionId = body.sessionId ?? null;
     // 用户消息先落盘（不依赖 pi 是否正常退出）；agent 全文在流结束后落盘
-    appendChatMessage(ctx.projectDir, 'user', body.message);
+    appendChatMessage(ctx.projectDir, sessionId, 'user', body.message);
     // 流式累积 agent 全文（pi --mode json 的 text_delta 增量拼接）；
     // 节流合并：delta 按 60ms/120 字符成块发送——逐 token 全量转发会让前端
     // 每次重渲染 ReactMarkdown，块级转发兼顾流式观感与渲染性能。
@@ -860,7 +914,7 @@ app.get('/api/assets/:id/file', async (req, reply) => {
         },
       });
       flushPending();
-      appendChatMessage(ctx.projectDir, 'agent', agentText);
+      appendChatMessage(ctx.projectDir, sessionId, 'agent', agentText);
       if (idleKilled) send('\n\n（输出已空闲停止）');
       reply.raw.write('data: [DONE]\n\n');
     } catch (err) {
