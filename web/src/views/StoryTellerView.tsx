@@ -197,7 +197,8 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
   }
 
   return (
-    <div className="role-view story-view" data-testid="story-teller-view">
+    // 对话式（chat-mode）：高度受限布局，仅消息区内部滚动（输入行/按钮行固定底部）
+    <div className={`role-view story-view${mode === 'chat' ? ' chat-mode' : ''}`} data-testid="story-teller-view">
       <RoleHeader
         eyebrow="STORY TELLER"
         title="故事向导"

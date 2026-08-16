@@ -663,6 +663,12 @@
 /* ===== story 右侧剧本栏（两栏布局 + 代码视图高亮） ===== */
 .story-layout { display: flex; gap: 22px; align-items: flex-start; }
 .story-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+/* 对话式高度受限布局：仅消息区内部滚动，输入行/按钮行固定底部（向导式保持整页滚动） */
+.story-view.chat-mode { height: 100%; display: flex; flex-direction: column; gap: 18px; min-height: 0; }
+.story-view.chat-mode .story-layout { flex: 1; min-height: 0; align-items: stretch; }
+.story-view.chat-mode .story-main { min-height: 0; }
+.story-view.chat-mode .script-sidebar { min-height: 0; overflow: hidden; }
+.story-view.chat-mode .script-viewer { max-height: none; flex: 1; min-height: 0; }
 .script-sidebar {
   flex: 0 0 380px; display: flex; flex-direction: column; gap: 10px;
   background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px;

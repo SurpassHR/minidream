@@ -222,12 +222,16 @@ describe('StoryTellerView 模式切换', () => {
     // 默认向导式：头部显示第几步
     expect(screen.getByTestId('story-answer')).toBeInTheDocument();
     expect(screen.getByText(/第 1\/6 步/)).toBeInTheDocument();
+    // 向导式无 chat-mode（保持整页滚动）
+    expect(screen.getByTestId('story-teller-view').className).not.toContain('chat-mode');
     fireEvent.click(screen.getByTestId('mode-chat'));
     await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
     expect(screen.queryByTestId('story-answer')).not.toBeInTheDocument();
     // 对话式无步骤概念：不显示「第 X/6 步」
     expect(screen.queryByText(/第 \d+\/6 步/)).not.toBeInTheDocument();
     expect(screen.getByText(/自由对话 · 探索故事方向/)).toBeInTheDocument();
+    // 对话式 chat-mode：高度受限布局，仅消息区滚动
+    expect(screen.getByTestId('story-teller-view').className).toContain('chat-mode');
   });
 
   it('对话式回填向导：answers 写入后切回向导式并显示答案', async () => {
