@@ -67,6 +67,38 @@ describe('API 故事向导', () => {
     expect(assets.some((x) => x.id === asset.id)).toBe(true);
   });
 
+  it('GET /api/story 未完成时 md 为 null', async () => {
+    const res = await a.inject({ method: 'GET', url: '/api/story' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().md).toBeNull();
+  });
+
+  it('POST /api/story/complete 响应含 md（buildStoryMarkdown 产物）', async () => {
+    await a.inject({
+      method: 'PUT', url: '/api/story',
+      payload: { answers: { theme: '精灵与哥布林' } },
+    });
+    const res = await a.inject({ method: 'POST', url: '/api/story/complete', payload: {} });
+    expect(res.statusCode).toBe(201);
+    const { md } = res.json();
+    expect(md).toContain('# ');
+    expect(md).toContain('## 主题');
+    expect(md).toContain('精灵与哥布林');
+    expect(md).toContain('（未填写）'); // 未填步骤占位
+  });
+
+  it('GET /api/story 完成后返回 md', async () => {
+    await a.inject({
+      method: 'PUT', url: '/api/story',
+      payload: { answers: { theme: '精灵与哥布林' } },
+    });
+    await a.inject({ method: 'POST', url: '/api/story/complete', payload: {} });
+    const res = await a.inject({ method: 'GET', url: '/api/story' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().md).toContain('## 主题');
+    expect(res.json().md).toContain('精灵与哥布林');
+  });
+
   it('POST /api/story/complete 重复调用不重复入库', async () => {
     await a.inject({ method: 'POST', url: '/api/story/complete', payload: {} });
     const res2 = await a.inject({ method: 'POST', url: '/api/story/complete', payload: {} });

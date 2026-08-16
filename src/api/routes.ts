@@ -475,7 +475,14 @@ app.get('/api/agent/history', async () => ({ messages: readChatHistory(ctx.proje
 
 // —— 故事向导（story-teller 角色页）——
 // 进度存 .director/story.json；complete 时组装 Markdown 入库为 story_<项目名>.md 素材
-app.get('/api/story', async () => ({ story: readStory(ctx.projectDir) }));
+app.get('/api/story', async () => {
+  const story = readStory(ctx.projectDir);
+  // 已完成时附带剧本 md（buildStoryMarkdown 单一来源；未完成返回 null，前端显示占位）
+  const md = story.completedAt
+    ? buildStoryMarkdown(loadGraph(ctx.projectDir).projectName || '未命名项目', story.answers)
+    : null;
+  return { story, md };
+});
 
 app.put('/api/story', async (req) => {
   const body = req.body as { step?: number; answers?: Record<string, string> };
@@ -495,7 +502,7 @@ app.post('/api/story/complete', async (req, reply) => {
   const asset = importAssetText(`story_${projectName}.md`, md);
   completeStory(ctx.projectDir, new Date().toISOString());
   reply.code(201);
-  return { asset, story: readStory(ctx.projectDir) };
+  return { asset, story: readStory(ctx.projectDir), md };
 });
 
 // 重新生成：清空进度与 completedAt，回到第一步（spec 4.3 重新生成入口）
