@@ -139,7 +139,7 @@ export function SettingsModal(props: {
               <span className="role-field-label">提示词库 · 角色系统提示词</span>
               <button type="button" className="btn-ghost" onClick={resetDefaults}>↺ 重置为默认提示词</button>
             </div>
-            <span className="role-field-hint">AI 建议 / 物体优化 / 对话总结回填按名称引用；删除或留空该条目即回退内置默认</span>
+            <span className="role-field-hint">AI 建议 / 物体优化 / 对话总结回填按名称引用；删除或留空该条目即回退内置默认；改名角色条目将不再被 AI 功能按名引用</span>
             <div className="prompt-lib">
               {promptEntries.map((e, i) => (
                 <div key={i} className="prompt-entry">

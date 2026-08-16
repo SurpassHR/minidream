@@ -145,4 +145,22 @@ describe('SettingsModal', () => {
     expect(body.prompts.storyBackfill).toBeUndefined(); // 空名称行已丢弃
     expect(Object.keys(body.prompts).length).toBe(5); // storyTeller/objectDesigner/storyChat/storySummarize/custom（storyBackfill 空名被丢）
   });
+
+  it('空库保存：删除全部条目后 prompts 为 {}（删除不复活）', async () => {
+    render(<SettingsModal
+      open settings={DEFAULT_SETTINGS} models={[]}
+      onClose={() => {}} onSaved={() => {}} onError={() => {}}
+    />);
+    // 逐条删除全部条目（删除后索引前移，始终删第 0 个）
+    while (screen.queryAllByTestId(/^prompt-del-/).length > 0) {
+      fireEvent.click(screen.queryAllByTestId(/^prompt-del-/)[0]);
+    }
+    fireEvent.click(screen.getByText('保存'));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/settings',
+      expect.objectContaining({ method: 'PUT' }),
+    ));
+    const body = JSON.parse(String((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1]?.body));
+    expect(body.prompts).toEqual({});
+  });
 });

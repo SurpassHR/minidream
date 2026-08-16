@@ -179,4 +179,28 @@ describe('StoryChat', () => {
     expect(body.message).toContain('定制总结');
     expect(body.message).not.toContain('你是导演工作台的故事编剧');
   });
+
+  it('回填向导使用配置的 storyChat + storyBackfill 提示词', async () => {
+    render(
+      <StoryChat
+        projectName="demo"
+        onBackfill={() => {}}
+        onSummarized={() => {}}
+        prompts={{ storyChat: '定制编剧', storyBackfill: '定制回填' }}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('↩ 回填向导'));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/story/chat'),
+      expect.objectContaining({ method: 'POST' }),
+    ));
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/story/chat') && (c[1] as RequestInit)?.method === 'POST',
+    );
+    const body = JSON.parse(String(calls.at(-1)![1]?.body)) as { message: string };
+    expect(body.message).toContain('定制编剧');
+    expect(body.message).toContain('定制回填');
+    expect(body.message).not.toContain('你是导演工作台的故事编剧');
+  });
 });
