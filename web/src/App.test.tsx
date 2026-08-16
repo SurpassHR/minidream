@@ -45,6 +45,17 @@ beforeEach(() => {
     if (String(url).includes('/api/assets')) {
       return new Response(JSON.stringify({ assets: [] }), { status: 200 });
     }
+    // StoryChat 会话（Task 4 故事向导仅对话式：切到故事向导 tab 即挂载 StoryChat，
+    // 先列会话再取历史；分支须先于 /api/story，否则被 GET 分支吞掉返回无 sessions 的响应）
+    if (String(url).includes('/api/story/chat/sessions')) {
+      if (init?.method === 'POST') {
+        return new Response(JSON.stringify({ sessions: [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }], activeId: 's1' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ sessions: [], activeId: null }), { status: 200 });
+    }
+    if (String(url).includes('/api/story/chat/history')) {
+      return new Response(JSON.stringify({ messages: [] }), { status: 200 });
+    }
     if (String(url).includes('/api/story')) {
       return new Response(JSON.stringify({ story: { step: 0, answers: {}, completedAt: null } }), { status: 200 });
     }
