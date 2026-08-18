@@ -205,6 +205,8 @@
 .gen .rec .dot { width: 6px; height: 6px; background: var(--rec); box-shadow: 0 0 6px var(--rec); }
 .gen .rec.live .dot { animation: blink 1.2s infinite; }
 @keyframes blink { 50% { opacity: .35; } }
+@keyframes dw-spin { to { transform: rotate(360deg); } }
+.icon-spin { animation: dw-spin 1.2s linear infinite; }
 .gen .bar { position: absolute; left: 6px; right: 6px; bottom: 6px; height: 3px; background: #1A2130; border-radius: 2px; overflow: hidden; }
 .gen .bar i { display: block; height: 100%; background: var(--amber); }
 .gen .tc { position: absolute; left: 6px; bottom: 11px; font-family: var(--mono); font-size: 9px; color: var(--text-dim); }

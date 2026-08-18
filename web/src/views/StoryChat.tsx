@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { client } from '../api/client';
+import { Icon } from '../icons';
 import { resolveBoardPrompt, resolvePrompt, withArmorBreak } from './roles';
 import { AiButton, EmptyState, ErrorBanner } from './role-ui';
 import type { SessionMeta, StoryBoard } from '../types';
@@ -230,9 +231,9 @@ export function StoryChat(props: {
               </button>
               <div className="session-acts">
                 <button type="button" className="session-act" data-testid={`session-rename-${s.id}`} title="重命名"
-                  onClick={() => { void renameSession(s); }}>✎</button>
+                  onClick={() => { void renameSession(s); }}><Icon name="pencil" /></button>
                 <button type="button" className="session-act" data-testid={`session-del-${s.id}`} title="删除"
-                  onClick={() => { void deleteSession(s); }}>🗑</button>
+                  onClick={() => { void deleteSession(s); }}><Icon name="trash" /></button>
               </div>
             </div>
           ))}
@@ -242,7 +243,7 @@ export function StoryChat(props: {
       <div className="chat-main">
         <div className="chat-msgs">
           {msgs.length === 0 && (
-            <EmptyState icon="💬" text="还没有对话，从任意创意开始吧——主题、角色、情节都可以聊" />
+            <EmptyState icon={<Icon name="chat" />} text="还没有对话，从任意创意开始吧——主题、角色、情节都可以聊" />
           )}
           {msgs.map((m, i) => (
             <div key={i} className={`chat-msg ${m.who}`}>
@@ -254,7 +255,7 @@ export function StoryChat(props: {
               </div>
             </div>
           ))}
-          {busy && <div className="chat-thinking">⏳ AI 思考中…</div>}
+          {busy && <div className="chat-thinking"><Icon name="loader" /> AI 思考中…</div>}
         </div>
         <div className="chat-input-row">
           <textarea
@@ -273,7 +274,7 @@ export function StoryChat(props: {
           <button className="btn-primary" onClick={send} disabled={busy || !input.trim()}>发送</button>
         </div>
         <div className="chat-actions">
-          <AiButton busy={busy && action === 'summarize'} onClick={summarize}>✨ 总结成稿</AiButton>
+          <AiButton busy={busy && action === 'summarize'} onClick={summarize}><Icon name="sparkles" />总结成稿</AiButton>
           <span className="chat-hint">总结成稿：对话 → 完整故事文档入库</span>
         </div>
         {error && <ErrorBanner text={error} />}

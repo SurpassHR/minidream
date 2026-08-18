@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { client } from '../api/client';
+import { Icon, type IconName } from '../icons';
 import type { AppSettings } from '../types';
 import { ROLE_PROMPT_KEYS, type RolePromptKey } from '../views/roles';
 
@@ -32,24 +33,24 @@ const THINKING_LEVELS = [
 
 // 左侧导航定义：分组 + 条目（id 对应右侧 section，点击切换）
 type SectionId = 'comfy' | 'ollama' | 'model' | 'prompts';
-const NAV_GROUPS: Array<{ title: string; items: Array<{ id: SectionId; icon: string; label: string; desc: string }> }> = [
+const NAV_GROUPS: Array<{ title: string; items: Array<{ id: SectionId; icon: IconName; label: string; desc: string }> }> = [
   {
     title: '服务连接',
     items: [
-      { id: 'comfy', icon: '🖥', label: 'ComfyUI 生成', desc: '文生图 / 视频服务' },
-      { id: 'ollama', icon: '🧠', label: 'Ollama 视觉模型', desc: '图像转提示词' },
+      { id: 'comfy', icon: 'monitor', label: 'ComfyUI 生成', desc: '文生图 / 视频服务' },
+      { id: 'ollama', icon: 'brain', label: 'Ollama 视觉模型', desc: '图像转提示词' },
     ],
   },
   {
     title: 'AI 对话',
     items: [
-      { id: 'model', icon: '🤖', label: '模型与思考', desc: '默认模型 / 思考强度' },
+      { id: 'model', icon: 'bot', label: '模型与思考', desc: '默认模型 / 思考强度' },
     ],
   },
   {
     title: '内容',
     items: [
-      { id: 'prompts', icon: '📚', label: '提示词库', desc: '角色系统提示词' },
+      { id: 'prompts', icon: 'book', label: '提示词库', desc: '角色系统提示词' },
     ],
   },
 ];
@@ -148,7 +149,7 @@ export function SettingsModal(props: {
   return (
     <div className="dialog-mask" onClick={props.onClose}>
       <div className="dialog dialog-wide dialog-settings" onClick={(e) => e.stopPropagation()}>
-        <div className="dialog-title">⚙ 设置</div>
+        <div className="dialog-title"><Icon name="gear" />设置</div>
         <div className="settings-layout">
           {/* 左侧标题导航：分组列表，点击切换右侧配置项 */}
           <aside className="settings-nav" data-testid="settings-nav">
@@ -163,7 +164,7 @@ export function SettingsModal(props: {
                     data-testid={`nav-${it.id}`}
                     onClick={() => setActiveSec(it.id)}
                   >
-                    <span className="sni-ico">{it.icon}</span>
+                    <span className="sni-ico"><Icon name={it.icon} /></span>
                     <span className="sni-text">
                       <span className="sni-label">{it.label}</span>
                       <span className="sni-desc">{it.desc}</span>
@@ -199,7 +200,7 @@ export function SettingsModal(props: {
               <div className="settings-sec-head">
                 <div className="sec-eyebrow">Local Vision · 02</div>
                 <div className="sec-title">Ollama 视觉模型</div>
-                <div className="sec-desc">用本地视觉模型把参考图转成外观描述（物体设计器「🪄 图像转描述」）。</div>
+                <div className="sec-desc">用本地视觉模型把参考图转成外观描述（物体设计器「图像转描述」）。</div>
               </div>
               <label className="role-field">
                 <span className="role-field-label">OLLAMA 地址</span>
@@ -286,7 +287,7 @@ export function SettingsModal(props: {
                     checked={armorBreakEnabled}
                     onChange={(e) => setArmorBreakEnabled(e.target.checked)}
                   />
-                  <span className="role-field-label">⚔ 破甲预设 · 开启后插入到所有系统提示词之前</span>
+                  <span className="role-field-label"><Icon name="shield" /> 破甲预设 · 开启后插入到所有系统提示词之前</span>
                 </label>
                 <textarea
                   className="ne-input armor-break-text" data-testid="armor-break-text"

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { client } from '../api/client';
+import { Icon } from '../icons';
 
 export interface EditorNode {
   id: string;
@@ -36,7 +37,7 @@ export function NodeEditor({ node, onClose }: { node: EditorNode; onClose: () =>
     <div className="node-editor">
       <div className="ne-head">
         <span>编辑节点</span>
-        <button className="btn-ghost" onClick={onClose}>✕</button>
+        <button className="btn-ghost" onClick={onClose}><Icon name="x" /></button>
       </div>
       <label className="ne-label">标题
         <input className="ne-input" value={title} onChange={(e) => setTitle(e.target.value)} />

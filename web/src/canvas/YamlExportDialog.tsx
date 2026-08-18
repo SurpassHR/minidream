@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Icon } from '../icons';
 
 // YAML 导出结果对话框：展示协议 YAML 文本，可一键复制。
 // 导出失败时展示后端校验错误（不产出坏 YAML）。
@@ -41,7 +42,7 @@ export function YamlExportDialog(props: {
         <div className="dialog-actions">
           <button className="btn-ghost" onClick={props.onClose}>关闭</button>
           {props.yaml && (
-            <button className="btn-primary" onClick={copy}>{copied ? '已复制 ✓' : '复制 YAML'}</button>
+            <button className="btn-primary" onClick={copy}>{copied ? <><Icon name="check" />已复制</> : '复制 YAML'}</button>
           )}
         </div>
       </div>

@@ -96,8 +96,8 @@ describe('ObjectDesignerView', () => {
     render(<ObjectDesignerView projectName="demo" />);
     await waitFor(() => expect(screen.getByText('迷雾森林')).toBeInTheDocument());
     fireEvent.click(screen.getByText('迷雾森林'));
-    await waitFor(() => expect(screen.getByText('⚙ 生成参考图')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('⚙ 生成参考图'));
+    await waitFor(() => expect(screen.getByText('生成参考图')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('生成参考图'));
     await waitFor(() => expect(screen.getByAltText('参考图')).toBeInTheDocument());
     expect((screen.getByAltText('参考图') as HTMLImageElement).src).toContain('/api/assets/a1/file');
   });
@@ -198,7 +198,7 @@ describe('ObjectDesignerView', () => {
     // 选中 A 并触发 AI 优化（流式分帧：第一帧后切换选中）
     fireEvent.click(screen.getByText('角色A'));
     await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('角色A'));
-    fireEvent.click(screen.getByText('✨ AI 优化描述'));
+    fireEvent.click(screen.getByText('AI 优化描述'));
     // 立即切换到 B（第一帧到达前）
     fireEvent.click(screen.getByText('角色B'));
     await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('角色B'));
@@ -214,7 +214,7 @@ describe('ObjectDesignerView', () => {
     await waitFor(() => expect(screen.getByText('精灵骑士')).toBeInTheDocument());
     fireEvent.click(screen.getByText('精灵骑士'));
     await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('精灵骑士'));
-    fireEvent.click(screen.getByText('✨ AI 优化描述'));
+    fireEvent.click(screen.getByText('AI 优化描述'));
     // 等待流式全部到达（两帧 50ms + DONE）+ finally 落盘
     await new Promise((r) => setTimeout(r, 400));
     // AI 完成后必须有一次 PUT 落盘完整描述（直接 PUT，不等 500ms 防抖）：
@@ -234,7 +234,7 @@ describe('ObjectDesignerView', () => {
     await waitFor(() => expect(screen.getByText('精灵骑士')).toBeInTheDocument());
     fireEvent.click(screen.getByText('精灵骑士'));
     await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('精灵骑士'));
-    fireEvent.click(screen.getByText('✨ AI 优化描述'));
+    fireEvent.click(screen.getByText('AI 优化描述'));
     await waitFor(() => expect(screen.getByTestId('design-desc')).toHaveValue('+A1+A2'));
     const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => String(c[0]).includes('/api/agent/chat'),
@@ -250,7 +250,7 @@ describe('ObjectDesignerView', () => {
     await waitFor(() => expect(screen.getByText('精灵骑士')).toBeInTheDocument());
     fireEvent.click(screen.getByText('精灵骑士'));
     await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('精灵骑士'));
-    fireEvent.click(screen.getByText('✨ AI 优化描述'));
+    fireEvent.click(screen.getByText('AI 优化描述'));
     await waitFor(() => expect(screen.getByTestId('design-desc')).toHaveValue('+A1+A2'));
     const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => String(c[0]).includes('/api/agent/chat'),
@@ -265,7 +265,7 @@ describe('ObjectDesignerView', () => {
     await waitFor(() => expect(screen.getByText('精灵骑士')).toBeInTheDocument());
     fireEvent.click(screen.getByText('精灵骑士'));
     await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('精灵骑士'));
-    fireEvent.click(screen.getByText('🪄 图像转描述'));
+    fireEvent.click(screen.getByText('图像转描述'));
     await waitFor(() => expect(screen.getByTestId('design-desc')).toHaveValue('银发精灵骑士，墨绿斗篷，发光长剑'));
     // 请求携带 assetId
     const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
@@ -286,7 +286,7 @@ describe('ObjectDesignerView', () => {
     render(<ObjectDesignerView projectName="demo" />);
     await waitFor(() => expect(screen.getByText('精灵骑士')).toBeInTheDocument());
     fireEvent.click(screen.getByText('精灵骑士'));
-    await waitFor(() => expect(screen.getByText('🪄 图像转描述')).toBeInTheDocument());
-    expect(screen.getByText('🪄 图像转描述')).toBeDisabled();
+    await waitFor(() => expect(screen.getByText('图像转描述')).toBeInTheDocument());
+    expect(screen.getByText('图像转描述')).toBeDisabled();
   });
 });

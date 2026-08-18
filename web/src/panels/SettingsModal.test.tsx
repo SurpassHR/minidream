@@ -21,7 +21,7 @@ describe('SettingsModal', () => {
       open settings={DEFAULT_SETTINGS} models={[]}
       onClose={() => {}} onSaved={() => {}} onError={() => {}}
     />);
-    expect(screen.getByText('⚙ 设置')).toBeInTheDocument();
+    expect(screen.getByText('设置')).toBeInTheDocument();
     expect(screen.getByText('COMFYUI 地址')).toBeInTheDocument();
     expect(screen.getByText('默认模型')).toBeInTheDocument();
     expect(screen.getByText('思考强度')).toBeInTheDocument();

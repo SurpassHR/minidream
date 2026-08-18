@@ -281,7 +281,7 @@ export const client = {
     return r.models ?? [];
   },
 
-  // 图像转提示词：素材库图片 assetId → Ollama 视觉模型 → 外观描述文本（物体设计器 🪄 图像转描述）
+  // 图像转提示词：素材库图片 assetId → Ollama 视觉模型 → 外观描述文本（物体设计器「图像转描述」）
   async imageToPrompt(assetId: string, instruction?: string): Promise<string> {
     const r = await req<{ prompt: string }>('/api/ollama/image-to-prompt', {
       method: 'POST', body: JSON.stringify({ assetId, instruction }),

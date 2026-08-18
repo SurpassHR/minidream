@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { client } from '../api/client';
+import { Icon } from '../icons';
 
 export interface AssetItem {
   kind: 'txt' | 'img' | 'vid';
@@ -136,9 +137,9 @@ export function AssetLibrary(props: {
       {menuOpen && (
         <div className="import-pop">
           <h4>导入到素材库</h4>
-          <div className="ipt-row" onClick={() => pickFile('txt')}><span className="ic">📝</span>文字 / 提示词</div>
-          <div className="ipt-row" onClick={() => pickFile('img')}><span className="ic">🖼</span>图像 / 参考图</div>
-          <div className="ipt-row" onClick={() => pickFile('vid')}><span className="ic">🎬</span>视频 / 参考视频</div>
+          <div className="ipt-row" onClick={() => pickFile('txt')}><span className="ic"><Icon name="file-text" /></span>文字 / 提示词</div>
+          <div className="ipt-row" onClick={() => pickFile('img')}><span className="ic"><Icon name="image" /></span>图像 / 参考图</div>
+          <div className="ipt-row" onClick={() => pickFile('vid')}><span className="ic"><Icon name="video" /></span>视频 / 参考视频</div>
         </div>
       )}
       <input
@@ -174,7 +175,7 @@ export function AssetLibrary(props: {
         ))}
         {filtered.length === 0 && (items.length === 0 ? (
           <div className="asset-empty" data-testid="asset-empty">
-            <div className="ae-frame"><span className="ae-icon">🖼</span></div>
+            <div className="ae-frame"><span className="ae-icon"><Icon name="image" /></span></div>
             <div className="ae-title">素材库是空的</div>
             <div className="ae-sub">Ctrl+V 粘贴剪贴板图像，或把图片 / .txt 文件拖进这里，自动入库</div>
             <button className="import-btn" onClick={() => setMenuOpen(true)}>＋ 导入素材</button>

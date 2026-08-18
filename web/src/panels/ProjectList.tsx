@@ -1,3 +1,4 @@
+import { Icon } from '../icons';
 import type { ProjectInfo } from '../types';
 
 // 项目列表：真实数据源（/api/projects）+ 点击切换项目（/api/project/switch）
@@ -27,7 +28,7 @@ export function ProjectList(props: {
           title={p.path}
           onClick={() => props.onSelect(p.path)}
         >
-          <div className="pico">🎬</div>
+          <div className="pico"><Icon name="film" /></div>
           <div className="pinfo">
             <div className="pname">{p.name}</div>
             <div className="pmeta">{fmtMeta(p)}</div>
@@ -37,7 +38,7 @@ export function ProjectList(props: {
             className="proj-remove"
             title="从项目栏移除（不删除目录）"
             onClick={(e) => { e.stopPropagation(); props.onRemove(p.path, p.name); }}
-          >✕</button>
+          ><Icon name="x" /></button>
         </div>
       ))}
       {props.projects.length === 0 && (

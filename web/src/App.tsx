@@ -13,6 +13,7 @@ import { client, setOverwriteConfirmHandler } from './api/client';
 import { Timeline } from './panels/Timeline';
 import { VersionsList } from './panels/VersionsList';
 import { GenQueue } from './panels/GenQueue';
+import { Icon } from './icons';
 import { useGraphStore } from './store/graph';
 import { agentChat } from './api/agent';
 import { connectWs } from './api/ws';
@@ -346,7 +347,7 @@ export default function App() {
           data-testid="settings-open"
           title="设置：ComfyUI 地址 / 默认模型 / 思考强度"
           onClick={() => setSettingsOpen(true)}
-        >⚙ 设置</button>
+        ><Icon name="gear" />设置</button>
         <button className="btn-ghost" onClick={() => setImportOpen(true)}>＋ 导入</button>
         <button className="run-btn"><span className="tri">▶</span>运行流水线</button>
       </header>

@@ -14,6 +14,7 @@ import { inletGroupOf, INLET_LABELS } from './nodes';
 import { edgeTypes } from './edges';
 import { NodeEditor, type EditorNode } from './NodeEditor';
 import { YamlExportDialog } from './YamlExportDialog';
+import { Icon } from '../icons';
 import type { DirectorEdge, DirectorNode, NodeType } from '../types';
 import type { AssetItem } from '../panels/AssetLibrary';
 
@@ -437,13 +438,13 @@ function CanvasInner({ onNodeSubmit, onDeleteNode, onAssetDrop }: CanvasProps) {
             </>
           ) : (
             <>
-              <button className="ctx-item" onClick={() => openEditor(menu.node!)}>✎ 编辑节点…</button>
+              <button className="ctx-item" onClick={() => openEditor(menu.node!)}><Icon name="pencil" />编辑节点…</button>
               <button className="ctx-item" onClick={() => { addChip(`@ ${menu.node!.title}`); closeMenu(); }}>⇢ 加入对话</button>
               <div className="ctx-sep" />
               <button
                 className="ctx-item danger"
                 onClick={() => { onDeleteNode?.(menu.node!.id, menu.node!.title); closeMenu(); }}
-              >🗑 删除节点…</button>
+              ><Icon name="trash" />删除节点…</button>
             </>
           )}
         </div>
@@ -464,7 +465,7 @@ function CanvasInner({ onNodeSubmit, onDeleteNode, onAssetDrop }: CanvasProps) {
           <button className={`ctx-item ${edgeMenu.edge.type === 'chain' ? 'sel' : ''}`} onClick={() => changeEdgeKind('chain')}>chain · 链式参考（琥珀实线）</button>
           <button className={`ctx-item ${edgeMenu.edge.type === 'exec' ? 'sel' : ''}`} onClick={() => changeEdgeKind('exec')}>exec · 执行流（蓝实线）</button>
           <div className="ctx-sep" />
-          <button className="ctx-item danger" onClick={() => { void client.deleteEdge(edgeMenu.edge.id); setEdgeMenu(null); }}>🗑 删除连线</button>
+          <button className="ctx-item danger" onClick={() => { void client.deleteEdge(edgeMenu.edge.id); setEdgeMenu(null); }}><Icon name="trash" />删除连线</button>
         </div>
       )}
       {selected && (

@@ -120,8 +120,8 @@ describe('StoryChat', () => {
       return new Response(JSON.stringify({}), { status: 404 });
     }));
     render(<StoryChat projectName="demo" onSummarized={(a) => { summarized = a; }} />);
-    await waitFor(() => expect(screen.getByText('✨ 总结成稿')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    await waitFor(() => expect(screen.getByText('总结成稿')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('总结成稿'));
     await waitFor(() => expect(summarized).toEqual({ theme: '战争与和解', protagonist: '精灵骑士' }));
   });
 
@@ -141,8 +141,8 @@ describe('StoryChat', () => {
       return new Response(JSON.stringify({}), { status: 404 });
     }));
     render(<StoryChat projectName="demo" onSummarized={() => {}} />);
-    await waitFor(() => expect(screen.getByText('✨ 总结成稿')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    await waitFor(() => expect(screen.getByText('总结成稿')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('总结成稿'));
     // 出现连接失败提示
     await waitFor(() => expect(screen.getByText(/（agent 连接失败）/)).toBeInTheDocument());
     // 不出现格式错误提示（旧实现会同时显示两条矛盾提示）
@@ -160,7 +160,7 @@ describe('StoryChat', () => {
       />,
     );
     await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    fireEvent.click(screen.getByText('总结成稿'));
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/story/chat'),
       expect.objectContaining({ method: 'POST' }),
@@ -222,7 +222,7 @@ describe('StoryChat', () => {
     expect(
       (CHAT_BODIES.at(-1) as { message: string; sessionId?: string; systemPrompt?: string }).systemPrompt,
     ).toContain('你是导演工作台的故事编剧');
-    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    fireEvent.click(screen.getByText('总结成稿'));
     await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(1));
     expect(CHAT_BODIES.at(-1)!.sessionId).toBe('s9');
   });
@@ -246,7 +246,7 @@ describe('StoryChat', () => {
     const sendBody = CHAT_BODIES[0] as { model?: string; thinking?: string };
     expect(sendBody.model).toBe('anthropic/claude-sonnet-4');
     expect(sendBody.thinking).toBe('high');
-    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    fireEvent.click(screen.getByText('总结成稿'));
     await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(1));
     const sumBody = CHAT_BODIES.at(-1) as { model?: string; thinking?: string };
     expect(sumBody.model).toBe('anthropic/claude-sonnet-4');
@@ -407,7 +407,7 @@ describe('StoryChat', () => {
     const gets = () => (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => String(c[0]).includes('/api/story/chat/sessions') && (c[1] as RequestInit)?.method !== 'POST',
     );
-    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    fireEvent.click(screen.getByText('总结成稿'));
     // 总结完成 → 刷新列表：标题更新
     await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('总结成稿会话'));
     expect(gets().length).toBe(2);
@@ -421,7 +421,7 @@ describe('StoryChat', () => {
       />,
     );
     await waitFor(() => expect(screen.getByTestId('session-item-s1')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    fireEvent.click(screen.getByText('总结成稿'));
     await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(0));
     expect(CHAT_BODIES.at(-1)!.message).toMatch(/^破甲预设文本\n\n/);
   });

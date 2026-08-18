@@ -899,7 +899,7 @@ app.post('/api/designs/:id/generate', async (req, reply) => {
   }
 });
 
-// —— Ollama 本地视觉模型：图像 → 提示词（物体设计器「🪄 图像转描述」）——
+// —— Ollama 本地视觉模型：图像 → 提示词（物体设计器「图像转描述」）——
 // 配置（地址 + 视觉模型）在全局设置 settings.json；模型列表供设置面板下拉
 app.get('/api/ollama/models', async () => {
   const { ollamaUrl } = readSettings();

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Icon } from '../icons';
 import type { ProjectInfo } from '../types';
 
 // 顶栏项目切换器：点击当前项目名弹出下拉面板（项目列表 + 添加入口）。
@@ -44,7 +45,7 @@ export function ProjectSwitcher(props: {
         title="切换项目（故事向导 / 物体设计 / 画布共享同一项目）"
         onClick={() => setOpen((v) => !v)}
       >
-        <span className="ps-ico">🎬</span>
+        <span className="ps-ico"><Icon name="film" /></span>
         <span className="ps-name">{current?.name ?? (props.fallbackName || '加载中…')}</span>
         <span className="ps-caret">▾</span>
       </button>
@@ -59,17 +60,17 @@ export function ProjectSwitcher(props: {
               title={p.path}
               onClick={() => { props.onSelect(p.path); setOpen(false); }}
             >
-              <div className="pico">🎬</div>
+              <div className="pico"><Icon name="film" /></div>
               <div className="pinfo">
                 <div className="pname">{p.name}</div>
                 <div className="pmeta">{fmtMeta(p)}</div>
               </div>
-              {p.path === props.activePath && <span className="ps-check">✓</span>}
+              {p.path === props.activePath && <span className="ps-check"><Icon name="check" /></span>}
               <button
                 className="proj-remove"
                 title="从项目栏移除（不删除目录）"
                 onClick={(e) => { e.stopPropagation(); props.onRemove(p.path, p.name); }}
-              >✕</button>
+              ><Icon name="x" /></button>
             </div>
           ))}
           {props.projects.length === 0 && (

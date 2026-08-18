@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { client } from '../api/client';
+import { Icon, type IconName } from '../icons';
 import type { DesignKind, DesignObject } from '../types';
 import { agentChat } from '../api/agent';
 import { resolvePrompt, withArmorBreak } from './roles';
@@ -8,7 +9,7 @@ import { AiButton, EmptyState, ErrorBanner, Field, LoadingState, RoleCard, RoleH
 const KIND_LABEL: Record<DesignKind, string> = {
   character: '人物', scene: '场景', prop: '物品',
 };
-const KIND_ICON: Record<DesignKind, string> = { character: '👤', scene: '🏞', prop: '🎒' };
+const KIND_ICON: Record<DesignKind, IconName> = { character: 'user', scene: 'landscape', prop: 'package' };
 const STYLE_PRESETS = ['吉卜力风', '写实', '赛博朋克', '水墨', '皮克斯 3D', '暗黑奇幻'];
 
 // 状态 → 徽章色与文案（统一视觉语言）
@@ -18,8 +19,8 @@ const STATUS_TONE: Record<DesignObject['status'], 'dim' | 'warn' | 'ok' | 'err'>
 const STATUS_TEXT: Record<DesignObject['status'], string> = {
   draft: '草稿', generating: '生成中…', done: '已生成', failed: '失败',
 };
-const STATUS_ICON: Record<DesignObject['status'], string> = {
-  draft: '·', generating: '⏳', done: '✅', failed: '❌',
+const STATUS_ICON: Record<DesignObject['status'], IconName | null> = {
+  draft: null, generating: 'loader', done: 'check-circle', failed: 'x-circle',
 };
 
 export function ObjectDesignerView(props: { projectName: string; prompts?: Record<string, string>; armorBreak?: string; armorBreakEnabled?: boolean }) {
@@ -192,7 +193,7 @@ export function ObjectDesignerView(props: { projectName: string; prompts?: Recor
             return (
               <div key={k} className="designer-group">
                 <div className={`designer-kind${activeKind === k ? ' active' : ''}`} onClick={() => setActiveKind(k)}>
-                  <span className="kind-icon">{KIND_ICON[k]}</span>
+                  <span className="kind-icon"><Icon name={KIND_ICON[k]} /></span>
                   <span>{KIND_LABEL[k]}</span>
                   <span className="kind-count">{items.length}</span>
                 </div>
@@ -203,14 +204,14 @@ export function ObjectDesignerView(props: { projectName: string; prompts?: Recor
                       className={`designer-item${selected?.id === d.id ? ' active' : ''}`}
                       onClick={() => setSelected(d)}
                     >
-                      <span className="item-status">{STATUS_ICON[d.status]}</span>
+                      <span className="item-status">{d.status === 'draft' ? '·' : <Icon name={STATUS_ICON[d.status]!} />}</span>
                       <span className="designer-item-name">{d.name}</span>
                       {d.assetId && <span className="designer-thumb-mini" style={{ backgroundImage: `url(/api/assets/${d.assetId}/file)` }} />}
                     </div>
                   ))}
                   {items.length === 0 && (
                     <EmptyState
-                      icon={KIND_ICON[k]}
+                      icon={<Icon name={KIND_ICON[k]} />}
                       text={`暂无设计`}
                     />
                   )}
@@ -225,7 +226,7 @@ export function ObjectDesignerView(props: { projectName: string; prompts?: Recor
           {selected ? (
             <>
               <div className="designer-form-head">
-                <span className="form-kind">{KIND_ICON[selected.kind]} <span>{KIND_LABEL[selected.kind]}</span></span>
+                <span className="form-kind"><Icon name={KIND_ICON[selected.kind]} /> <span>{KIND_LABEL[selected.kind]}</span></span>
                 <StatusBadge tone={STATUS_TONE[selected.status]}>{STATUS_TEXT[selected.status]}</StatusBadge>
               </div>
               <Field label="名称">
@@ -254,9 +255,9 @@ export function ObjectDesignerView(props: { projectName: string; prompts?: Recor
                 {workflows.length === 0 && <div className="designer-tip">workflows/ 目录暂无模板，请放入 *.template.json（需含 $&#123;prompt&#125; 变量）</div>}
               </Field>
               <div className="designer-actions">
-                <AiButton busy={aiBusy} onClick={aiOptimize}>✨ AI 优化描述</AiButton>
-                <AiButton busy={visionBusy} onClick={visionToPrompt} disabled={!selected.assetId} title={selected.assetId ? '将参考图经本地视觉模型转为外观描述' : '需先生成参考图'}>🪄 图像转描述</AiButton>
-                <button className="btn-primary" disabled={selected.status === 'generating' || !selected.template} onClick={generate}>⚙ 生成参考图</button>
+                <AiButton busy={aiBusy} onClick={aiOptimize}><Icon name="sparkles" />AI 优化描述</AiButton>
+                <AiButton busy={visionBusy} onClick={visionToPrompt} disabled={!selected.assetId} title={selected.assetId ? '将参考图经本地视觉模型转为外观描述' : '需先生成参考图'}><Icon name="wand" />图像转描述</AiButton>
+                <button className="btn-primary" disabled={selected.status === 'generating' || !selected.template} onClick={generate}><Icon name="gear" />生成参考图</button>
               </div>
               {selected.status === 'failed' && selected.error && (
                 <ErrorBanner text={`生成失败：${selected.error}`} />
@@ -274,7 +275,7 @@ export function ObjectDesignerView(props: { projectName: string; prompts?: Recor
             </>
           ) : (
             <EmptyState
-              icon="🎬"
+              icon={<Icon name="film" />}
               text="选择或新建一个对象开始设计"
               action={<button className="btn-ghost designer-add" onClick={() => setCreating(true)}>＋ 新建对象</button>}
             />

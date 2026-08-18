@@ -63,7 +63,7 @@ describe('StoryTellerView 对话式', () => {
   it('仅对话式：无模式 tab 与向导元素，显示聊天区', async () => {
     render(<StoryTellerView projectName="demo" />);
     await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
-    expect(screen.queryByText('⬡ 向导式')).not.toBeInTheDocument();
+    expect(screen.queryByText('向导式')).not.toBeInTheDocument();
     expect(screen.queryByTestId('story-answer')).not.toBeInTheDocument();
     expect(screen.queryByText(/第 \d+\/6 步/)).not.toBeInTheDocument();
     // chat-mode 布局常驻
@@ -79,7 +79,7 @@ describe('StoryTellerView 对话式', () => {
   it('总结成稿后显示完成横幅 + 右侧剧本 md', async () => {
     render(<StoryTellerView projectName="demo" />);
     await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('✨ 总结成稿'));
+    fireEvent.click(screen.getByText('总结成稿'));
     await waitFor(() => expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument());
     await waitFor(() => expect(screen.getByTestId('script-viewer')).toBeInTheDocument());
     // ScriptViewer 接线回归防护：md 内容（来自 complete 响应）渲染到剧本栏

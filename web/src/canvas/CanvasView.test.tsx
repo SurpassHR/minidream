@@ -88,10 +88,10 @@ describe('节点右键菜单', () => {
     const menu = document.querySelector('.ctx-menu')!;
     expect(menu).not.toBeNull();
     // 作用域限定菜单内：'⇢ 加入对话' 也出现在节点底栏按钮中
-    expect(within(menu as HTMLElement).getByText('✎ 编辑节点…')).toBeInTheDocument();
+    expect(within(menu as HTMLElement).getByText('编辑节点…')).toBeInTheDocument();
     expect(within(menu as HTMLElement).getByText('⇢ 加入对话')).toBeInTheDocument();
-    expect(within(menu as HTMLElement).getByText('🗑 删除节点…')).toBeInTheDocument();
-    fireEvent.click(within(menu as HTMLElement).getByText('🗑 删除节点…'));
+    expect(within(menu as HTMLElement).getByText('删除节点…')).toBeInTheDocument();
+    fireEvent.click(within(menu as HTMLElement).getByText('删除节点…'));
     expect(onDelete).toHaveBeenCalledWith('n1', 'SHOT 01');
   });
 
@@ -101,7 +101,7 @@ describe('节点右键菜单', () => {
     const nodeEl = await waitFor(() => document.querySelector('.react-flow__node'));
     expect(nodeEl).not.toBeNull();
     fireEvent.contextMenu(nodeEl!, { clientX: 150, clientY: 150 });
-    fireEvent.click(screen.getByText('✎ 编辑节点…'));
+    fireEvent.click(screen.getByText('编辑节点…'));
     expect(screen.getByText('编辑节点')).toBeInTheDocument();
     expect(screen.getByDisplayValue('SHOT 01')).toBeInTheDocument();
   });

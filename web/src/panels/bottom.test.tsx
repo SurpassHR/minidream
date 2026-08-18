@@ -9,13 +9,14 @@ import { useGraphStore } from '../store/graph';
 describe('AgentPanel', () => {
   it('渲染 chips 且可删除', () => {
     const onChipsChange = vi.fn();
-    render(<AgentPanel
+    const { container } = render(<AgentPanel
       chips={['@ shot_02', '@ keyframe KF1']}
       onChipsChange={onChipsChange}
       onSend={() => []}
     />);
     expect(screen.getByText('@ shot_02')).toBeInTheDocument();
-    fireEvent.click(screen.getAllByText('✕')[0]!);
+    // chip 关闭按钮为 SVG 图标（无文本）：按类名定位
+    fireEvent.click(container.querySelector('.chip .x') as HTMLElement);
     expect(onChipsChange).toHaveBeenCalled();
   });
 
@@ -37,12 +38,13 @@ describe('AgentPanel', () => {
 
 describe('GenQueue', () => {
   it('渲染三种状态任务行', () => {
-    render(<GenQueue tasks={[
+    const { container } = render(<GenQueue tasks={[
       { id: 'g1', status: 'success', progress: 100, result: { videoPath: 'out/g1.mp4', lastFramePath: '' } },
       { id: 'g2', status: 'running', progress: 47 },
       { id: 'g3', status: 'queued', progress: 0 },
     ]} />);
-    expect(screen.getByText('✓')).toBeInTheDocument();
+    // 成功/失败图标为 SVG（无文本）：按类名断言存在性
+    expect(container.querySelector('.q-icon.ok')).not.toBeNull();
     expect(screen.getByText('●')).toBeInTheDocument();
     expect(screen.getByText(/47%/)).toBeInTheDocument();
     expect(screen.getByText(/out\/g1\.mp4/)).toBeInTheDocument();

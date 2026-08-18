@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { client } from '../api/client';
 import { agentChat } from '../api/agent';
+import { Icon } from '../icons';
 import type { SessionMeta } from '../types';
 
 export interface ChatMsg { who: 'user' | 'agent'; text: string }
@@ -179,7 +180,7 @@ export function AgentPanel(props: {
     <div className="agent-body">
       {props.activity && (
         <div className="agent-activity" title={`${props.activity.text} · ${new Date(props.activity.at).toLocaleTimeString()}`}>
-          ⚙ {props.activity.text}
+          <Icon name="gear" /> {props.activity.text}
         </div>
       )}
       {(props.models?.length ?? 0) > 0 && (
@@ -222,7 +223,7 @@ export function AgentPanel(props: {
             <span
               className="x" role="button" tabIndex={0}
               onClick={() => props.onChipsChange(props.chips.filter((x) => x !== c))}
-            >✕</span>
+            ><Icon name="x" /></span>
           </span>
         ))}
       </div>
@@ -247,9 +248,9 @@ export function AgentPanel(props: {
                       <span className="agent-session-date">{fmtSessionDate(s.updatedAt)}</span>
                     </button>
                     <button type="button" className="agent-session-act" data-testid={`agent-session-rename-${s.id}`}
-                      title="重命名" onClick={() => { void renameSession(s); }}>✎</button>
+                      title="重命名" onClick={() => { void renameSession(s); }}><Icon name="pencil" /></button>
                     <button type="button" className="agent-session-act" data-testid={`agent-session-del-${s.id}`}
-                      title="删除" onClick={() => { void deleteSession(s); }}>🗑</button>
+                      title="删除" onClick={() => { void deleteSession(s); }}><Icon name="trash" /></button>
                   </div>
                 ))}
                 {sessions.length === 0 && <div className="agent-session-empty">暂无会话</div>}

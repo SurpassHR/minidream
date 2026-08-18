@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Icon } from '../icons';
 
 // 角色页共享 UI 组件：story-teller / object-designer 统一视觉语言。
 // 片场标签风格：mono 眉题 + 编号 + 状态徽章（延续全局 panel-title 的标签语言）。
@@ -39,7 +40,7 @@ export function StatusBadge(props: { tone: BadgeTone; children: ReactNode }) {
 }
 
 // 空态：图标 + 文案 + 可选引导动作
-export function EmptyState(props: { icon: string; text: string; action?: ReactNode }) {
+export function EmptyState(props: { icon: ReactNode; text: string; action?: ReactNode }) {
   return (
     <div className="role-empty">
       <span className="role-empty-icon">{props.icon}</span>
@@ -49,20 +50,20 @@ export function EmptyState(props: { icon: string; text: string; action?: ReactNo
   );
 }
 
-// AI 辅助按钮（✨ 统一）：busy 时禁用并显示思考中；disabled 供调用方附加禁用（如完成后只读）
+// AI 辅助按钮：busy 时禁用并显示思考中；disabled 供调用方附加禁用（如完成后只读）
 export function AiButton(props: { busy: boolean; onClick: () => void; children: ReactNode; disabled?: boolean; title?: string }) {
   return (
     <button className="btn-ghost role-ai-btn" disabled={props.busy || props.disabled} onClick={props.onClick} title={props.title}>
-      {props.busy ? '⏳ 思考中…' : props.children}
+      {props.busy ? <><Icon name="loader" />思考中…</> : props.children}
     </button>
   );
 }
 
-// 错误条（表单校验失败 / 请求失败）；⚠ 图标独立 span，错误文本保持单元素（测试精确匹配）
+// 错误条（表单校验失败 / 请求失败）；图标独立 span，错误文本保持单元素（测试精确匹配）
 export function ErrorBanner(props: { text: string }) {
   return (
     <div className="role-error" role="alert">
-      <span className="role-error-icon">⚠</span>
+      <span className="role-error-icon"><Icon name="alert" /></span>
       <span>{props.text}</span>
     </div>
   );

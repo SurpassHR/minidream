@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { DirectorError } from '../types.js';
 
-// Ollama 本地视觉模型客户端：图像 → 提示词（物体设计器「🪄 图像转描述」用）。
+// Ollama 本地视觉模型客户端：图像 → 提示词（物体设计器「图像转描述」用）。
 // 兼容 Ollama REST API（/api/tags 列表、/api/chat 多模态对话，images 传 base64）。
 // 地址/模型来自全局设置（settings.json），客户端只负责按给定地址调用。
 

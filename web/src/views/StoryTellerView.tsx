@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { client } from '../api/client';
+import { Icon } from '../icons';
 import type { RagHit, StoryBoard, StoryProgress } from '../types';
 import { ErrorBanner, LoadingState, RoleHeader } from './role-ui';
 import { StoryChat } from './StoryChat';
@@ -191,7 +192,7 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
                 <span
                   className="board-del" title="删除剧本项目"
                   onClick={(e) => { e.stopPropagation(); removeBoard(b.id); }}
-                >🗑</span>
+                ><Icon name="trash" /></span>
               </div>
             ))}
             <button className="board-new-btn" data-testid="board-new" onClick={createBoard}>＋ 新建剧本项目</button>
@@ -206,12 +207,12 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
         {/* 中栏：对话 / 系统提示词 / 知识库 RAG */}
         <div className="story-main mid-col">
           <div className="mid-tabs" data-testid="story-mid-tabs">
-            <button className={`mid-tab${midTab === 'chat' ? ' on' : ''}`} onClick={() => setMidTab('chat')}>💬 对话</button>
+            <button className={`mid-tab${midTab === 'chat' ? ' on' : ''}`} onClick={() => setMidTab('chat')}><Icon name="chat" />对话</button>
             <button className={`mid-tab${midTab === 'prompts' ? ' on' : ''}`} onClick={() => setMidTab('prompts')}>
-              📝 系统提示词{promptCustomCount(activeBoard) > 0 && <span className="tab-dot" />}
+              <Icon name="file-text" />系统提示词{promptCustomCount(activeBoard) > 0 && <span className="tab-dot" />}
             </button>
             <button className={`mid-tab${midTab === 'rag' ? ' on' : ''}`} onClick={() => setMidTab('rag')}>
-              📚 知识库 RAG{activeBoard.ragEnabled && activeBoard.ragAssets.length > 0 && <span className="tab-dot" />}
+              <Icon name="book" />知识库 RAG{activeBoard.ragEnabled && activeBoard.ragAssets.length > 0 && <span className="tab-dot" />}
             </button>
           </div>
           <div className="mid-body">
@@ -219,7 +220,7 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
               <>
                 {story.completedAt && (
                   <div className="story-banner">
-                    ✅ 已完成 · 已生成故事文档进素材库（{new Date(story.completedAt).toLocaleString()}）
+                    <Icon name="check-circle" />已完成 · 已生成故事文档进素材库（{new Date(story.completedAt).toLocaleString()}）
                     <button className="btn-ghost story-reset" onClick={reset}>重新生成</button>
                   </div>
                 )}
@@ -257,8 +258,8 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
         {/* 右栏：生效上下文 / 剧本栏 */}
         <aside className="script-sidebar" data-testid="script-sidebar">
           <div className="ctx-tabs">
-            <button className={`ctx-tab${rightTab === 'ctx' ? ' on' : ''}`} onClick={() => setRightTab('ctx')}>🧠 上下文</button>
-            <button className={`ctx-tab${rightTab === 'script' ? ' on' : ''}`} onClick={() => setRightTab('script')}>📜 剧本</button>
+            <button className={`ctx-tab${rightTab === 'ctx' ? ' on' : ''}`} onClick={() => setRightTab('ctx')}><Icon name="brain" />上下文</button>
+            <button className={`ctx-tab${rightTab === 'script' ? ' on' : ''}`} onClick={() => setRightTab('script')}><Icon name="scroll" />剧本</button>
           </div>
           {rightTab === 'ctx' ? (
             <ContextPanel board={activeBoard} globalPrompts={props.prompts} />
@@ -269,7 +270,7 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
                 <ScriptViewer text={md} />
               ) : (
                 <div className="script-empty">
-                  对话结束点击 ✨ 总结成稿后，
+                  对话结束点击「总结成稿」后，
                   剧本将在这里展示
                 </div>
               )}
@@ -328,7 +329,7 @@ function PromptEditor(props: {
                   <button className="btn-ghost" style={{ fontSize: 11 }} onClick={() => { props.onSave(key, ''); setDrafts((d) => ({ ...d, [key]: '' })); }}>
                     恢复内置默认
                   </button>
-                  <span className={`pe-saved${savedKey === key ? ' show' : ''}`}>✓ 已保存</span>
+                  <span className={`pe-saved${savedKey === key ? ' show' : ''}`}><Icon name="check" />已保存</span>
                 </div>
               </div>
             </div>
@@ -388,9 +389,9 @@ function RagPanel(props: {
           const name = (assets ?? []).find((a) => a.id === id)?.name ?? id;
           return (
             <div key={id} className="rag-file">
-              <span>📄</span>
+              <span><Icon name="file" /></span>
               <span className="nm">{name}</span>
-              <span className="x" data-testid={`rag-remove-${id}`} onClick={() => props.onRemove(id)}>✕</span>
+              <span className="x" data-testid={`rag-remove-${id}`} onClick={() => props.onRemove(id)}><Icon name="x" /></span>
             </div>
           );
         })}
@@ -432,7 +433,7 @@ function RagPanel(props: {
             </>
           )}
           {hits.status === 'ok' && hits.hits.length === 0 && <span>无命中（相似度低于阈值）</span>}
-          {hits.status === 'unconfigured' && <span>未配置 Ollama embedding 模型 —— 到「⚙ 设置 → Ollama」填写 Embedding 模型即可启用检索；未配置时对话自动降级（不注入）</span>}
+          {hits.status === 'unconfigured' && <span>未配置 Ollama embedding 模型 —— 到「设置 → Ollama」填写 Embedding 模型即可启用检索；未配置时对话自动降级（不注入）</span>}
           {hits.status === 'error' && <span>检索失败：{hits.error}</span>}
         </div>
       )}
