@@ -193,4 +193,77 @@ describe('SettingsModal', () => {
     expect(body.armorBreak).toBe('新的破甲文本');
     expect(body.armorBreakEnabled).toBe(true);
   });
+
+  it('左侧导航切换右侧配置项：默认 ComfyUI，点击切换 Ollama/提示词库', () => {
+    render(<SettingsModal
+      open settings={DEFAULT_SETTINGS} models={[]}
+      onClose={() => {}} onSaved={() => {}} onError={() => {}}
+    />);
+    // 默认激活 ComfyUI 配置
+    expect(screen.getByTestId('sec-comfy')).toHaveClass('active');
+    expect(screen.getByTestId('sec-ollama')).not.toHaveClass('active');
+    expect(screen.getByTestId('sec-prompts')).not.toHaveClass('active');
+    // 点击导航切换
+    fireEvent.click(screen.getByTestId('nav-ollama'));
+    expect(screen.getByTestId('sec-ollama')).toHaveClass('active');
+    expect(screen.getByTestId('sec-comfy')).not.toHaveClass('active');
+    fireEvent.click(screen.getByTestId('nav-prompts'));
+    expect(screen.getByTestId('sec-prompts')).toHaveClass('active');
+    expect(screen.getByTestId('sec-ollama')).not.toHaveClass('active');
+    // 左侧分组标题存在
+    expect(screen.getByText('服务连接')).toBeInTheDocument();
+    expect(screen.getByText('AI 对话')).toBeInTheDocument();
+    expect(screen.getByText('内容')).toBeInTheDocument();
+  });
+
+  it('渲染 Ollama 区块（地址/视觉模型），打开时同步外部值', () => {
+    render(<SettingsModal
+      open
+      settings={{ ...DEFAULT_SETTINGS, ollamaUrl: 'http://127.0.0.1:11434', ollamaModel: 'llava:13b' }} models={[]}
+      onClose={() => {}} onSaved={() => {}} onError={() => {}}
+    />);
+    // 标题同时出现在导航与右侧 section（getAllByText：不要求唯一）
+    expect(screen.getAllByText('Ollama 视觉模型').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('ollama-url')).toHaveValue('http://127.0.0.1:11434');
+    expect(screen.getByTestId('ollama-model')).toHaveValue('llava:13b');
+  });
+
+  it('保存携带 ollamaUrl/ollamaModel', async () => {
+    const onSaved = vi.fn();
+    const onClose = vi.fn();
+    render(<SettingsModal
+      open settings={DEFAULT_SETTINGS} models={[]}
+      onClose={onClose} onSaved={onSaved} onError={() => {}}
+    />);
+    fireEvent.change(screen.getByTestId('ollama-url'), { target: { value: 'http://127.0.0.1:11434' } });
+    fireEvent.change(screen.getByTestId('ollama-model'), { target: { value: 'qwen2.5vl:7b' } });
+    fireEvent.click(screen.getByText('保存'));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/settings',
+      expect.objectContaining({ method: 'PUT' }),
+    ));
+    const body = JSON.parse(String((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1]?.body));
+    expect(body.ollamaUrl).toBe('http://127.0.0.1:11434');
+    expect(body.ollamaModel).toBe('qwen2.5vl:7b');
+  });
+
+  it('打开时拉取已安装 Ollama 模型填充 datalist', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes('/api/ollama/models')) {
+        return new Response(JSON.stringify({ models: ['llava:13b', 'qwen2.5vl:7b'] }), { status: 200 });
+      }
+      if (String(url).includes('/api/settings')) {
+        return new Response(JSON.stringify({ settings: {} }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }));
+    render(<SettingsModal
+      open settings={DEFAULT_SETTINGS} models={[]}
+      onClose={() => {}} onSaved={() => {}} onError={() => {}}
+    />);
+    await waitFor(() => expect(screen.getByTestId('ollama-model')).toHaveAttribute('list', 'ollama-models'));
+    // datalist 选项以 <option> 渲染（getByDisplayValue 只匹配 input/select，用 option 查询）
+    const opts = Array.from(document.querySelectorAll('#ollama-models option')).map((o) => o.getAttribute('value'));
+    expect(opts).toEqual(['llava:13b', 'qwen2.5vl:7b']);
+  });
 });

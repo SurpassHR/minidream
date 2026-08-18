@@ -740,3 +740,65 @@
 .armor-break-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .armor-break-head input { accent-color: var(--amber); }
 .armor-break-text { font-family: var(--mono); font-size: 12px; line-height: 1.6; resize: vertical; }
+
+/* ===== 设置弹窗：左侧标题导航 + 右侧配置项（master-detail） ===== */
+/* 注意：需 .dialog.dialog-settings 提升特异性，压过 .dialog.dialog-wide 的 560px */
+.dialog.dialog-settings { width: 760px; max-width: 94vw; padding: 0; display: flex; flex-direction: column; max-height: 84vh; }
+.dialog-settings .dialog-title {
+  flex: none; padding: 15px 20px; margin: 0; font-size: 14px;
+  border-bottom: 1px solid var(--border); background: var(--panel);
+}
+.settings-layout { flex: 1; min-height: 0; display: flex; }
+.settings-nav {
+  flex: 0 0 208px; background: var(--panel); border-right: 1px solid var(--border);
+  padding: 14px 10px; overflow: auto; display: flex; flex-direction: column; gap: 16px;
+}
+.settings-nav-group { display: flex; flex-direction: column; gap: 3px; }
+.settings-nav-title {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .18em; text-transform: uppercase;
+  color: var(--text-faint); padding: 0 9px 5px;
+}
+.settings-nav-item {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  padding: 7px 10px; border-radius: 6px; cursor: pointer; position: relative;
+  font-size: 12px; color: var(--text-dim); font-family: var(--sans);
+  background: none; border: 1px solid transparent; transition: all .14s; user-select: none;
+}
+.settings-nav-item:hover { color: var(--text); background: var(--panel-2); }
+.settings-nav-item.active {
+  color: var(--amber-soft); background: var(--amber-dim);
+  border-color: rgba(232, 163, 61, .22);
+}
+/* 签名元素：active 项的琥珀左缘（呼应项目全局 amber 强调色） */
+.settings-nav-item.active::before {
+  content: ""; position: absolute; left: -1px; top: 6px; bottom: 6px;
+  width: 2.5px; border-radius: 2px; background: var(--amber);
+  box-shadow: 0 0 8px rgba(232, 163, 61, .7);
+}
+.sni-ico {
+  width: 24px; height: 24px; border-radius: 5px; flex: none;
+  display: flex; align-items: center; justify-content: center; font-size: 12px;
+  background: var(--panel-3); border: 1px solid var(--border-2); transition: all .14s;
+}
+.settings-nav-item.active .sni-ico { background: var(--amber-dim); border-color: rgba(232, 163, 61, .4); }
+.sni-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.sni-label { font-size: 12px; line-height: 1.3; }
+.sni-desc { font-size: 10px; color: var(--text-faint); line-height: 1.3; }
+
+.settings-content { flex: 1; min-width: 0; display: flex; }
+.settings-sec { display: none; flex: 1; min-height: 0; overflow: auto; padding: 18px 22px; flex-direction: column; gap: 16px; }
+.settings-sec.active { display: flex; }
+.settings-sec-head { display: flex; flex-direction: column; gap: 3px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.sec-eyebrow {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .24em; text-transform: uppercase;
+  color: var(--amber); margin-bottom: 2px;
+}
+.sec-title { font-size: 15px; font-weight: 600; color: var(--text); }
+.sec-desc { font-size: 11px; color: var(--text-faint); line-height: 1.6; margin-top: 2px; }
+/* 设置弹窗底部操作条：与标题栏同底色，与主体隔离 */
+.dialog-settings .dialog-actions {
+  flex: none; padding: 13px 20px; border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+/* 提示词库内容区可滚动（右侧配置项自身滚动，nav 独立） */
+.dialog-settings .prompt-lib { max-height: none; }
