@@ -25,17 +25,19 @@ export function readStoryChat(projectDir: string, sessionId?: string | null): Ch
 // 追加一条消息到指定会话（无会话自动创建）；超过上限裁剪最早；原子写
 // sessionId 为 null 时落到当前 active 会话（无任何会话才自动创建）——
 // 保证一次对话的 user/agent 两条写同落一个会话（旧 API 不带 sessionId 的向后兼容）
-export function appendStoryChat(projectDir: string, sessionId: string | null, who: ChatMessage['who'], text: string): SessionFile {
+// boardId：自动创建会话时的归组（故事向导剧本项目）；null/undefined = 未归组
+export function appendStoryChat(projectDir: string, sessionId: string | null, who: ChatMessage['who'], text: string, boardId?: string | null): SessionFile {
   const id = sessionId ?? sessionList(chatFile(projectDir)).activeId;
-  return appendMessage(chatFile(projectDir), id, who, text, MAX_MESSAGES);
+  return appendMessage(chatFile(projectDir), id, who, text, MAX_MESSAGES, boardId);
 }
 
-export function listStorySessions(projectDir: string): { sessions: SessionMeta[]; activeId: string | null } {
-  return sessionList(chatFile(projectDir));
+// boardId 缺省 = 全部会话（旧数据/AGENT 面板兼容）；传值 = 仅该项目的会话
+export function listStorySessions(projectDir: string, boardId?: string | null): { sessions: SessionMeta[]; activeId: string | null } {
+  return sessionList(chatFile(projectDir), boardId);
 }
 
-export function createStorySession(projectDir: string): SessionFile {
-  return createSession(chatFile(projectDir));
+export function createStorySession(projectDir: string, boardId?: string | null): SessionFile {
+  return createSession(chatFile(projectDir), boardId);
 }
 
 export function renameStorySession(projectDir: string, id: string, title: string): SessionFile {

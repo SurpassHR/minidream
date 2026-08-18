@@ -13,6 +13,14 @@ interface OllamaChatResponse {
   message?: { content?: string };
 }
 
+interface OllamaEmbedResponse {
+  embeddings?: number[][];
+}
+
+interface OllamaEmbeddingsLegacyResponse {
+  embedding?: number[];
+}
+
 export class OllamaClient {
   private readonly baseUrl: string;
   private readonly defaultTimeoutMs: number;
@@ -35,6 +43,54 @@ export class OllamaClient {
     }
     const data = (await res.json()) as OllamaTagsResponse;
     return (data.models ?? []).map((m) => m.name).sort();
+  }
+
+  // 文本 → 向量：POST /api/embed（批量）；旧版 Ollama 无此端点时回退逐条 /api/embeddings
+  async embed(model: string, texts: string[]): Promise<number[][]> {
+    if (texts.length === 0) return [];
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/api/embed`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model, input: texts }),
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch {
+      throw new DirectorError('INVALID_PATCH', `无法连接 Ollama: ${this.baseUrl}`);
+    }
+    if (res.status === 404 || res.status === 405) {
+      // 旧版：逐条 /api/embeddings
+      const out: number[][] = [];
+      for (const t of texts) {
+        const r = await fetch(`${this.baseUrl}/api/embeddings`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ model, prompt: t }),
+          signal: AbortSignal.timeout(120_000),
+        });
+        if (!r.ok) {
+          const text = await r.text();
+          throw new DirectorError('INVALID_PATCH', `Ollama embedding 调用失败(${r.status}): ${text.slice(0, 500)}`);
+        }
+        const data = (await r.json()) as OllamaEmbeddingsLegacyResponse;
+        if (!data.embedding || data.embedding.length === 0) {
+          throw new DirectorError('INVALID_PATCH', `Ollama embedding 返回空向量（模型 ${model} 是否支持 embedding？）`);
+        }
+        out.push(data.embedding);
+      }
+      return out;
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      throw new DirectorError('INVALID_PATCH', `Ollama embedding 调用失败(${res.status}): ${text.slice(0, 500)}`);
+    }
+    const data = (await res.json()) as OllamaEmbedResponse;
+    const embeddings = data.embeddings ?? [];
+    if (embeddings.length !== texts.length || embeddings.some((e) => !e || e.length === 0)) {
+      throw new DirectorError('INVALID_PATCH', `Ollama embedding 返回数量不匹配（模型 ${model} 是否支持 embedding？）`);
+    }
+    return embeddings;
   }
 
   // 图像 → 提示词：读取本地图片 → base64 → /api/chat（stream:false）→ 返回模型描述文本

@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { client } from '../api/client';
-import { resolvePrompt, withArmorBreak } from './roles';
+import { resolveBoardPrompt, resolvePrompt, withArmorBreak } from './roles';
 import { AiButton, EmptyState, ErrorBanner } from './role-ui';
-import type { SessionMeta } from '../types';
+import type { SessionMeta, StoryBoard } from '../types';
 
 export interface ChatMsg { who: 'user' | 'agent'; text: string }
 
@@ -43,6 +43,8 @@ export function StoryChat(props: {
   // 默认模型与思考强度（来自全局设置；透传到 /api/story/chat body，缺省走 pi 默认）
   agentModel?: string;
   thinkingLevel?: string;
+  // 剧本项目（board）：boardId 归组会话 + 项目级系统提示词（board → 全局 → 内置）
+  board?: StoryBoard | null;
 }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
@@ -53,14 +55,16 @@ export function StoryChat(props: {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false); // 发送/总结共用 busy（防并发）
   const [action, setAction] = useState<'summarize' | null>(null);
+  // 当前剧本项目 id（归组会话 + 后端解析项目级提示词/RAG）
+  const boardId = props.board?.id ?? null;
 
   // 发送/总结完成后重新拉取会话列表：后端在首条用户消息后自动命名会话并 bump updatedAt，
   // 不刷新则当前会话一直显示「新会话」直到页面重载
   const refreshSessions = () => {
-    void client.listStorySessions().then((r) => setSessions(r.sessions)).catch(() => {});
+    void client.listStorySessions(boardId).then((r) => setSessions(r.sessions)).catch(() => {});
   };
 
-  // 项目切换/挂载时：加载会话列表 → 无会话自动新建 → 加载当前会话历史
+  // 项目/剧本项目切换或挂载时：加载会话列表 → 无会话自动新建 → 加载当前会话历史
   useEffect(() => {
     setMsgs([]);
     setLoaded(false);
@@ -68,8 +72,8 @@ export function StoryChat(props: {
     let disposed = false;
     const load = async () => {
       try {
-        let r = await client.listStorySessions();
-        if (!r.activeId) r = await client.createStorySession();
+        let r = await client.listStorySessions(boardId);
+        if (!r.activeId) r = await client.createStorySession(boardId);
         if (disposed) return;
         setSessions(r.sessions);
         setActiveId(r.activeId);
@@ -86,7 +90,8 @@ export function StoryChat(props: {
     };
     void load();
     return () => { disposed = true; };
-  }, [props.projectName]);
+    // boardId 变化 = 切换剧本项目：整套提示词 + RAG + 会话列表一起切换
+  }, [props.projectName, boardId]);
 
   // 追加流式 chunk 到最后一条 agent 消息
   const appendStream = (chunk: string) => {
@@ -105,7 +110,7 @@ export function StoryChat(props: {
   // 新建会话：流式中禁止（busy 期间切换会打乱正在落盘/流式的会话上下文）
   const newSession = async () => {
     if (busy) return;
-    const r = await client.createStorySession().catch(() => null);
+    const r = await client.createStorySession(boardId).catch(() => null);
     if (!r) return;
     setSessions(r.sessions);
     setActiveId(r.activeId);
@@ -127,7 +132,7 @@ export function StoryChat(props: {
   const renameSession = async (s: SessionMeta) => {
     const title = window.prompt('会话标题', s.title);
     if (!title || title.trim() === '' || title === s.title) return;
-    const r = await client.renameStorySession(s.id, title.trim()).catch(() => null);
+    const r = await client.renameStorySession(s.id, title.trim(), boardId).catch(() => null);
     if (r) setSessions(r.sessions);
   };
 
@@ -135,11 +140,11 @@ export function StoryChat(props: {
   const deleteSession = async (s: SessionMeta) => {
     if (busy) return;
     if (!window.confirm(`删除会话「${s.title}」？其消息将一并删除。`)) return;
-    let r = await client.deleteStorySession(s.id).catch(() => null);
+    let r = await client.deleteStorySession(s.id, boardId).catch(() => null);
     if (!r) return;
     if (!r.activeId) {
       // 删光会话：自动新建一个空会话，避免下次发送聊进 UI 看不见的会话（后端自动创建，UI 无从得知）
-      const created = await client.createStorySession().catch(() => null);
+      const created = await client.createStorySession(boardId).catch(() => null);
       r = created ?? r;
     }
     setSessions(r.sessions);
@@ -159,7 +164,9 @@ export function StoryChat(props: {
     setBusy(true);
     setError('');
     setMsgs((m) => [...m, { who: 'user', text }]);
-    client.storyChat(text, appendStream, props.agentModel || undefined, props.thinkingLevel || undefined, undefined, activeId, resolvePrompt(props.prompts, 'storyTeller'))
+    // 剧本项目存在时：systemPrompt 交给后端从 board 解析（board.storyTeller → 全局 → 内置）
+    const sysPrompt = boardId ? undefined : resolvePrompt(props.prompts, 'storyTeller');
+    client.storyChat(text, appendStream, props.agentModel || undefined, props.thinkingLevel || undefined, undefined, activeId, sysPrompt, boardId)
       .catch(() => appendStream('\n\n（agent 连接失败）'))
       .finally(() => { setBusy(false); refreshSessions(); });
   };
@@ -175,18 +182,19 @@ export function StoryChat(props: {
     setBusy(true);
     setAction('summarize');
     setError('');
-    const prompt = withArmorBreak(
-      `${resolvePrompt(props.prompts, 'storyTeller')}\n\n${resolvePrompt(props.prompts, 'storySummarize')}`,
-      props.armorBreak,
-      props.armorBreakEnabled,
-    );
+    // 剧本项目存在：消息只带项目 storySummarize 指令（后端注入项目 storyTeller 人格 + 跳过 RAG）；
+    // 无项目（旧路径）：消息带完整 storyTeller + storySummarize，systemPrompt 由前端解析全局/内置
+    const summarizePrompt = boardId
+      ? resolveBoardPrompt(props.board, props.prompts, 'storySummarize')
+      : `${resolvePrompt(props.prompts, 'storyTeller')}\n\n${resolvePrompt(props.prompts, 'storySummarize')}`;
+    const prompt = withArmorBreak(summarizePrompt, props.armorBreak, props.armorBreakEnabled);
     let acc = '';
     setMsgs((m) => [...m, { who: 'user', text: '（请总结成稿）' }]);
     try {
       await client.storyChat(prompt, (chunk) => {
         acc += chunk;
         appendStream(chunk);
-      }, props.agentModel || undefined, props.thinkingLevel || undefined, '（请总结成稿）', activeId);
+      }, props.agentModel || undefined, props.thinkingLevel || undefined, '（请总结成稿）', activeId, undefined, boardId);
       const answers = parseStoryAnswers(acc);
       if (Object.keys(answers).length === 0) {
         setError('未识别到答案格式，请重试');

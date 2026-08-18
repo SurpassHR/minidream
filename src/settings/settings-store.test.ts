@@ -21,7 +21,7 @@ afterEach(() => {
 
 const DEFAULT_SETTINGS = {
   comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false,
-  ollamaUrl: '', ollamaModel: '',
+  ollamaUrl: '', ollamaModel: '', ollamaEmbedModel: '',
 };
 
 describe('readSettings', () => {
@@ -56,8 +56,9 @@ describe('saveSettings', () => {
   it('非字符串字段被忽略（保持现值）', () => {
     saveSettings({ comfyUrl: 'http://a' });
     // 非法类型：数字 agentModel 不生效
-    const s = saveSettings({ agentModel: 123 as never, agentThinking: 'high' });
+    const s = saveSettings({ agentModel: 123 as never, agentThinking: 'high', ollamaEmbedModel: 42 as never });
     expect(s.agentModel).toBe('');
+    expect(s.ollamaEmbedModel).toBe('');
     expect(s.agentThinking).toBe('high');
   });
 });

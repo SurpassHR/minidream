@@ -1641,6 +1641,18 @@ export function resolvePrompt(
   return prompts?.[key] || ROLE_PROMPT_KEYS[key];
 }
 
+// 项目级提示词解析（剧本项目优先）：board.systemPrompts → 全局提示词库 → 内置默认。
+// 用于 storyTeller / storySummarize 两键；objectDesigner 尚未下沉时自然落到全局/内置。
+export function resolveBoardPrompt(
+  board: { systemPrompts?: { storyTeller?: string; storySummarize?: string } } | undefined | null,
+  prompts: Record<string, string> | undefined,
+  key: RolePromptKey,
+): string {
+  const boardVal = board?.systemPrompts?.[key as 'storyTeller' | 'storySummarize'];
+  if (boardVal && boardVal.trim()) return boardVal;
+  return resolvePrompt(prompts, key);
+}
+
 // 破甲预设：开启且文本非空时，插入到 prompt 最前面（所有系统提示词之前）
 export function withArmorBreak(
   prompt: string,

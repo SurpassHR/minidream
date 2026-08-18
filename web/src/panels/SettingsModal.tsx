@@ -4,11 +4,16 @@ import type { AppSettings } from '../types';
 import { ROLE_PROMPT_KEYS, type RolePromptKey } from '../views/roles';
 
 // 角色提示词中文标签（UI 展示用；键固定唯一对应角色，名称不可编辑）
+// 提示词库已按项目下沉：storyTeller / storySummarize 移到「剧本项目」内（项目级系统提示词），
+// 全局仅保留 objectDesigner（物体设计尚未下沉时的过渡）
 const ROLE_PROMPT_LABELS: Record<RolePromptKey, string> = {
   storyTeller: '故事向导 · 对话式',
   objectDesigner: '物体设计 · AI 优化',
   storySummarize: '总结成稿指令',
 };
+
+// 全局提示词库保留的角色键：storyTeller / storySummarize 已下沉到剧本项目
+const GLOBAL_PROMPT_KEYS: RolePromptKey[] = ['objectDesigner'];
 
 // 全局设置弹窗：左侧标题导航 + 右侧配置项（master-detail）。
 // 分组：服务连接（ComfyUI / Ollama）、AI 对话（模型与思考）、内容（提示词库）。
@@ -70,6 +75,8 @@ export function SettingsModal(props: {
   // Ollama 本地视觉模型（图像转提示词）：地址 + 视觉模型名；模型列表用于下拉（datalist）
   const [ollamaUrl, setOllamaUrl] = useState(props.settings.ollamaUrl ?? '');
   const [ollamaModel, setOllamaModel] = useState(props.settings.ollamaModel ?? '');
+  // Ollama embedding 模型（项目 RAG 向量检索用）
+  const [ollamaEmbedModel, setOllamaEmbedModel] = useState(props.settings.ollamaEmbedModel ?? '');
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -82,15 +89,16 @@ export function SettingsModal(props: {
       setAgentModel(props.settings.agentModel);
       setAgentThinking(props.settings.agentThinking);
       setPromptEntries(
-        (Object.entries(ROLE_PROMPT_KEYS) as Array<[RolePromptKey, string]>).map(([key, def]) => ({
+        GLOBAL_PROMPT_KEYS.map((key) => ({
           key,
-          value: props.settings.prompts?.[key] ?? def,
+          value: props.settings.prompts?.[key] ?? ROLE_PROMPT_KEYS[key],
         })),
       );
       setArmorBreak(props.settings.armorBreak ?? '');
       setArmorBreakEnabled(props.settings.armorBreakEnabled ?? false);
       setOllamaUrl(props.settings.ollamaUrl ?? '');
       setOllamaModel(props.settings.ollamaModel ?? '');
+      setOllamaEmbedModel(props.settings.ollamaEmbedModel ?? '');
       // 打开时拉取已安装模型（datalist 数据源）；失败静默（输入框仍可手填）
       setOllamaModels([]);
       void client.listOllamaModels().then(setOllamaModels).catch(() => setOllamaModels([]));
@@ -106,16 +114,15 @@ export function SettingsModal(props: {
   const resetOne = (key: RolePromptKey) => {
     setPromptEntries((prev) => prev.map((e) => (e.key === key ? { ...e, value: ROLE_PROMPT_KEYS[key] } : e)));
   };
-  // 重置全部 3 角色条目为内置默认
+  // 重置全部角色条目为内置默认
   const resetDefaults = () => {
-    setPromptEntries(
-      (Object.entries(ROLE_PROMPT_KEYS) as Array<[RolePromptKey, string]>).map(([key, value]) => ({ key, value })),
-    );
+    setPromptEntries(GLOBAL_PROMPT_KEYS.map((key) => ({ key, value: ROLE_PROMPT_KEYS[key] })));
   };
 
   const save = () => {
     setSaving(true);
-    // 组装 prompts map：固定 3 角色键（键名恒有效）；空内容保留（消费点回退默认）
+    // 组装 prompts map：全局仅保留 objectDesigner 键（storyTeller/storySummarize 已在项目级）；
+    // 空内容保留（消费点回退默认）
     const prompts: Record<string, string> = {};
     for (const e of promptEntries) {
       prompts[e.key] = e.value;
@@ -129,6 +136,7 @@ export function SettingsModal(props: {
       armorBreakEnabled,
       ollamaUrl: ollamaUrl.trim(),
       ollamaModel: ollamaModel.trim(),
+      ollamaEmbedModel: ollamaEmbedModel.trim(),
     }).then((s) => {
       props.onSaved(s);
       props.onClose();
@@ -216,6 +224,16 @@ export function SettingsModal(props: {
                 </datalist>
                 <span className="role-field-hint">支持图像的本地视觉模型（可从已安装模型下拉选择，或手动填写）</span>
               </label>
+              <label className="role-field">
+                <span className="role-field-label">Embedding 模型（RAG 知识库检索）</span>
+                <input
+                  className="ne-input" data-testid="ollama-embed-model"
+                  list="ollama-models" placeholder="nomic-embed-text / bge-m3…"
+                  value={ollamaEmbedModel}
+                  onChange={(e) => setOllamaEmbedModel(e.target.value)}
+                />
+                <span className="role-field-hint">剧本项目的 RAG 向量检索用；未配置时知识库检索自动降级（对话不受影响）</span>
+              </label>
             </section>
 
             {/* —— 模型与思考 —— */}
@@ -258,8 +276,8 @@ export function SettingsModal(props: {
             <section className={`settings-sec${activeSec === 'prompts' ? ' active' : ''}`} data-testid="sec-prompts">
               <div className="settings-sec-head">
                 <div className="sec-eyebrow">Prompts · 04</div>
-                <div className="sec-title">提示词库 · 角色系统提示词</div>
-                <div className="sec-desc">故事对话 / 物体优化 / 总结成稿按名称引用；删除或留空该条目即回退内置默认；改名角色条目将不再被 AI 功能按名引用</div>
+                <div className="sec-title">提示词库 · 全局角色提示词</div>
+                <div className="sec-desc">storyTeller / storySummarize 已下沉到「剧本项目」的项目级系统提示词（每个项目完全自定义）；此处仅保留全局 objectDesigner。留空即回退内置默认</div>
               </div>
               <div className="armor-break">
                 <label className="armor-break-head">

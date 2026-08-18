@@ -122,4 +122,26 @@ export interface AppSettings {
   // Ollama 本地视觉模型（图像转提示词）：地址 + 视觉模型名；空 = 未配置
   ollamaUrl?: string;
   ollamaModel?: string;
+  // Ollama embedding 模型（项目 RAG 向量检索）；空 = 未配置
+  ollamaEmbedModel?: string;
+}
+
+// 剧本项目（Story Board）：项目容器 = 项目级系统提示词 + RAG 知识库
+// （镜像后端 src/story/boards-store.ts）；systemPrompts 键未定义/空 = 回退内置默认
+export interface StoryBoard {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  systemPrompts: { storyTeller?: string; storySummarize?: string };
+  ragEnabled: boolean;
+  ragAssets: string[]; // 素材库 txt 资产 id
+}
+
+// RAG 检索命中片段（镜像后端 src/story/rag.ts）
+export interface RagHit {
+  assetId: string;
+  name: string;
+  text: string;
+  score: number;
 }

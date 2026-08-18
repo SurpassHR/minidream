@@ -30,6 +30,11 @@ import {
   appendStoryChat, createStorySession, deleteStorySession,
   listStorySessions, readStoryChat, renameStorySession,
 } from '../story/chat-store.js';
+import {
+  addBoardRagAsset, createBoard, deleteBoard, findBoard, listBoards,
+  removeBoardRagAsset, renameBoard, saveBoardPrompts, setBoardRagEnabled,
+} from '../story/boards-store.js';
+import { formatRagHits, ragSearch } from '../story/rag.js';
 import { listDesigns, createDesign, updateDesign, deleteDesign } from '../design/store.js';
 import { readSettings, saveSettings } from '../settings/settings-store.js';
 import type { DesignKind, DesignObject } from '../design/store.js';
@@ -90,9 +95,12 @@ export function buildStoryChatPrompt(
   history: ChatMessage[],
   message: string,
   systemPrompt?: string,
+  ragContext?: string,
 ): string {
   const parts: string[] = [];
   parts.push(systemPrompt?.trim() || '你是导演工作台的故事编剧（story-teller 对话模式）。你正在帮用户自由构思一个视频故事的创意。');
+  // 项目 RAG 命中片段：紧跟系统提示词注入，让模型优先依据知识库作答
+  if (ragContext?.trim()) parts.push('\n' + ragContext.trim());
   parts.push('要求：');
   parts.push('1. 直接给出创作建议、扩展点子或追问，像资深编剧与导演讨论剧本一样自然；');
   parts.push('2. 结合项目设定与已有向导进度，不要重复用户已写的内容；');
@@ -371,7 +379,7 @@ export function mountRoutes(
       comfyUrl?: string; agentModel?: string; agentThinking?: string;
       prompts?: Record<string, string>;
       armorBreak?: string; armorBreakEnabled?: boolean;
-      ollamaUrl?: string; ollamaModel?: string;
+      ollamaUrl?: string; ollamaModel?: string; ollamaEmbedModel?: string;
     };
     const settings = saveSettings({
       comfyUrl: typeof body.comfyUrl === 'string' ? body.comfyUrl : undefined,
@@ -382,6 +390,7 @@ export function mountRoutes(
       armorBreakEnabled: typeof body.armorBreakEnabled === 'boolean' ? body.armorBreakEnabled : undefined,
       ollamaUrl: typeof body.ollamaUrl === 'string' ? body.ollamaUrl : undefined,
       ollamaModel: typeof body.ollamaModel === 'string' ? body.ollamaModel : undefined,
+      ollamaEmbedModel: typeof body.ollamaEmbedModel === 'string' ? body.ollamaEmbedModel : undefined,
     });
     // ComfyUI 地址变化 → 写回当前项目节点 + 热切换（复用 comfy/config 行为）
     if (settings.comfyUrl) {
@@ -550,24 +559,88 @@ app.post('/api/story/reset', async () => {
   return { story: resetStory(ctx.projectDir) };
 });
 
+// —— 剧本项目（Story Boards）：项目容器 = 项目级系统提示词 + RAG 知识库 ——
+// 空库自动落「未命名项目」默认板；boardId 不存在时相关接口抛 BOARD_NOT_FOUND
+app.get('/api/story/boards', async () => ({ boards: listBoards(ctx.projectDir) }));
+app.post('/api/story/boards', async (req) => {
+  const body = req.body as { name?: string };
+  createBoard(ctx.projectDir, body.name ?? '');
+  return { boards: listBoards(ctx.projectDir) };
+});
+app.patch('/api/story/boards/:id', async (req) => {
+  const { id } = req.params as { id: string };
+  const body = req.body as { name?: string };
+  renameBoard(ctx.projectDir, id, body.name ?? '');
+  return { boards: listBoards(ctx.projectDir) };
+});
+app.delete('/api/story/boards/:id', async (req) => {
+  const { id } = req.params as { id: string };
+  deleteBoard(ctx.projectDir, id);
+  return { boards: listBoards(ctx.projectDir) };
+});
+
+// 项目级系统提示词（整体替换传入键；键未传 = 清空回退内置默认）
+app.put('/api/story/boards/:id/system-prompts', async (req) => {
+  const { id } = req.params as { id: string };
+  const body = req.body as { storyTeller?: string; storySummarize?: string };
+  const board = saveBoardPrompts(ctx.projectDir, id, {
+    storyTeller: body.storyTeller ?? '',
+    storySummarize: body.storySummarize ?? '',
+  });
+  return { board };
+});
+
+// RAG：开关 / 添加素材（asset id，txt 文本）/ 移除
+app.post('/api/story/boards/:id/rag/toggle', async (req) => {
+  const { id } = req.params as { id: string };
+  const body = req.body as { enabled?: boolean };
+  return { board: setBoardRagEnabled(ctx.projectDir, id, body.enabled === true) };
+});
+app.post('/api/story/boards/:id/rag/assets', async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const body = req.body as { assetId?: string };
+  if (!body.assetId) {
+    return reply.code(400).send({ code: 'INVALID_PATCH', message: '缺少 assetId' });
+  }
+  return { board: addBoardRagAsset(ctx.projectDir, id, body.assetId) };
+});
+app.delete('/api/story/boards/:id/rag/assets/:assetId', async (req) => {
+  const { id, assetId } = req.params as { id: string; assetId: string };
+  return { board: removeBoardRagAsset(ctx.projectDir, id, assetId) };
+});
+
+// RAG 检索预览：返回命中片段（真实链路 = 分块 + Ollama embedding + 余弦 top-k）
+app.post('/api/story/boards/:id/rag/search', async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const body = req.body as { query?: string; topK?: number };
+  const board = findBoard(ctx.projectDir, id);
+  if (!board) return reply.code(404).send({ code: 'BOARD_NOT_FOUND', message: '剧本项目不存在' });
+  const r = await ragSearch(ctx.projectDir, board, body.query ?? '', body.topK ?? 3);
+  return r;
+});
+
 // —— 故事向导对话式（story-chat）——
 // 历史独立存 .director/story-chat.json（与 AGENT 面板 chat.json 隔离）
-// —— STORY 会话（多会话：列表/新建/重命名/删除；历史按会话作用域）——
-app.get('/api/story/chat/sessions', async () => listStorySessions(ctx.projectDir));
-app.post('/api/story/chat/sessions', async () => {
-  createStorySession(ctx.projectDir);
-  return listStorySessions(ctx.projectDir);
+// —— STORY 会话（多会话：列表/新建/重命名/删除；历史按会话作用域；boardId 归组）——
+app.get('/api/story/chat/sessions', async (req) => {
+  const { boardId } = req.query as { boardId?: string };
+  return listStorySessions(ctx.projectDir, boardId ?? null);
+});
+app.post('/api/story/chat/sessions', async (req) => {
+  const body = req.body as { boardId?: string };
+  createStorySession(ctx.projectDir, body.boardId ?? null);
+  return listStorySessions(ctx.projectDir, body.boardId ?? null);
 });
 app.patch('/api/story/chat/sessions/:id', async (req) => {
   const { id } = req.params as { id: string };
   const body = req.body as { title?: string };
   renameStorySession(ctx.projectDir, id, body.title ?? '');
-  return listStorySessions(ctx.projectDir);
+  return listStorySessions(ctx.projectDir, (req.query as { boardId?: string }).boardId ?? null);
 });
 app.delete('/api/story/chat/sessions/:id', async (req) => {
   const { id } = req.params as { id: string };
   deleteStorySession(ctx.projectDir, id);
-  return listStorySessions(ctx.projectDir);
+  return listStorySessions(ctx.projectDir, (req.query as { boardId?: string }).boardId ?? null);
 });
 
 app.get('/api/story/chat/history', async (req) => {
@@ -576,17 +649,27 @@ app.get('/api/story/chat/history', async (req) => {
 });
 
 app.post('/api/story/chat', async (req, reply) => {
-  const body = req.body as { message?: string; model?: string; thinking?: string; persistAs?: string; sessionId?: string; systemPrompt?: string };
+  const body = req.body as { message?: string; model?: string; thinking?: string; persistAs?: string; sessionId?: string; systemPrompt?: string; boardId?: string };
   const message = (body.message ?? '').trim();
   if (!message) {
     return reply.code(400).send({ code: 'INVALID_PATCH', message: '消息不能为空' });
   }
-  // 组装对话上下文：项目名 + 向导答案 + 最近历史（全上下文）
+  // 组装对话上下文：项目名 + 向导答案 + 最近历史 + （可选）剧本项目提示词与 RAG 命中
   const graph = loadGraph(ctx.projectDir);
   const story = readStory(ctx.projectDir);
   const sessionId = body.sessionId ?? null;
   const history = readStoryChat(ctx.projectDir, sessionId);
-  const prompt = buildStoryChatPrompt(graph.projectName, story.answers, history, message, body.systemPrompt);
+  // 剧本项目：boardId 存在 → 项目级提示词（systemPrompt 缺省时回退）+ RAG 检索注入
+  const board = body.boardId ? findBoard(ctx.projectDir, body.boardId) : undefined;
+  const boardPrompt = board?.systemPrompts.storyTeller?.trim();
+  const effectiveSystem = body.systemPrompt?.trim() || boardPrompt || undefined;
+  // 系统动作（总结成稿等 persistAs 标记）不做 RAG 检索：查询是长指令，命中无意义
+  let ragContext = '';
+  if (board?.ragEnabled && board.ragAssets.length > 0 && !body.persistAs) {
+    const r = await ragSearch(ctx.projectDir, board, message, 3);
+    if (r.status === 'ok' && r.hits.length > 0) ragContext = formatRagHits(r.hits);
+  }
+  const prompt = buildStoryChatPrompt(graph.projectName, story.answers, history, message, effectiveSystem, ragContext);
 
   const cmd = (process.env.DIRECTOR_PI_CMD ?? 'pi --mode json').split(' ').filter(Boolean);
   if (!process.env.DIRECTOR_PI_CMD) {
@@ -608,7 +691,8 @@ app.post('/api/story/chat', async (req, reply) => {
   // 用户消息先落盘（不依赖 pi 是否正常退出）；agent 全文在流结束后落盘。
   // persistAs：系统动作（总结成稿/回填向导）的落盘标记——message 是长指令 prompt，
   // 若原文落盘会快速消耗 100 条历史上限并污染下次对话的 20 条上下文窗口。
-  appendStoryChat(ctx.projectDir, sessionId, 'user', body.persistAs ?? message);
+  // boardId：自动创建会话时归组到剧本项目
+  appendStoryChat(ctx.projectDir, sessionId, 'user', body.persistAs ?? message, body.boardId ?? null);
   let agentText = '';
   let pending = '';
   let flushTimer: NodeJS.Timeout | null = null;
@@ -660,7 +744,7 @@ app.post('/api/story/chat', async (req, reply) => {
       },
     });
     flushPending();
-    appendStoryChat(ctx.projectDir, sessionId, 'agent', agentText);
+    appendStoryChat(ctx.projectDir, sessionId, 'agent', agentText, body.boardId ?? null);
     if (idleKilled) send('\n\n（输出已空闲停止）');
     else if (agentText.trim().length === 0) {
       send(modelError ? `\n\n（模型调用失败：${modelError}）` : '\n\n（输出为空）');
@@ -1023,7 +1107,7 @@ app.get('/api/assets/:id/file', async (req, reply) => {
       const status = err.code === 'CONFIRM_REQUIRED' ? 400
         : err.code === 'SNAPSHOT_FUTURE_EXISTS' ? 409
         : err.code === 'STORY_ALREADY_COMPLETED' ? 409
-        : err.code === 'NODE_NOT_FOUND' || err.code === 'EDGE_NOT_FOUND' || err.code === 'SESSION_NOT_FOUND' ? 404
+        : err.code === 'NODE_NOT_FOUND' || err.code === 'EDGE_NOT_FOUND' || err.code === 'SESSION_NOT_FOUND' || err.code === 'BOARD_NOT_FOUND' ? 404
         : 400;
       reply.code(status).send({ code: err.code, message: err.message });
       return;

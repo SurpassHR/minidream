@@ -1,10 +1,11 @@
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../index.js';
-import { listAssets } from '../assets/assets-store.js';
+import { listAssets, importAssetText } from '../assets/assets-store.js';
 import { readStory } from '../story/store.js';
+import { saveSettings } from '../settings/settings-store.js';
 
 let dir: string;
 let a: Awaited<ReturnType<typeof buildApp>>;
@@ -262,7 +263,7 @@ describe('API 全局设置', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().settings).toEqual({
       comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false,
-      ollamaUrl: '', ollamaModel: '',
+      ollamaUrl: '', ollamaModel: '', ollamaEmbedModel: '',
     });
   });
 
@@ -324,5 +325,114 @@ describe('buildStoryChatPrompt 纯函数', () => {
     // 空白 systemPrompt 视为缺省
     const blank = buildStoryChatPrompt('p', {}, [], '你好', '   ');
     expect(blank).toContain('你是导演工作台的故事编剧');
+    // ragContext 注入：紧跟系统提示词
+    const withRag = buildStoryChatPrompt('p', {}, [], '你好', undefined, '知识库检索（RAG）命中：- [设定.md] xxx');
+    expect(withRag).toContain('知识库检索（RAG）命中');
+  });
+});
+
+describe('API 剧本项目（boards：项目级提示词 + RAG）', () => {
+  it('GET /api/story/boards 空库自动落默认板', async () => {
+    const res = await a.inject({ method: 'GET', url: '/api/story/boards' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().boards).toHaveLength(1);
+    expect(res.json().boards[0].name).toBe('未命名项目');
+  });
+
+  it('创建 / 重命名 / 保存提示词 / RAG 开关与资产 / 删除', async () => {
+    const created = await a.inject({ method: 'POST', url: '/api/story/boards', payload: { name: '星尘历险记' } });
+    const board = created.json().boards.find((b: { name: string }) => b.name === '星尘历险记');
+    expect(board).toBeTruthy();
+    const id = board.id;
+    const renamed = await a.inject({ method: 'PATCH', url: `/api/story/boards/${id}`, payload: { name: '星尘 v2' } });
+    expect(renamed.json().boards.find((b: { id: string }) => b.id === id).name).toBe('星尘 v2');
+    // 项目级系统提示词（整体替换，空键清空）
+    const prompts = await a.inject({
+      method: 'PUT', url: `/api/story/boards/${id}/system-prompts`,
+      payload: { storyTeller: '你是星尘历险记的专属编剧', storySummarize: '' },
+    });
+    expect(prompts.json().board.systemPrompts).toEqual({ storyTeller: '你是星尘历险记的专属编剧' });
+    // RAG 开关 + 添加资产（txt 素材）
+    const asset = importAssetText('故事设定', '星尘历险记世界观：2890 年，人类殖民 12 个星系。');
+    const on = await a.inject({ method: 'POST', url: `/api/story/boards/${id}/rag/toggle`, payload: { enabled: true } });
+    expect(on.json().board.ragEnabled).toBe(true);
+    const added = await a.inject({ method: 'POST', url: `/api/story/boards/${id}/rag/assets`, payload: { assetId: asset.id } });
+    expect(added.json().board.ragAssets).toContain(asset.id);
+    const removed = await a.inject({ method: 'DELETE', url: `/api/story/boards/${id}/rag/assets/${asset.id}` });
+    expect(removed.json().board.ragAssets).toEqual([]);
+    const del = await a.inject({ method: 'DELETE', url: `/api/story/boards/${id}` });
+    expect(del.json().boards.find((b: { id: string }) => b.id === id)).toBeUndefined();
+  });
+
+  it('RAG 检索：未配置 Ollama 返回 unconfigured（优雅降级）', async () => {
+    const boards = (await a.inject({ method: 'GET', url: '/api/story/boards' })).json().boards;
+    const res = await a.inject({
+      method: 'POST', url: `/api/story/boards/${boards[0].id}/rag/search`,
+      payload: { query: '世界观是什么', topK: 2 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().status).toBe('unconfigured');
+    expect(res.json().hits).toEqual([]);
+  });
+
+  it('RAG 检索：Ollama embedding 命中片段（mock /api/embed）', async () => {
+    saveSettings({ ollamaUrl: 'http://127.0.0.1:59999', ollamaEmbedModel: 'nomic-embed-text' });
+    const asset = importAssetText('设定.md', '第一段：星尘历险记发生在 2890 年，人类殖民 12 个星系，主角是失忆的星图测绘员。'.repeat(10) + '\n\n' + '第二段：空间站回声是叛军母港，主角在废弃空间站醒来。'.repeat(10));
+    const boards = (await a.inject({ method: 'GET', url: '/api/story/boards' })).json().boards;
+    const id = boards[0].id;
+    await a.inject({ method: 'POST', url: `/api/story/boards/${id}/rag/toggle`, payload: { enabled: true } });
+    await a.inject({ method: 'POST', url: `/api/story/boards/${id}/rag/assets`, payload: { assetId: asset.id } });
+    // mock Ollama /api/embed：全部返回同一向量（余弦=1）→ 验证分块/注入链路
+    const embedFetch = vi.fn(async (url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { input?: string[] };
+      const input = body.input ?? [];
+      return new Response(JSON.stringify({ embeddings: input.map(() => [0.1, 0.2, 0.3]) }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', embedFetch);
+    try {
+      const res = await a.inject({
+        method: 'POST', url: `/api/story/boards/${id}/rag/search`,
+        payload: { query: '叛军母港', topK: 2 },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().status).toBe('ok');
+      expect(res.json().hits).toHaveLength(2);
+      expect(res.json().hits[0].name).toBe('设定.md');
+      expect(res.json().hits[0].text).toContain('2890');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('story chat 带 boardId：项目提示词回退 + 会话归组', async () => {
+    const boards = (await a.inject({ method: 'GET', url: '/api/story/boards' })).json().boards;
+    const id = boards[0].id;
+    await a.inject({ method: 'PUT', url: `/api/story/boards/${id}/system-prompts`, payload: { storyTeller: '你是项目专属编剧', storySummarize: '' } });
+    const s = await a.inject({ method: 'POST', url: '/api/story/chat/sessions', payload: { boardId: id } });
+    const sid = s.json().activeId;
+    // mock agent（同既有会话隔离测试）：项目提示词注入由后端完成
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_REPLY', '按项目设定创作');
+    try {
+      const chat = await a.inject({
+        method: 'POST', url: '/api/story/chat',
+        payload: { message: '帮我写开篇', boardId: id, sessionId: sid },
+      });
+      expect(chat.statusCode).toBe(200);
+      // 会话列表按 boardId 过滤：归组会话可见；未归组会话（无 boardId）不可见
+      const plain = await a.inject({ method: 'POST', url: '/api/story/chat/sessions', payload: {} });
+      const plainId = plain.json().activeId;
+      const list = await a.inject({ method: 'GET', url: `/api/story/chat/sessions?boardId=${id}` });
+      expect(list.json().sessions.map((x: { id: string }) => x.id)).toContain(sid);
+      expect(list.json().sessions.map((x: { id: string }) => x.id)).not.toContain(plainId);
+      // 无 boardId = 全量视图（旧客户端兼容）：两者都在
+      const all = await a.inject({ method: 'GET', url: '/api/story/chat/sessions' });
+      expect(all.json().sessions.map((x: { id: string }) => x.id)).toEqual(
+        expect.arrayContaining([sid, plainId]),
+      );
+    } finally {
+      delete process.env.DIRECTOR_PI_CMD;
+      delete process.env.MOCK_REPLY;
+    }
   });
 });

@@ -15,11 +15,12 @@ export interface AppSettings {
   armorBreakEnabled: boolean;  // 破甲全局开关
   ollamaUrl: string;     // Ollama 地址（http://...；空串 = 未配置）
   ollamaModel: string;   // Ollama 本地视觉模型名（图像转提示词用；空串 = 未配置）
+  ollamaEmbedModel: string; // Ollama embedding 模型名（项目 RAG 向量检索用；空串 = 未配置）
 }
 
 const DEFAULTS: AppSettings = {
   comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false,
-  ollamaUrl: '', ollamaModel: '',
+  ollamaUrl: '', ollamaModel: '', ollamaEmbedModel: '',
 };
 
 function settingsFile(): string {
@@ -50,6 +51,7 @@ export function readSettings(): AppSettings {
       armorBreakEnabled: typeof data.armorBreakEnabled === 'boolean' ? data.armorBreakEnabled : DEFAULTS.armorBreakEnabled,
       ollamaUrl: typeof data.ollamaUrl === 'string' ? data.ollamaUrl : DEFAULTS.ollamaUrl,
       ollamaModel: typeof data.ollamaModel === 'string' ? data.ollamaModel : DEFAULTS.ollamaModel,
+      ollamaEmbedModel: typeof data.ollamaEmbedModel === 'string' ? data.ollamaEmbedModel : DEFAULTS.ollamaEmbedModel,
     };
     // 键缺失（undefined）= 从未自定义，保持 out 无 prompts 键；
     // 已存在（含 {}）= 已保存过，原样过滤返回（删除的条目不复活）
@@ -74,6 +76,7 @@ export function saveSettings(patch: Partial<AppSettings>): AppSettings {
     armorBreakEnabled: typeof patch.armorBreakEnabled === 'boolean' ? patch.armorBreakEnabled : current.armorBreakEnabled,
     ollamaUrl: typeof patch.ollamaUrl === 'string' ? patch.ollamaUrl : current.ollamaUrl,
     ollamaModel: typeof patch.ollamaModel === 'string' ? patch.ollamaModel : current.ollamaModel,
+    ollamaEmbedModel: typeof patch.ollamaEmbedModel === 'string' ? patch.ollamaEmbedModel : current.ollamaEmbedModel,
   };
   if (patch.prompts !== undefined) {
     next.prompts = (typeof patch.prompts === 'object' && patch.prompts !== null && !Array.isArray(patch.prompts))

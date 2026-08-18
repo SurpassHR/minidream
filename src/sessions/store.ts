@@ -6,7 +6,11 @@ import { dirname } from 'node:path';
 import { DirectorError } from '../types.js';
 
 export interface ChatMessage { who: 'user' | 'agent'; text: string; at: number }
-export interface ChatSession { id: string; title: string; createdAt: number; updatedAt: number; messages: ChatMessage[] }
+export interface ChatSession {
+  id: string; title: string; createdAt: number; updatedAt: number; messages: ChatMessage[];
+  // 会话归属（故事向导剧本项目用；AGENT 面板与旧数据无此字段 = 未归组）
+  boardId?: string;
+}
 export interface SessionFile { sessions: ChatSession[]; activeId: string | null }
 export interface SessionMeta { id: string; title: string; createdAt: number; updatedAt: number }
 
@@ -49,6 +53,7 @@ export function readSessions(file: string): SessionFile {
         createdAt: typeof s.createdAt === 'number' ? s.createdAt : Date.now(),
         updatedAt: typeof s.updatedAt === 'number' ? s.updatedAt : Date.now(),
         messages: Array.isArray(s.messages) ? s.messages : [],
+        boardId: typeof s.boardId === 'string' ? s.boardId : undefined,
       })),
       activeId: typeof data.activeId === 'string' ? data.activeId : null,
     };
@@ -65,10 +70,14 @@ function writeSessions(file: string, f: SessionFile): SessionFile {
   return f;
 }
 
-export function sessionList(file: string): { sessions: SessionMeta[]; activeId: string | null } {
+// 会话列表；boardId 缺省 = 全部（AGENT 面板/旧数据兼容），传值 = 仅该归组的会话
+export function sessionList(file: string, boardId?: string | null): { sessions: SessionMeta[]; activeId: string | null } {
   const f = readSessions(file);
+  const sessions = boardId
+    ? f.sessions.filter((s) => s.boardId === boardId)
+    : f.sessions;
   return {
-    sessions: f.sessions.map((s) => ({ id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt })),
+    sessions: sessions.map((s) => ({ id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt })),
     activeId: f.activeId,
   };
 }
@@ -79,10 +88,10 @@ export function activeMessages(file: string, sessionId?: string | null): ChatMes
   return f.sessions.find((s) => s.id === id)?.messages ?? [];
 }
 
-export function createSession(file: string): SessionFile {
+export function createSession(file: string, boardId?: string | null): SessionFile {
   const f = readSessions(file);
   const now = Date.now();
-  const s: ChatSession = { id: newId(), title: '新会话', createdAt: now, updatedAt: now, messages: [] };
+  const s: ChatSession = { id: newId(), title: '新会话', createdAt: now, updatedAt: now, messages: [], boardId: boardId ?? undefined };
   f.sessions.push(s);
   f.activeId = s.id;
   return writeSessions(file, f);
@@ -116,6 +125,7 @@ export function appendMessage(
   who: ChatMessage['who'],
   text: string,
   maxMessages: number,
+  boardId?: string | null,
 ): SessionFile {
   const trimmed = text.trim();
   if (!trimmed) return readSessions(file);
@@ -127,9 +137,9 @@ export function appendMessage(
     s = f.sessions.find((x) => x.id === f.activeId);
   }
   if (!s) {
-    // 无会话自动创建：标题 = 首条用户消息截断 20 字
+    // 无会话自动创建：标题 = 首条用户消息截断 20 字；归组到 boardId（无则未归组）
     const now = Date.now();
-    s = { id: newId(), title: who === 'user' ? trimTitle(trimmed) : '新会话', createdAt: now, updatedAt: now, messages: [] };
+    s = { id: newId(), title: who === 'user' ? trimTitle(trimmed) : '新会话', createdAt: now, updatedAt: now, messages: [], boardId: boardId ?? undefined };
     f.sessions.push(s);
     f.activeId = s.id;
   }

@@ -1,6 +1,6 @@
 import type {
   DirectorEdge, DirectorNode, EdgeKind, GenTask, Graph, NodeType, ProjectInfo, SnapshotMeta,
-  StoryProgress, AssetRecord, DesignKind, DesignObject, AppSettings, SessionMeta,
+  StoryProgress, AssetRecord, DesignKind, DesignObject, AppSettings, SessionMeta, StoryBoard, RagHit,
 } from '../types';
 
 class ApiError extends Error {
@@ -377,25 +377,83 @@ export const client = {
     return r.messages ?? [];
   },
 
-  // —— 故事对话式会话（多会话 CRUD；全部返回列表 + activeId）——
-  async listStorySessions(): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
-    const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>('/api/story/chat/sessions');
+  // —— 剧本项目（boards：项目级系统提示词 + RAG）——
+  async listStoryBoards(): Promise<StoryBoard[]> {
+    const r = await req<{ boards: StoryBoard[] }>('/api/story/boards');
+    return r.boards;
+  },
+  async createStoryBoard(name: string): Promise<StoryBoard[]> {
+    const r = await req<{ boards: StoryBoard[] }>('/api/story/boards', {
+      method: 'POST', body: JSON.stringify({ name }),
+    });
+    return r.boards;
+  },
+  async renameStoryBoard(id: string, name: string): Promise<StoryBoard[]> {
+    const r = await req<{ boards: StoryBoard[] }>(`/api/story/boards/${id}`, {
+      method: 'PATCH', body: JSON.stringify({ name }),
+    });
+    return r.boards;
+  },
+  async deleteStoryBoard(id: string): Promise<StoryBoard[]> {
+    const r = await req<{ boards: StoryBoard[] }>(`/api/story/boards/${id}`, {
+      method: 'DELETE', body: JSON.stringify({}),
+    });
+    return r.boards;
+  },
+  // 项目级系统提示词：整体替换传入键（键未传 = 清空回退内置默认）
+  async saveBoardPrompts(id: string, prompts: { storyTeller?: string; storySummarize?: string }): Promise<StoryBoard> {
+    const r = await req<{ board: StoryBoard }>(`/api/story/boards/${id}/system-prompts`, {
+      method: 'PUT', body: JSON.stringify(prompts),
+    });
+    return r.board;
+  },
+  async setBoardRagEnabled(id: string, enabled: boolean): Promise<StoryBoard> {
+    const r = await req<{ board: StoryBoard }>(`/api/story/boards/${id}/rag/toggle`, {
+      method: 'POST', body: JSON.stringify({ enabled }),
+    });
+    return r.board;
+  },
+  async addBoardRagAsset(id: string, assetId: string): Promise<StoryBoard> {
+    const r = await req<{ board: StoryBoard }>(`/api/story/boards/${id}/rag/assets`, {
+      method: 'POST', body: JSON.stringify({ assetId }),
+    });
+    return r.board;
+  },
+  async removeBoardRagAsset(id: string, assetId: string): Promise<StoryBoard> {
+    const r = await req<{ board: StoryBoard }>(`/api/story/boards/${id}/rag/assets/${assetId}`, {
+      method: 'DELETE', body: JSON.stringify({}),
+    });
+    return r.board;
+  },
+  // RAG 检索预览（分块 + embedding + 余弦 top-k）
+  async ragSearch(id: string, query: string, topK = 3): Promise<{ hits: RagHit[]; status: 'ok' | 'unconfigured' | 'error'; error?: string }> {
+    return await req<{ hits: RagHit[]; status: 'ok' | 'unconfigured' | 'error'; error?: string }>(`/api/story/boards/${id}/rag/search`, {
+      method: 'POST', body: JSON.stringify({ query, topK }),
+    });
+  },
+
+  // —— 故事对话式会话（多会话 CRUD；全部返回列表 + activeId；boardId 归组过滤）——
+  async listStorySessions(boardId?: string | null): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
+    const q = boardId ? `?boardId=${encodeURIComponent(boardId)}` : '';
+    const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>(`/api/story/chat/sessions${q}`);
     return r;
   },
-  async createStorySession(): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
+  async createStorySession(boardId?: string | null): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
     const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>('/api/story/chat/sessions', {
-      method: 'POST', body: JSON.stringify({}),
+      method: 'POST', body: JSON.stringify({ boardId: boardId ?? undefined }),
     });
     return r;
   },
-  async renameStorySession(id: string, title: string): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
-    const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>(`/api/story/chat/sessions/${id}`, {
+  async renameStorySession(id: string, title: string, boardId?: string | null): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
+    const q = boardId ? `?boardId=${encodeURIComponent(boardId)}` : '';
+    const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>(`/api/story/chat/sessions/${id}${q}`, {
       method: 'PATCH', body: JSON.stringify({ title }),
     });
     return r;
   },
-  async deleteStorySession(id: string): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
-    const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>(`/api/story/chat/sessions/${id}`, {
+  async deleteStorySession(id: string, boardId?: string | null): Promise<{ sessions: SessionMeta[]; activeId: string | null }> {
+    const q = boardId ? `?boardId=${encodeURIComponent(boardId)}` : '';
+    const r = await req<{ sessions: SessionMeta[]; activeId: string | null }>(`/api/story/chat/sessions/${id}${q}`, {
       method: 'DELETE', body: JSON.stringify({}),
     });
     return r;
@@ -412,11 +470,12 @@ export const client = {
     persistAs?: string,
     sessionId?: string | null,
     systemPrompt?: string,
+    boardId?: string | null,
   ): Promise<void> {
     const res = await fetch('/api/story/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message, model, thinking, persistAs, sessionId: sessionId ?? undefined, systemPrompt: systemPrompt ?? undefined }),
+      body: JSON.stringify({ message, model, thinking, persistAs, sessionId: sessionId ?? undefined, systemPrompt: systemPrompt ?? undefined, boardId: boardId ?? undefined }),
     });
     if (!res.ok || !res.body) throw new Error(`story chat 请求失败: ${res.status}`);
     const reader = res.body.getReader();
