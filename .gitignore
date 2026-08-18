@@ -5,3 +5,4 @@ dist/
 *.tsbuildinfo
 .codegraph/
 output/
+.superpowers/
