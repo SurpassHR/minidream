@@ -17,6 +17,7 @@ import { graphToPromptYaml } from '../prompt/export.js';
 import { GenerationQueue } from '../generation/queue.js';
 import { ComfyUIClient } from '../comfy/client.js';
 import { listAssets, importAssetFile, importAssetText, deleteAsset, readAssetText, assetFilePath } from '../assets/assets-store.js';
+import { OllamaClient } from '../ollama/client.js';
 import { buildWorkflow } from '../comfy/workflow.js';
 import { buildAgentPrompt, runAgentCollect, runAgentStream } from '../agent/bridge.js';
 import {
@@ -370,6 +371,7 @@ export function mountRoutes(
       comfyUrl?: string; agentModel?: string; agentThinking?: string;
       prompts?: Record<string, string>;
       armorBreak?: string; armorBreakEnabled?: boolean;
+      ollamaUrl?: string; ollamaModel?: string;
     };
     const settings = saveSettings({
       comfyUrl: typeof body.comfyUrl === 'string' ? body.comfyUrl : undefined,
@@ -378,6 +380,8 @@ export function mountRoutes(
       prompts: body.prompts,
       armorBreak: typeof body.armorBreak === 'string' ? body.armorBreak : undefined,
       armorBreakEnabled: typeof body.armorBreakEnabled === 'boolean' ? body.armorBreakEnabled : undefined,
+      ollamaUrl: typeof body.ollamaUrl === 'string' ? body.ollamaUrl : undefined,
+      ollamaModel: typeof body.ollamaModel === 'string' ? body.ollamaModel : undefined,
     });
     // ComfyUI 地址变化 → 写回当前项目节点 + 热切换（复用 comfy/config 行为）
     if (settings.comfyUrl) {
@@ -808,6 +812,52 @@ app.post('/api/designs/:id/generate', async (req, reply) => {
     const message = err instanceof Error ? err.message : String(err);
     const designFailed = updateDesign(ctx.projectDir, id, { status: 'failed', error: message });
     return { design: designFailed };
+  }
+});
+
+// —— Ollama 本地视觉模型：图像 → 提示词（物体设计器「🪄 图像转描述」）——
+// 配置（地址 + 视觉模型）在全局设置 settings.json；模型列表供设置面板下拉
+app.get('/api/ollama/models', async () => {
+  const { ollamaUrl } = readSettings();
+  if (!ollamaUrl) return { models: [] };
+  try {
+    return { models: await new OllamaClient(ollamaUrl).listModels() };
+  } catch {
+    // Ollama 未启动/不可达：返回空列表，设置面板不报错（保存后再拉取）
+    return { models: [] };
+  }
+});
+
+// 图像转提示词：指定素材库图片（assetId）→ base64 → Ollama 视觉模型 → 外观描述文本
+app.post('/api/ollama/image-to-prompt', async (req, reply) => {
+  const body = req.body as { assetId?: string; instruction?: string };
+  const assetId = (body.assetId ?? '').trim();
+  if (!assetId) {
+    return reply.code(400).send({ code: 'INVALID_PATCH', message: '缺少 assetId' });
+  }
+  // 素材必须是图片（assetFilePath 对未知 id 抛 NODE_NOT_FOUND）
+  const asset = listAssets().find((x) => x.id === assetId);
+  if (!asset) {
+    return reply.code(404).send({ code: 'NODE_NOT_FOUND', message: `素材不存在: ${assetId}` });
+  }
+  if (asset.kind !== 'img') {
+    return reply.code(400).send({ code: 'INVALID_PATCH', message: '该素材不是图片，无法转提示词' });
+  }
+  const { ollamaUrl, ollamaModel } = readSettings();
+  if (!ollamaUrl || !ollamaModel) {
+    return reply.code(400).send({ code: 'INVALID_PATCH', message: '请先在设置中配置 Ollama 地址与视觉模型' });
+  }
+  // 默认指令：把图转成文生图可用的外观描述（物体设计器语境）；调用方可覆盖
+  const instruction = (body.instruction ?? '').trim() ||
+    '请用中文描述这张图片中主体（人物/场景/物品）的外观：外貌、材质、颜色、光影、构图要点。输出一段可直接作为文生图提示词的外观描述，只输出描述本身，不要解释、不要引号。';
+  try {
+    const prompt = await new OllamaClient(ollamaUrl).imageToPrompt(ollamaModel, assetFilePath(assetId), instruction);
+    return { prompt, assetId };
+  } catch (err) {
+    if (err instanceof DirectorError) {
+      return reply.code(400).send({ code: err.code, message: err.message });
+    }
+    throw err;
   }
 });
 

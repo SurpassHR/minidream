@@ -260,7 +260,10 @@ describe('API 全局设置', () => {
   it('GET /api/settings 默认值', async () => {
     const res = await a.inject({ method: 'GET', url: '/api/settings' });
     expect(res.statusCode).toBe(200);
-    expect(res.json().settings).toEqual({ comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false });
+    expect(res.json().settings).toEqual({
+      comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false,
+      ollamaUrl: '', ollamaModel: '',
+    });
   });
 
   it('PUT /api/settings 保存并读回（comfyUrl 热切换写回 project 节点）', async () => {

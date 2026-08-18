@@ -30,6 +30,8 @@ export function ObjectDesignerView(props: { projectName: string; prompts?: Recor
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
+  // 图像转提示词（Ollama 本地视觉模型）：参考图 → 外观描述（busy 态禁用按钮）
+  const [visionBusy, setVisionBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -128,6 +130,25 @@ export function ObjectDesignerView(props: { projectName: string; prompts?: Recor
         void client.updateDesign(id, { description: acc }).catch(() => setError('保存失败，请重试'));
       }
     });
+  };
+
+  // 图像转提示词：把选中对象的参考图（assetId，生成完成后持有）经 Ollama 视觉模型
+  // 转成外观描述，直接回填视觉描述字段并立即落盘（所见即所得，不等 500ms 防抖）。
+  // 无参考图（草稿态）时按钮禁用，提示先生成参考图。
+  const visionToPrompt = () => {
+    if (!selected?.assetId) return;
+    const id = selected.id;
+    const assetId = selected.assetId;
+    setVisionBusy(true);
+    setError('');
+    void client.imageToPrompt(assetId).then((prompt) => {
+      setSelected((s) => (s && s.id === id ? { ...s, description: prompt } : s));
+      setDesigns((prev) => prev.map((d) => (d.id === id ? { ...d, description: prompt } : d)));
+      // 立即落盘（同 AI 优化完成后的行为）：generate 从后端 design.json 读 description
+      void client.updateDesign(id, { description: prompt }).catch(() => setError('保存失败，请重试'));
+    }).catch((err) => {
+      setError(err instanceof Error ? err.message : '图像转提示词失败');
+    }).finally(() => setVisionBusy(false));
   };
 
   const generate = () => {
@@ -234,6 +255,7 @@ export function ObjectDesignerView(props: { projectName: string; prompts?: Recor
               </Field>
               <div className="designer-actions">
                 <AiButton busy={aiBusy} onClick={aiOptimize}>✨ AI 优化描述</AiButton>
+                <AiButton busy={visionBusy} onClick={visionToPrompt} disabled={!selected.assetId} title={selected.assetId ? '将参考图经本地视觉模型转为外观描述' : '需先生成参考图'}>🪄 图像转描述</AiButton>
                 <button className="btn-primary" disabled={selected.status === 'generating' || !selected.template} onClick={generate}>⚙ 生成参考图</button>
               </div>
               {selected.status === 'failed' && selected.error && (

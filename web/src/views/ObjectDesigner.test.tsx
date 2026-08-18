@@ -45,6 +45,9 @@ beforeEach(() => {
       designs = designs.map((d: Record<string, unknown>) => d.id === id ? { ...d, ...patch } : d);
       return new Response(JSON.stringify({ design: designs.find((d: Record<string, unknown>) => d.id === id) }), { status: 200 });
     }
+    if (u.includes('/api/ollama/image-to-prompt')) {
+      return new Response(JSON.stringify({ prompt: '银发精灵骑士，墨绿斗篷，发光长剑' }), { status: 200 });
+    }
     if (u.includes('/api/designs')) {
       return new Response(JSON.stringify({ designs }), { status: 200 });
     }
@@ -254,5 +257,36 @@ describe('ObjectDesignerView', () => {
     );
     const body = JSON.parse(String(calls.at(-1)![1]?.body)) as { message: string };
     expect(body.message).toMatch(/^破甲预设文本\n\n/);
+  });
+
+  it('图像转描述：参考图经 Ollama 转为描述并回填+落盘', async () => {
+    designs = [{ id: 'd1', kind: 'character', name: '精灵骑士', description: '', style: '', template: 'test-t2i', status: 'done', assetId: 'a1', createdAt: 1 }];
+    render(<ObjectDesignerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText('精灵骑士')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('精灵骑士'));
+    await waitFor(() => expect(screen.getByTestId('design-name')).toHaveValue('精灵骑士'));
+    fireEvent.click(screen.getByText('🪄 图像转描述'));
+    await waitFor(() => expect(screen.getByTestId('design-desc')).toHaveValue('银发精灵骑士，墨绿斗篷，发光长剑'));
+    // 请求携带 assetId
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => String(c[0]).includes('/api/ollama/image-to-prompt'),
+    );
+    expect(calls.length).toBeGreaterThan(0);
+    const body = JSON.parse(String(calls.at(-1)![1]?.body)) as { assetId: string };
+    expect(body.assetId).toBe('a1');
+    // 描述立即落盘（不等防抖）
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/designs/d1'),
+      expect.objectContaining({ method: 'PUT' }),
+    ));
+  });
+
+  it('图像转描述：草稿态（无参考图）按钮禁用', async () => {
+    designs = [{ id: 'd1', kind: 'character', name: '精灵骑士', description: '', style: '', template: 'test-t2i', status: 'draft', createdAt: 1 }];
+    render(<ObjectDesignerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByText('精灵骑士')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('精灵骑士'));
+    await waitFor(() => expect(screen.getByText('🪄 图像转描述')).toBeInTheDocument());
+    expect(screen.getByText('🪄 图像转描述')).toBeDisabled();
   });
 });

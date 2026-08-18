@@ -19,21 +19,26 @@ afterEach(() => {
   rmSync(fakeHome, { recursive: true, force: true });
 });
 
+const DEFAULT_SETTINGS = {
+  comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false,
+  ollamaUrl: '', ollamaModel: '',
+};
+
 describe('readSettings', () => {
   it('文件不存在返回默认值（空串三字段）', () => {
-    expect(readSettings()).toEqual({ comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false });
+    expect(readSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
   it('文件损坏返回默认值（不抛错）', () => {
     mkdirSync(join(fakeHome, '.director'), { recursive: true });
     writeFileSync(join(fakeHome, '.director', 'settings.json'), '{broken', 'utf8');
-    expect(readSettings()).toEqual({ comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false });
+    expect(readSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
   it('部分字段缺失时补默认值', () => {
     mkdirSync(join(fakeHome, '.director'), { recursive: true });
     writeFileSync(join(fakeHome, '.director', 'settings.json'), JSON.stringify({ comfyUrl: 'http://127.0.0.1:8188' }), 'utf8');
-    expect(readSettings()).toEqual({ comfyUrl: 'http://127.0.0.1:8188', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false });
+    expect(readSettings()).toEqual({ ...DEFAULT_SETTINGS, comfyUrl: 'http://127.0.0.1:8188' });
   });
 });
 
@@ -111,5 +116,30 @@ describe('armorBreak 破甲预设', () => {
     const s = saveSettings({ comfyUrl: 'http://x' });
     expect(s.armorBreak).toBe('文本');
     expect(s.armorBreakEnabled).toBe(true);
+  });
+});
+
+describe('ollama 本地视觉模型', () => {
+  it("缺失字段返回默认（'' / ''）", () => {
+    expect(readSettings().ollamaUrl).toBe('');
+    expect(readSettings().ollamaModel).toBe('');
+  });
+
+  it('保存并读回（类型校验：非 string 忽略）', () => {
+    saveSettings({ ollamaUrl: 'http://127.0.0.1:11434', ollamaModel: 'llava' });
+    const s = readSettings();
+    expect(s.ollamaUrl).toBe('http://127.0.0.1:11434');
+    expect(s.ollamaModel).toBe('llava');
+    // 非类型值忽略（保持现值）
+    const s2 = saveSettings({ ollamaUrl: 123 as never, ollamaModel: null as never });
+    expect(s2.ollamaUrl).toBe('http://127.0.0.1:11434');
+    expect(s2.ollamaModel).toBe('llava');
+  });
+
+  it('未传字段保持现值', () => {
+    saveSettings({ ollamaUrl: 'http://127.0.0.1:11434', ollamaModel: 'qwen2.5vl' });
+    const s = saveSettings({ comfyUrl: 'http://x' });
+    expect(s.ollamaUrl).toBe('http://127.0.0.1:11434');
+    expect(s.ollamaModel).toBe('qwen2.5vl');
   });
 });

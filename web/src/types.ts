@@ -119,4 +119,7 @@ export interface AppSettings {
   // 破甲预设：开启且文本非空时插入到所有系统提示词之前
   armorBreak?: string;
   armorBreakEnabled?: boolean;
+  // Ollama 本地视觉模型（图像转提示词）：地址 + 视觉模型名；空 = 未配置
+  ollamaUrl?: string;
+  ollamaModel?: string;
 }

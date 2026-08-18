@@ -13,9 +13,14 @@ export interface AppSettings {
   prompts?: Record<string, string>; // 提示词库（键=名称，值=内容）；键缺失=从未自定义
   armorBreak: string;          // 破甲预设文本（插入到所有系统提示词之前；空=不生效）
   armorBreakEnabled: boolean;  // 破甲全局开关
+  ollamaUrl: string;     // Ollama 地址（http://...；空串 = 未配置）
+  ollamaModel: string;   // Ollama 本地视觉模型名（图像转提示词用；空串 = 未配置）
 }
 
-const DEFAULTS: AppSettings = { comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false };
+const DEFAULTS: AppSettings = {
+  comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false,
+  ollamaUrl: '', ollamaModel: '',
+};
 
 function settingsFile(): string {
   return join(homedir(), '.director', 'settings.json');
@@ -43,6 +48,8 @@ export function readSettings(): AppSettings {
       agentThinking: typeof data.agentThinking === 'string' ? data.agentThinking : DEFAULTS.agentThinking,
       armorBreak: typeof data.armorBreak === 'string' ? data.armorBreak : DEFAULTS.armorBreak,
       armorBreakEnabled: typeof data.armorBreakEnabled === 'boolean' ? data.armorBreakEnabled : DEFAULTS.armorBreakEnabled,
+      ollamaUrl: typeof data.ollamaUrl === 'string' ? data.ollamaUrl : DEFAULTS.ollamaUrl,
+      ollamaModel: typeof data.ollamaModel === 'string' ? data.ollamaModel : DEFAULTS.ollamaModel,
     };
     // 键缺失（undefined）= 从未自定义，保持 out 无 prompts 键；
     // 已存在（含 {}）= 已保存过，原样过滤返回（删除的条目不复活）
@@ -65,6 +72,8 @@ export function saveSettings(patch: Partial<AppSettings>): AppSettings {
     agentThinking: typeof patch.agentThinking === 'string' ? patch.agentThinking : current.agentThinking,
     armorBreak: typeof patch.armorBreak === 'string' ? patch.armorBreak : current.armorBreak,
     armorBreakEnabled: typeof patch.armorBreakEnabled === 'boolean' ? patch.armorBreakEnabled : current.armorBreakEnabled,
+    ollamaUrl: typeof patch.ollamaUrl === 'string' ? patch.ollamaUrl : current.ollamaUrl,
+    ollamaModel: typeof patch.ollamaModel === 'string' ? patch.ollamaModel : current.ollamaModel,
   };
   if (patch.prompts !== undefined) {
     next.prompts = (typeof patch.prompts === 'object' && patch.prompts !== null && !Array.isArray(patch.prompts))

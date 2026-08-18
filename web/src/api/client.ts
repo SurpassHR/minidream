@@ -274,6 +274,21 @@ export const client = {
     return r.models;
   },
 
+  // —— Ollama 本地视觉模型（图像转提示词）——
+  // 已安装模型列表（设置面板视觉模型下拉数据源；Ollama 未配置/不可达返回空列表）
+  async listOllamaModels(): Promise<string[]> {
+    const r = await req<{ models: string[] }>('/api/ollama/models');
+    return r.models ?? [];
+  },
+
+  // 图像转提示词：素材库图片 assetId → Ollama 视觉模型 → 外观描述文本（物体设计器 🪄 图像转描述）
+  async imageToPrompt(assetId: string, instruction?: string): Promise<string> {
+    const r = await req<{ prompt: string }>('/api/ollama/image-to-prompt', {
+      method: 'POST', body: JSON.stringify({ assetId, instruction }),
+    });
+    return r.prompt;
+  },
+
   // 文本素材导入：名称 + 内容直接入库
   async importText(name: string, content: string): Promise<void> {
     await req('/api/assets/import-text', { method: 'POST', body: JSON.stringify({ name, content }) });
