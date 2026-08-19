@@ -44,6 +44,13 @@ describe('AgentPanel 流式对话', () => {
         }
         return new Response(JSON.stringify({ sessions: SESSIONS, activeId: ACTIVE }), { status: 200 });
       }
+      if (u === '/api/assets') {
+        return new Response(JSON.stringify({ assets: [
+          { id: 'txt-1', kind: 'txt', name: '世界观.md' },
+          { id: 'img-1', kind: 'img', name: '角色.png' },
+          { id: 'vid-1', kind: 'vid', name: '参考视频.mp4' },
+        ] }), { status: 200 });
+      }
       if (u.includes('/api/agent/history')) {
         return new Response(JSON.stringify({ messages: HISTORY }), { status: 200 });
       }
@@ -97,6 +104,30 @@ describe('AgentPanel 流式对话', () => {
     expect(args[0]).toBe('第一行');
     expect(args[1]).toEqual([]);
     expect(box.value).toBe('');
+  });
+
+  it('输入 @ 可搜索并引用素材，发送回调携带结构化素材引用', async () => {
+    const onSend = vi.fn(() => []);
+    render(<AgentPanel chips={[]} onChipsChange={() => {}} onSend={onSend} />);
+    const input = screen.getByPlaceholderText(/对画布提问/) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: '@' } });
+    await waitFor(() => expect(screen.getByTestId('agent-asset-mention-menu')).toBeInTheDocument());
+    expect(screen.getByText('世界观.md')).toBeInTheDocument();
+    expect(screen.getByText('角色.png')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('agent-asset-mention-img-1'));
+    expect(screen.queryByTestId('agent-asset-ref-img-1')).not.toBeInTheDocument();
+    const token = screen.getByTestId('agent-asset-token-img-1');
+    expect(token).toHaveClass('asset-mention-token');
+    fireEvent.click(token);
+    expect(screen.getByRole('dialog', { name: '素材详情：角色.png' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+    expect(input).toHaveValue('@角色.png ');
+    fireEvent.change(input, { target: { value: `${input.value}参考这个图` } });
+    fireEvent.click(screen.getByText('发送'));
+    expect(onSend).toHaveBeenCalledTimes(1);
+    const args = onSend.mock.calls[0] as unknown as [string, string[], string | null, Array<{ id: string; name: string; kind: string }>];
+    expect(args[3]).toEqual([{ id: 'img-1', name: '角色.png', kind: 'img' }]);
+    expect(args[0]).toContain('@角色.png');
   });
 
   it('agent 回复按 Markdown 渲染；用户消息保持纯文本', async () => {

@@ -21,8 +21,9 @@ import { connectWs } from './api/ws';
 import { useHashRoute } from './router';
 import { StoryTellerView } from './views/StoryTellerView';
 import { ObjectDesignerView } from './views/ObjectDesignerView';
+import type { MentionAsset } from './panels/AssetMentionPicker';
 
-// 五区布局骨架：各面板在后续任务替换为真实组件
+// 工作区布局骨架：素材库为全局抽屉，画布右侧 AGENT 面板、底部时间线/版本/队列
 export default function App() {
   const route = useHashRoute();
   const tasks = useGraphStore((s) => s.tasks);
@@ -62,16 +63,15 @@ export default function App() {
     const v = Number(localStorage.getItem(key));
     return Number.isFinite(v) && v > 0 ? clamp(v, min, max) : def;
   };
-  const PANEL_DEFAULTS = { left: 270, right: 300, footer: 148 } as const;
-  const [leftW, setLeftW] = useState(() => stored('dw:leftW', 270, 200, 480));
+  const PANEL_DEFAULTS = { right: 300, footer: 148 } as const;
   const [rightW, setRightW] = useState(() => stored('dw:rightW', 300, 240, 520));
   const [footerH, setFooterH] = useState(() => stored('dw:footerH', 148, 120, 360));
-  const [dragging, setDragging] = useState<'left' | 'right' | 'footer' | null>(null);
-  const dragRef = useRef<{ kind: 'left' | 'right' | 'footer'; start: number; val: number } | null>(null);
+  const [dragging, setDragging] = useState<'right' | 'footer' | null>(null);
+  const dragRef = useRef<{ kind: 'right' | 'footer'; start: number; val: number } | null>(null);
 
-  const onSplitterDown = (kind: 'left' | 'right' | 'footer') => (e: React.MouseEvent) => {
+  const onSplitterDown = (kind: 'right' | 'footer') => (e: React.MouseEvent) => {
     e.preventDefault();
-    const val = kind === 'left' ? leftW : kind === 'right' ? rightW : footerH;
+    const val = kind === 'right' ? rightW : footerH;
     dragRef.current = { kind, start: kind === 'footer' ? e.clientY : e.clientX, val };
     setDragging(kind);
   };
@@ -82,14 +82,13 @@ export default function App() {
       const d = dragRef.current;
       if (!d) return;
       const delta = (d.kind === 'footer' ? e.clientY : e.clientX) - d.start;
-      if (d.kind === 'left') setLeftW(clamp(d.val + delta, 200, 480));
-      else if (d.kind === 'right') setRightW(clamp(d.val - delta, 240, 520));
+      if (d.kind === 'right') setRightW(clamp(d.val - delta, 240, 520));
       else setFooterH(clamp(d.val - delta, 120, 360));
     };
     const up = () => {
       const d = dragRef.current;
       if (d) {
-        const v = d.kind === 'left' ? leftW : d.kind === 'right' ? rightW : footerH;
+        const v = d.kind === 'right' ? rightW : footerH;
         localStorage.setItem(`dw:${d.kind}W`, String(v));
       }
       dragRef.current = null;
@@ -101,12 +100,11 @@ export default function App() {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
     };
-  }, [leftW, rightW, footerH]);
+  }, [rightW, footerH]);
 
-  const onSplitterReset = (kind: 'left' | 'right' | 'footer') => () => {
+  const onSplitterReset = (kind: 'right' | 'footer') => () => {
     const def = PANEL_DEFAULTS[kind];
-    if (kind === 'left') setLeftW(def);
-    else if (kind === 'right') setRightW(def);
+    if (kind === 'right') setRightW(def);
     else setFooterH(def);
     localStorage.removeItem(`dw:${kind}W`);
   };
@@ -190,7 +188,7 @@ export default function App() {
   // 素材库真实数据源：成功 → 真实列表（空数组即空态）；失败 → null（显示空态，不误显 mock 数据）
   const refreshAssets = useCallback(() => {
     void client.listAssets().then((list) => setAssets(list.map((a) => ({
-      id: a.id, kind: a.kind, name: a.name, meta: a.meta,
+      id: a.id, kind: a.kind, name: a.name, meta: a.meta, caption: a.caption,
     })))).catch(() => setAssets(null));
   }, []);
 
@@ -280,18 +278,18 @@ export default function App() {
   }, []);
 
   // 真实 agent 流式发送：chips 是显示名（@xxx），发送时从画布查找节点内容注入上下文
-  const handleAgentSend = (text: string, _chipRefs: string[], _sessionId?: string | null): ChatMsg[] => [
-    { who: 'user', text },
+  const handleAgentSend = (text: string, _chipRefs: string[], _sessionId?: string | null, assetRefs: MentionAsset[] = []): ChatMsg[] => [
+    { who: 'user', text, assetRefs: assetRefs.length > 0 ? assetRefs : undefined },
     { who: 'agent', text: '（正在请求 pi…）' },
   ];
 
-  const handleAgentStream = useCallback((text: string, chipRefs: string[], push: (chunk: string) => void, sessionId?: string | null) => {
+  const handleAgentStream = useCallback((text: string, chipRefs: string[], push: (chunk: string) => void, sessionId?: string | null, assetRefs: MentionAsset[] = []) => {
     const payload = chipRefs.map((name) => {
       const node = useGraphStore.getState().graph?.nodes.find((n) => n.title === name.slice(2));
       return { name, content: JSON.stringify(node?.fields ?? {}) };
     });
     // 返回 Promise：AgentPanel 据此进入/退出流式锁（期间禁止会话切换）
-    return agentChat(text, payload, push, agentModel || undefined, thinkingLevel || undefined, sessionId)
+    return agentChat(text, payload, push, agentModel || undefined, thinkingLevel || undefined, sessionId, assetRefs)
       .catch(() => push('\n（agent 连接失败）'));
   }, [agentModel, thinkingLevel]);
 
@@ -431,17 +429,6 @@ export default function App() {
           <main className="main">
             {projectOpen ? (
               <>
-            <aside className="left" style={{ flexBasis: leftW }} data-testid="left-panel">
-              <div className="panel-title">素材库 <span className="mini">全局 · 跨项目</span></div>
-              <AssetLibrary items={assets ?? []} onDropToCanvas={handleDropToCanvas} onAssetsChanged={refreshAssets} />
-            </aside>
-            <div
-              className={`splitter splitter-v ${dragging === 'left' ? 'active' : ''}`}
-              data-testid="splitter-left"
-              title="拖拽调整宽度 · 双击恢复默认"
-              onMouseDown={onSplitterDown('left')}
-              onDoubleClick={onSplitterReset('left')}
-            />
             <section
               className="canvas" data-testid="canvas"
               onDragOver={(e) => e.preventDefault()}

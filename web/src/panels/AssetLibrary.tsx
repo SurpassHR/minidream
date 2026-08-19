@@ -9,6 +9,7 @@ export interface AssetItem {
   name: string;
   meta?: string;   // 尺寸/时长等
   thumb?: string;  // 缩略图样式类（t1..t6）
+  caption?: string; // 图像 captioning 生成的描述（缩略图下方/预览展示）
 }
 
 // 从剪贴板/拖拽 File 列表按类型入库：
@@ -65,6 +66,9 @@ export function AssetLibrary(props: {
   const [previewTarget, setPreviewTarget] = useState<AssetItem | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState('');
+  // captioning：正在处理的图像 id（防并发）；失败提示
+  const [captioningId, setCaptioningId] = useState<string | null>(null);
+  const [captionError, setCaptionError] = useState('');
 
   const filtered = items.filter((i) => i.name.includes(query));
 
@@ -138,6 +142,25 @@ export function AssetLibrary(props: {
       props.onAssetsChanged?.();
     } catch (err) {
       setImportError(err instanceof Error ? err.message : '删除素材失败');
+    }
+  };
+
+  // captioning：视觉模型描述图像 → 在图像同一位置生成同名 .txt 素材入库 → 直接打开 caption 预览
+  const runCaption = async (item: AssetItem) => {
+    if (!item.id) return;
+    setCaptioningId(item.id);
+    setCaptionError('');
+    try {
+      const { caption, asset } = await client.captionAsset(item.id);
+      setCaptionError('');
+      props.onAssetsChanged?.();
+      setPreviewTarget(asset);
+      setPreviewContent(caption);
+      setPreviewError('');
+    } catch (err) {
+      setCaptionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCaptioningId(null);
     }
   };
 
@@ -235,6 +258,7 @@ export function AssetLibrary(props: {
         onChange={(e) => void onFileChosen(e)}
       />
       {importError && <div className="ne-error import-error">导入失败：{importError}</div>}
+      {captionError && <div className="ne-error import-error">Captioning 失败：{captionError}</div>}
       {dragging && <div className="drop-mask">松开以导入素材</div>}
       <div className="asset-grid">
         {filtered.map((item) => (
@@ -287,8 +311,20 @@ export function AssetLibrary(props: {
               </div>
             )}
             <div className="aname">{item.name}</div>
+            {item.kind === 'img' && item.caption && (
+              <div className="aname-caption" title={item.caption}>{item.caption}</div>
+            )}
             {item.id && (
               <div className="asset-card-actions">
+                {item.kind === 'img' && (
+                  <button
+                    type="button"
+                    data-testid={`asset-caption-${item.id}`}
+                    title="生成图像描述（caption）"
+                    disabled={captioningId !== null}
+                    onClick={(e) => { e.stopPropagation(); void runCaption(item); }}
+                  ><Icon name={captioningId === item.id ? 'loader' : 'sparkles'} /></button>
+                )}
                 <button type="button" data-testid={`asset-edit-${item.id}`} title="编辑素材" onClick={(e) => { e.stopPropagation(); void openEdit(item); }}><Icon name="pencil" /></button>
                 <button type="button" data-testid={`asset-delete-${item.id}`} title="删除素材" onClick={(e) => { e.stopPropagation(); setDeleteTarget(item); }}><Icon name="trash" /></button>
               </div>
@@ -315,12 +351,17 @@ export function AssetLibrary(props: {
             <div className="dialog-title">预览素材</div>
             <div className="asset-preview-name">{previewTarget.name}</div>
             {previewTarget.kind === 'img' && (
-              <img
-                data-testid="asset-preview-image"
-                className="asset-preview-image"
-                src={`/api/assets/${encodeURIComponent(previewTarget.id!)}/file`}
-                alt={previewTarget.name}
-              />
+              <>
+                <img
+                  data-testid="asset-preview-image"
+                  className="asset-preview-image"
+                  src={`/api/assets/${encodeURIComponent(previewTarget.id!)}/file`}
+                  alt={previewTarget.name}
+                />
+                {previewTarget.caption && (
+                  <div className="asset-preview-caption" data-testid="asset-preview-caption">{previewTarget.caption}</div>
+                )}
+              </>
             )}
             {previewTarget.kind === 'vid' && (
               <video

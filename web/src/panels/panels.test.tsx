@@ -3,6 +3,22 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { ProjectSwitcher } from './ProjectSwitcher';
 import { AssetLibrary } from './AssetLibrary';
 import type { AssetItem } from './AssetLibrary';
+import { AddProjectDialog } from './AddProjectDialog';
+
+describe('AddProjectDialog', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('浏览按钮通过系统目录选择器填入真实项目路径', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ path: '/tmp/story-project' }),
+      { status: 200 },
+    )));
+    render(<AddProjectDialog open onClose={() => {}} onAdded={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: '浏览' }));
+    await waitFor(() => expect(screen.getByDisplayValue('/tmp/story-project')).toBeInTheDocument());
+    expect(fetch).toHaveBeenCalledWith('/api/projects/pick-directory', expect.objectContaining({ headers: {} }));
+  });
+});
 
 describe('ProjectSwitcher', () => {
   // 下拉面板默认收起：先点当前项目名展开；下拉内的查询用 within 限定（按钮也含项目名）
@@ -314,5 +330,66 @@ describe('AssetLibrary 导入失败反馈', () => {
     // 错误提示出现并透传后端消息
     await waitFor(() => expect(screen.getByText(/导入失败/)).toBeInTheDocument());
     expect(screen.getByText(/保存失败/)).toBeInTheDocument();
+  });
+});
+
+describe('AssetLibrary 图像 captioning', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/caption')) {
+        return new Response(JSON.stringify({
+          caption: '墨绿斗篷的精灵骑士，手持发光长剑',
+          asset: { id: 'cap-1', kind: 'txt', name: 'preview.txt' },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }));
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('图像卡片 captioning 按钮调用接口并打开 caption 预览', async () => {
+    const onChanged = vi.fn();
+    render(<AssetLibrary items={[{ id: 'img-1', kind: 'img', name: 'preview.png' }]} onDropToCanvas={() => {}} onAssetsChanged={onChanged} />);
+    fireEvent.click(screen.getByTestId('asset-caption-img-1'));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/assets/img-1/caption', expect.objectContaining({ method: 'POST' })));
+    expect(onChanged).toHaveBeenCalled();
+    // 预览打开并直接显示 caption 文本（无需再拉取内容）
+    expect(await screen.findByTestId('asset-preview-text')).toHaveTextContent('墨绿斗篷的精灵骑士');
+  });
+
+  it('captioning 失败时显示错误且不打开预览', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/caption')) {
+        return new Response(JSON.stringify({ code: 'INVALID_PATCH', message: '请先在设置中配置 Ollama 地址与视觉模型' }), { status: 400 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    });
+    render(<AssetLibrary items={[{ id: 'img-1', kind: 'img', name: 'preview.png' }]} onDropToCanvas={() => {}} />);
+    fireEvent.click(screen.getByTestId('asset-caption-img-1'));
+    expect(await screen.findByText(/Captioning 失败/)).toBeInTheDocument();
+    expect(screen.queryByTestId('asset-preview-text')).not.toBeInTheDocument();
+  });
+
+  it('非图像素材不显示 captioning 按钮', () => {
+    render(<AssetLibrary items={[{ id: 't1', kind: 'txt', name: 'a.txt' }]} onDropToCanvas={() => {}} />);
+    expect(screen.queryByTestId('asset-caption-t1')).not.toBeInTheDocument();
+  });
+
+  it('图像卡片在缩略图下方显示 caption 文本', () => {
+    render(<AssetLibrary items={[{ id: 'img-1', kind: 'img', name: 'preview.png', caption: '墨绿斗篷的精灵骑士' }]} onDropToCanvas={() => {}} />);
+    expect(screen.getByText('墨绿斗篷的精灵骑士')).toBeInTheDocument();
+  });
+
+  it('无 caption 的图像卡片不显示描述区', () => {
+    render(<AssetLibrary items={[{ id: 'img-1', kind: 'img', name: 'preview.png' }]} onDropToCanvas={() => {}} />);
+    expect(document.querySelector('.aname-caption')).not.toBeInTheDocument();
+  });
+
+  it('点开图像素材预览时显示 caption', async () => {
+    render(<AssetLibrary items={[{ id: 'img-1', kind: 'img', name: 'preview.png', caption: '墨绿斗篷的精灵骑士' }]} onDropToCanvas={() => {}} />);
+    fireEvent.click(screen.getByText('preview.png'));
+    const preview = await screen.findByTestId('asset-preview-image');
+    expect(preview).toHaveAttribute('src', '/api/assets/img-1/file');
+    expect(screen.getByTestId('asset-preview-caption')).toHaveTextContent('墨绿斗篷的精灵骑士');
   });
 });

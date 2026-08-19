@@ -88,6 +88,8 @@ export interface AssetRecord {
   name: string;
   ext: string;
   meta?: string;
+  /** 图像 captioning 生成的描述（写回图像记录，卡片缩略图下方/预览可直接展示） */
+  caption?: string;
   size: number;
   importedAt: number;
 }

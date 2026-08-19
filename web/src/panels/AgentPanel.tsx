@@ -7,8 +7,10 @@ import { Icon } from '../icons';
 import { ConfirmDialog } from './ConfirmDialog';
 import { TextInputDialog } from './TextInputDialog';
 import type { SessionMeta } from '../types';
+import { insertAssetMention, useAssetMentions, type MentionAsset } from './AssetMentionPicker';
+import { MentionComposer } from './MentionComposer';
 
-export interface ChatMsg { who: 'user' | 'agent'; text: string }
+export interface ChatMsg { who: 'user' | 'agent'; text: string; assetRefs?: MentionAsset[] }
 
 // 会话更新时间 → 短日期：当天显示 HH:mm，否则 MM-DD
 function fmtSessionDate(at: number): string {
@@ -23,12 +25,12 @@ function fmtSessionDate(at: number): string {
 export function AgentPanel(props: {
   chips: string[];
   onChipsChange: (chips: string[]) => void;
-  onSend: (text: string, chips: string[], sessionId?: string | null) => ChatMsg[];
+  onSend: (text: string, chips: string[], sessionId?: string | null, assetRefs?: MentionAsset[]) => ChatMsg[];
   // 可选流式通道：发送后由外部（真实 agent 桥）逐块推送文本，追加到消息流最后一条 agent 消息；
   // 未提供时面板自行请求 agentChat（测试/独立挂载仍可流式渲染）。
   // 返回 Promise 时面板进入 streaming 锁（期间禁止切换/新建/删除会话，防旧会话流式污染新视图）；
   // 同步调用（无 Promise）不锁，保持旧行为。
-  onStream?: (text: string, chips: string[], push: (chunk: string) => void, sessionId?: string | null) => Promise<void> | void;
+  onStream?: (text: string, chips: string[], push: (chunk: string) => void, sessionId?: string | null, assetRefs?: MentionAsset[]) => Promise<void> | void;
   // 模型切换（内置 agent 下拉）：列表来自 /api/agent/models；空字符串 = pi 默认模型
   models?: Array<{ id: string; provider: string; thinking: boolean }>;
   selectedModel?: string;
@@ -43,6 +45,8 @@ export function AgentPanel(props: {
 }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
+  const [assetRefs, setAssetRefs] = useState<MentionAsset[]>([]);
+  const assetMention = useAssetMentions(input);
   // 多会话：会话列表 + 当前会话 id + 会话条下拉开关
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -152,12 +156,24 @@ export function AgentPanel(props: {
     }
   };
 
+  const selectAssetMention = (item: MentionAsset) => {
+    setInput(insertAssetMention(input, item));
+    setAssetRefs((prev) => prev.some((asset) => asset.id === item.id) ? prev : [...prev, item]);
+  };
+
+  const handleInputChange = (value: string) => {
+    setInput(value);
+    setAssetRefs((prev) => prev.filter((asset) => value.includes(`@${asset.name}`)));
+  };
+
   const send = () => {
     const text = input.trim();
-    if (!text) return;
+    if (!text && assetRefs.length === 0) return;
+    const refs = [...assetRefs];
     dirtyRef.current = true;
     setInput('');
-    setMsgs((m) => [...m, ...props.onSend(text, props.chips, activeId)]);
+    setAssetRefs([]);
+    setMsgs((m) => [...m, ...props.onSend(text, props.chips, activeId, refs)]);
     // 流式通道：分块逐步追加到最后一条 agent 消息
     const push = (chunk: string) => {
       setMsgs((m) => {
@@ -173,7 +189,7 @@ export function AgentPanel(props: {
       });
     };
     if (props.onStream) {
-      const res = props.onStream(text, props.chips, push, activeId) as Promise<void> | void;
+      const res = props.onStream(text, props.chips, push, activeId, refs) as Promise<void> | void;
       if (res && typeof res.then === 'function') {
         // Promise 流式通道（真实 agent 桥）：进入流式锁，完成后解锁并刷新会话列表
         setStreaming(true);
@@ -186,7 +202,7 @@ export function AgentPanel(props: {
     } else {
       // 无外部流式通道：面板自行请求 agentChat（chips 名称保留，内容由外部注入）
       setStreaming(true);
-      void agentChat(text, props.chips.map((c) => ({ name: c, content: '' })), push, undefined, undefined, activeId)
+      void agentChat(text, props.chips.map((c) => ({ name: c, content: '' })), push, undefined, undefined, activeId, refs)
         .catch(() => push('\n（agent 连接失败）'))
         .finally(() => { setStreaming(false); refreshSessions(); });
     }
@@ -282,6 +298,11 @@ export function AgentPanel(props: {
             <div className="who">{m.who === 'user' ? 'YOU' : 'PI · AGENT'}</div>
             <div className="bubble">
               {/* agent 回复用 Markdown 渲染（流式追加时容忍未闭合片段）；用户消息保持纯文本 */}
+              {m.who === 'user' && m.assetRefs && m.assetRefs.length > 0 && (
+                <div className="agent-msg-assets" data-testid="agent-msg-assets">
+                  {m.assetRefs.map((asset) => <span key={asset.id}>{asset.name}</span>)}
+                </div>
+              )}
               {m.who === 'agent' ? (
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
               ) : m.text}
@@ -290,18 +311,25 @@ export function AgentPanel(props: {
         ))}
       </div>
       <div className="agent-input">
-        <textarea
-          placeholder="对画布提问，或 @ 引用节点…（Enter 发送 · Shift+Enter 换行）"
+        <MentionComposer
+          testId="agent-input-editor"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          assets={assetMention.assets}
+          placeholder="对画布提问，或 @ 引用节点…（Enter 发送 · Shift+Enter 换行）"
+          mentionOpen={assetMention.open}
+          mentionItems={assetMention.candidates}
+          mentionActiveIndex={assetMention.activeIndex}
+          mentionTestIdPrefix="agent"
+          onChange={handleInputChange}
+          onSelectMention={selectAssetMention}
           onKeyDown={(e) => {
-            // Enter 发送；Shift+Enter 保留 textarea 默认换行行为
+            if (assetMention.handleKeyDown(e, selectAssetMention)) return;
+            // Enter 发送；Shift+Enter 保留多行输入
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
               send();
             }
           }}
-          rows={2}
         />
         <button onClick={send}>发送</button>
       </div>

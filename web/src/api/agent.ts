@@ -4,6 +4,12 @@ export interface AgentChip {
   content: string;
 }
 
+export interface AgentAssetRef {
+  id: string;
+  name: string;
+  kind: 'txt' | 'img' | 'vid';
+}
+
 // 读取 text/event-stream，逐帧解析 `data: {...}`，`data: [DONE]` 结束
 // model 可选：透传给 pi --model（如 "mustore/grok-4.5"）；thinking 可选：透传给 pi --thinking
 // （off/minimal/low/medium/high/xhigh/max）；sessionId 可选：多会话作用域（缺省回退当前会话）
@@ -14,11 +20,19 @@ export async function agentChat(
   model?: string,
   thinking?: string,
   sessionId?: string | null,
+  assetRefs?: AgentAssetRef[],
 ): Promise<void> {
   const res = await fetch('/api/agent/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ message, chips, model, thinking, sessionId: sessionId ?? undefined }),
+    body: JSON.stringify({
+      message,
+      chips,
+      model,
+      thinking,
+      sessionId: sessionId ?? undefined,
+      assetRefs: assetRefs && assetRefs.length > 0 ? assetRefs : undefined,
+    }),
   });
   if (!res.ok || !res.body) throw new Error(`agent 请求失败: ${res.status}`);
   const reader = res.body.getReader();

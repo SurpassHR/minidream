@@ -72,6 +72,29 @@ export function importAssetText(name: string, content: string): AssetRecord {
   return rec;
 }
 
+// 把 caption 写回图像素材记录：卡片缩略图下方/预览可直接展示，不依赖同名 txt 素材
+// （同名 txt 仍会生成，作为图像同目录的可复用文件；两者内容一致）
+export function setAssetCaption(id: string, caption: string): AssetRecord {
+  const rec = findAsset(id);
+  const next = { ...rec, caption };
+  writeIndex(readIndex().map((r) => r.id === id ? next : r));
+  return next;
+}
+
+// 按名称 upsert 文本素材：已存在同名 txt 时覆盖其内容（如图像 captioning 重复执行），
+// 否则走 importAssetText 新建。同名判定基于显示名（与图像同基名的 caption 可幂等更新）
+export function upsertAssetText(name: string, content: string): AssetRecord {
+  const records = readIndex();
+  const existing = records.find((r) => r.kind === 'txt' && r.name === name);
+  if (existing) {
+    writeFileSync(join(assetDir(), `${existing.id}${existing.ext}`), content, 'utf8');
+    const next = { ...existing, size: Buffer.byteLength(content, 'utf8'), importedAt: Date.now() };
+    writeIndex(records.map((r) => r.id === existing.id ? next : r));
+    return next;
+  }
+  return importAssetText(name, content);
+}
+
 function findAsset(id: string): AssetRecord {
   const rec = readIndex().find((r) => r.id === id);
   if (!rec) throw new DirectorError('NODE_NOT_FOUND', `素材不存在: ${id}`);

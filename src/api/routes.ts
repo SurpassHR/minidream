@@ -8,7 +8,7 @@ import { syncNodeToFile } from '../sync/dual-writer.js';
 import { listSnapshots, graphAtSnapshot, headSeq, futureSnapshotCount, approveOverwrite } from '../snapshots/snapshot-store.js';
 import { listWorkspace, readWorkspaceFile, searchWorkspace } from '../workspace/accessor.js';
 import { readFileSync, existsSync, mkdtempSync, createWriteStream, rmSync, writeFileSync, readdirSync } from 'node:fs';
-import { extname, join } from 'node:path';
+import { basename, extname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
@@ -17,7 +17,7 @@ import { graphToPromptYaml } from '../prompt/export.js';
 import { GenerationQueue } from '../generation/queue.js';
 import { ComfyUIClient } from '../comfy/client.js';
 import {
-  listAssets, importAssetFile, importAssetText, deleteAsset, readAssetText, assetFilePath,
+  listAssets, importAssetFile, importAssetText, upsertAssetText, setAssetCaption, deleteAsset, readAssetText, assetFilePath,
   updateAsset, replaceAssetFile,
 } from '../assets/assets-store.js';
 import { OllamaClient } from '../ollama/client.js';
@@ -44,6 +44,7 @@ import type { DesignKind, DesignObject } from '../design/store.js';
 import {
   addProject, deleteProject, listProjects, removeProject, renameProject, resolveSwitchTarget, resolveComfyUrl,
 } from '../projects/projects-store.js';
+import { pickProjectDirectory } from '../projects/directory-picker.js';
 import type { WsHandle } from './ws.js';
 
 // 项目上下文：单一可变事实来源，/api/project/switch 热切换时整体替换
@@ -174,23 +175,44 @@ export function isVisionUnsupportedError(message: string): boolean {
 const STORY_VISION_INSTRUCTION = '请用中文描述这张参考图中与故事创作有关的内容：主体、人物外观、场景、构图、光线、色彩和关键动作。只输出客观、具体的视觉描述，不要解释。';
 
 // 图片附件 → 本地 Ollama 视觉描述。复用 OllamaClient 的文件路径能力，避免先写入全局素材库。
-async function describeStoryImages(files: string[]): Promise<string> {
+async function describeImageFiles(files: string[]): Promise<string[]> {
   const { ollamaUrl, ollamaModel } = readSettings();
   if (!ollamaUrl || !ollamaModel) {
     throw new DirectorError('INVALID_PATCH', '当前对话模型不支持视觉输入，且未配置本地 Ollama 视觉模型。请到设置中配置 Ollama 地址与视觉模型。');
   }
   try {
     const descriptions: string[] = [];
-    for (const [i, file] of files.entries()) {
-      const text = await new OllamaClient(ollamaUrl).imageToPrompt(ollamaModel, file, STORY_VISION_INSTRUCTION);
-      descriptions.push(`图片 ${i + 1}：${text}`);
+    for (const file of files) {
+      descriptions.push(await new OllamaClient(ollamaUrl).imageToPrompt(ollamaModel, file, STORY_VISION_INSTRUCTION));
     }
-    return `参考图视觉描述（由本地 Ollama 生成）：\n${descriptions.join('\n')}`;
+    return descriptions;
   } catch (err) {
     if (err instanceof DirectorError && err.message.startsWith('视觉降级失败：')) throw err;
     const message = err instanceof Error ? err.message : String(err);
     throw new DirectorError('INVALID_PATCH', `视觉降级失败：${message}`);
   }
+}
+
+async function describeStoryImages(files: string[]): Promise<string> {
+  const descriptions = await describeImageFiles(files);
+  return `参考图视觉描述（由本地 Ollama 生成）：\n${descriptions.map((text, i) => `图片 ${i + 1}：${text}`).join('\n')}`;
+}
+
+// 对素材库图片做视觉 fallback，并把每条描述写回图片 caption，后续 @ 引用直接复用。
+async function describeAssetImages(assetIds: string[]): Promise<string> {
+  const assets = assetIds
+    .map((id) => listAssets().find((asset) => asset.id === id))
+    .filter((asset) => asset?.kind === 'img' && !asset.caption) as Array<{ id: string; kind: 'img'; name: string }>;
+  if (assets.length === 0) return '';
+  const descriptions = await describeImageFiles(assets.map((asset) => assetFilePath(asset.id)));
+  const parts: string[] = [];
+  for (const [i, asset] of assets.entries()) {
+    const caption = descriptions[i] ?? '';
+    if (!caption) continue;
+    setAssetCaption(asset.id, caption);
+    parts.push(`图像素材「${asset.name}」的描述：${caption}`);
+  }
+  return parts.length > 0 ? `用户引用的图像素材描述（由本地 Ollama 生成）：\n${parts.join('\n')}` : '';
 }
 
 // 故事对话拖入的非图像素材：文本读取内容，视频保留可识别的素材引用。
@@ -200,7 +222,7 @@ export function buildStoryAssetContext(refs: Array<{ id?: string; name?: string;
   for (const ref of refs) {
     if (typeof ref?.id !== 'string') continue;
     const asset = listAssets().find((item) => item.id === ref.id);
-    if (!asset || (asset.kind !== 'txt' && asset.kind !== 'vid')) continue;
+    if (!asset) continue;
     if (asset.kind === 'txt') {
       try {
         const content = readAssetText(asset.id).slice(0, 12_000);
@@ -208,12 +230,58 @@ export function buildStoryAssetContext(refs: Array<{ id?: string; name?: string;
       } catch {
         parts.push(`文本素材「${asset.name}」：内容读取失败`);
       }
+    } else if (asset.kind === 'img') {
+      parts.push(asset.caption
+        ? `图像素材「${asset.name}」：图像描述：${asset.caption}`
+        : `图像素材「${asset.name}」：图片文件将作为视觉附件提供给模型。`);
     } else {
       const meta = asset.meta ? `（${asset.meta}）` : '';
       parts.push(`视频素材「${asset.name}」${meta}：请将其作为参考视频素材理解；当前请求未提供视频画面内容。`);
     }
   }
   return parts.length > 0 ? `用户引用的素材上下文：\n${parts.join('\n\n')}` : '';
+}
+
+export function buildStoryAssetImageFiles(refs: Array<{ id?: string; kind?: string }>): { ids: string[]; files: string[] } {
+  const assets = refs
+    .filter((ref) => typeof ref.id === 'string')
+    .map((ref) => listAssets().find((asset) => asset.id === ref.id))
+    .filter((asset) => asset?.kind === 'img' && !asset.caption) as Array<{ id: string; kind: 'img' }>;
+  return { ids: assets.map((asset) => asset.id), files: assets.map((asset) => assetFilePath(asset.id)) };
+}
+
+// AGENT 面板的 @ 素材上下文：文本直接注入，图片同时以 @ 文件参数交给 pi，视频保留元信息。
+export function buildAgentAssetContext(refs: Array<{ id?: string; name?: string; kind?: string }>): { context: string; imageFiles: string[]; imageAssetIds: string[] } {
+  const parts: string[] = [];
+  const imageFiles: string[] = [];
+  for (const ref of refs) {
+    if (typeof ref?.id !== 'string') continue;
+    const asset = listAssets().find((item) => item.id === ref.id);
+    if (!asset) continue;
+    if (asset.kind === 'txt') {
+      try {
+        parts.push(`文本素材「${asset.name}」：\n${readAssetText(asset.id).slice(0, 12_000)}`);
+      } catch {
+        parts.push(`文本素材「${asset.name}」：内容读取失败`);
+      }
+    } else if (asset.kind === 'img') {
+      const caption = asset.caption ? `\n图像描述：${asset.caption}` : '';
+      if (!asset.caption) imageFiles.push(assetFilePath(asset.id));
+      parts.push(`图像素材「${asset.name}」${asset.caption ? '的描述已直接注入提示词' : '已作为图像附件提供给模型'}。${caption}`);
+    } else {
+      const meta = asset.meta ? `（${asset.meta}）` : '';
+      parts.push(`视频素材「${asset.name}」${meta}：当前请求提供了视频文件引用，但未解析视频画面。`);
+    }
+  }
+  return {
+    context: parts.length > 0 ? `用户 @ 引用的素材上下文：\n${parts.join('\n\n')}` : '',
+    imageFiles,
+    imageAssetIds: refs
+      .filter((ref) => typeof ref.id === 'string')
+      .map((ref) => listAssets().find((asset) => asset.id === ref.id))
+      .filter((asset) => asset?.kind === 'img' && !asset.caption)
+      .map((asset) => asset!.id),
+  };
 }
 
 
@@ -244,6 +312,15 @@ export function mountRoutes(
     projects: listProjects(ctx.projectDir).map((p) => ({ ...p, current: ctx.projectOpen && p.current })),
     projectOpen: ctx.projectOpen,
   }));
+
+  // 打开本机原生目录选择器：不依赖当前项目，返回真实绝对路径；用户取消时 path=null
+  app.get('/api/projects/pick-directory', async (_, reply) => {
+    const result = pickProjectDirectory();
+    if (!result.available) {
+      return reply.code(501).send({ code: 'PROJECT_PICKER_UNAVAILABLE', message: '当前系统没有可用的目录选择器，请手动输入项目路径' });
+    }
+    return { path: result.path };
+  });
 
   // 添加项目：校验为剧本项目（mmh3_prompts/prompts）或空目录后才可加入；持久化注册表
   app.post('/api/projects/add', async (req) => ({
@@ -699,6 +776,36 @@ export function mountRoutes(
     return { content: readAssetText(id) };
   });
 
+  // 图像 captioning：Ollama 视觉模型描述图片 → 在图像同一位置生成同名 .txt 素材
+  // （preview.png → preview.txt；重复执行按同名覆盖更新，不产生重复素材）
+  app.post('/api/assets/:id/caption', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const asset = listAssets().find((x) => x.id === id);
+    if (!asset) {
+      return reply.code(404).send({ code: 'NODE_NOT_FOUND', message: `素材不存在: ${id}` });
+    }
+    if (asset.kind !== 'img') {
+      return reply.code(400).send({ code: 'INVALID_PATCH', message: '只有图像素材可以生成 caption' });
+    }
+    const { ollamaUrl, ollamaModel } = readSettings();
+    if (!ollamaUrl || !ollamaModel) {
+      return reply.code(400).send({ code: 'INVALID_PATCH', message: '请先在设置中配置 Ollama 地址与视觉模型' });
+    }
+    try {
+      const caption = await new OllamaClient(ollamaUrl).imageToPrompt(ollamaModel, assetFilePath(id), CAPTION_INSTRUCTION);
+      const txtName = `${basename(asset.name, extname(asset.name))}.txt`;
+      const rec = upsertAssetText(txtName, caption);
+      // 同时写回图像记录：卡片缩略图下方与图片预览可直接展示 caption
+      setAssetCaption(id, caption);
+      return { caption, asset: rec };
+    } catch (err) {
+      if (err instanceof DirectorError) {
+        return reply.code(400).send({ code: err.code, message: err.message });
+      }
+      throw err;
+    }
+  });
+
 // 项目聊天历史：按项目持久化（.director/chat.json），重启不丢；切换项目随项目加载
 // —— AGENT 会话（多会话：列表/新建/重命名/删除；历史按会话作用域）——
 app.get('/api/agent/sessions', async () => listChatSessions(ctx.projectDir));
@@ -857,7 +964,7 @@ app.post('/api/story/chat', async (req, reply) => {
     message?: string; model?: string; thinking?: string; persistAs?: string; sessionId?: string;
     systemPrompt?: string; boardId?: string; modelSupportsImages?: boolean;
     images?: Array<{ name?: string; data?: string }>;
-    assetRefs?: Array<{ id?: string; name?: string; kind?: 'txt' | 'vid' }>;
+    assetRefs?: Array<{ id?: string; name?: string; kind?: 'txt' | 'img' | 'vid' }>;
   };
   const message = (body.message ?? '').trim();
   // 附件（图片）允许空文本：消息与图片至少其一
@@ -884,6 +991,7 @@ app.post('/api/story/chat', async (req, reply) => {
     if (r.status === 'ok' && r.hits.length > 0) ragContext = formatRagHits(r.hits);
   }
   const assetContext = buildStoryAssetContext(assetRefs);
+  const assetImageInput = buildStoryAssetImageFiles(assetRefs);
   const buildPrompt = (visionContext = '') => {
     const context = [assetContext, visionContext].filter((part) => part.trim()).join('\n\n');
     return buildStoryChatPrompt(
@@ -907,8 +1015,11 @@ app.post('/api/story/chat', async (req, reply) => {
   if (body.thinking && THINKING_LEVELS.includes(body.thinking)) {
     baseCmd.push('--thinking', body.thinking);
   }
-  // 图片附件：视觉模型走 @绝对路径；文本模型会在下方改走 Ollama 描述降级。
-  const imageCmd = imgAttach ? [...baseCmd, ...imgAttach.files.map((f) => '@' + f)] : baseCmd;
+  // 图片附件与无 caption 的素材库图片：视觉模型走 @绝对路径；文本模型会在下方改走 Ollama 描述降级。
+  const imageFilesForPi = [...(imgAttach?.files ?? []), ...assetImageInput.files];
+  const imageCmd = imageFilesForPi.length > 0
+    ? [...baseCmd, ...imageFilesForPi.map((file) => '@' + file)]
+    : baseCmd;
 
   reply.raw.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -964,7 +1075,13 @@ app.post('/api/story/chat', async (req, reply) => {
   };
   try {
     const idleMs = Number(process.env.DIRECTOR_AGENT_IDLE_MS) || 45_000;
-    const imageFiles = imgAttach?.files ?? [];
+    const imageFiles = imageFilesForPi;
+    const describeFallbackImages = async (): Promise<string> => {
+      const contexts: string[] = [];
+      if (assetImageInput.ids.length > 0) contexts.push(await describeAssetImages(assetImageInput.ids));
+      if (imgAttach && imgAttach.files.length > 0) contexts.push(await describeStoryImages(imgAttach.files));
+      return contexts.filter((context) => context.trim()).join('\\n\\n');
+    };
     let runPrompt = prompt;
     let runCmd = imageCmd;
     let idleKilled = false;
@@ -973,7 +1090,7 @@ app.post('/api/story/chat', async (req, reply) => {
     // 模型列表已明确标记为不支持视觉：先调用 Ollama，再把纯文本描述交给原模型。
     if (imageFiles.length > 0 && body.modelSupportsImages === false) {
       try {
-        const visionContext = await describeStoryImages(imageFiles);
+        const visionContext = await describeFallbackImages();
         runPrompt = buildPrompt(visionContext);
         runCmd = baseCmd;
       } catch (err) {
@@ -985,11 +1102,11 @@ app.post('/api/story/chat', async (req, reply) => {
       // 注入项目上下文（kanban KANBAN_TASK_ID 语义）：agent 进程内可感知当前项目
       const first = await runAgentStream(runCmd, runPrompt, sendCollect, {
         idleTimeoutMs: idleMs,
-        env: {
-          DIRECTOR_PROJECT_DIR: ctx.projectDir,
-          DIRECTOR_PROJECT_NAME: graph.projectName,
-        },
-      });
+      env: {
+        DIRECTOR_PROJECT_DIR: ctx.projectDir,
+        DIRECTOR_PROJECT_NAME: graph.projectName,
+      },
+    });
       idleKilled = first.idleKilled;
       flushPending();
 
@@ -998,7 +1115,7 @@ app.post('/api/story/chat', async (req, reply) => {
       if (imageFiles.length > 0 && !body.modelSupportsImages && !idleKilled
         && agentText.trim().length === 0 && isVisionUnsupportedError(firstModelError)) {
         try {
-          const visionContext = await describeStoryImages(imageFiles);
+          const visionContext = await describeFallbackImages();
           modelError = '';
           const retry = await runAgentStream(baseCmd, buildPrompt(visionContext), sendCollect, {
             idleTimeoutMs: idleMs,
@@ -1189,6 +1306,9 @@ app.get('/api/ollama/models', async (req) => {
   }
 });
 
+// 图像 captioning 指令：生成可复述/检索的详细中文描述（区别于物体设计器的文生图外观描述）
+const CAPTION_INSTRUCTION = '请为这张图片生成一条详细的中文描述（caption），覆盖：主体（人物/动物/物体）及其外观与动作、场景环境、构图、光线、色调与风格。直接输出描述文本本身，不要解释、不要引号、不要 Markdown 标记。';
+
 // 图像转提示词：指定素材库图片（assetId）→ base64 → Ollama 视觉模型 → 外观描述文本
 app.post('/api/ollama/image-to-prompt', async (req, reply) => {
   const body = req.body as { assetId?: string; instruction?: string };
@@ -1251,6 +1371,7 @@ app.get('/api/assets/:id/file', async (req, reply) => {
       model?: string;
       thinking?: string;
       sessionId?: string;
+      assetRefs?: Array<{ id?: string; name?: string; kind?: 'txt' | 'img' | 'vid' }>;
     };
     // 画布摘要：节点类型计数（agent 上下文，避免全量图塞爆提示词）
     const graph = loadGraph(ctx.projectDir);
@@ -1272,11 +1393,16 @@ app.get('/api/assets/:id/file', async (req, reply) => {
     if (body.thinking && THINKING_LEVELS.includes(body.thinking)) {
       cmd.push('--thinking', body.thinking);
     }
+    const assetInput = buildAgentAssetContext(body.assetRefs ?? []);
     const prompt = buildAgentPrompt({
       message: body.message,
       chips: body.chips ?? [],
       graphSummary,
+      assetContext: assetInput.context,
     });
+    const imageCmd = assetInput.imageFiles.length > 0
+      ? [...cmd, ...assetInput.imageFiles.map((file) => '@' + file)]
+      : cmd;
 
     reply.raw.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
@@ -1336,14 +1462,43 @@ app.get('/api/assets/:id/file', async (req, reply) => {
     try {
       const idleMs = Number(process.env.DIRECTOR_AGENT_IDLE_MS) || 45_000;
       // 注入项目上下文（kanban KANBAN_TASK_ID 语义）：agent 进程内可感知当前项目
-      const { idleKilled } = await runAgentStream(cmd, prompt, sendCollect, {
+      const first = await runAgentStream(imageCmd, prompt, sendCollect, {
         idleTimeoutMs: idleMs,
-        env: {
-          DIRECTOR_PROJECT_DIR: ctx.projectDir,
-          DIRECTOR_PROJECT_NAME: graph.projectName,
-        },
-      });
+      env: {
+        DIRECTOR_PROJECT_DIR: ctx.projectDir,
+        DIRECTOR_PROJECT_NAME: graph.projectName,
+      },
+    });
+      let idleKilled = first.idleKilled;
       flushPending();
+
+      // 能力未知时，只有明确的视觉能力错误且尚无输出才自动回退 Ollama；
+      // 生成的描述会写回图片 caption，后续引用直接复用。
+      if (assetInput.imageFiles.length > 0 && !idleKilled
+        && agentText.trim().length === 0 && isVisionUnsupportedError(modelError)) {
+        try {
+          const visionContext = await describeAssetImages(assetInput.imageAssetIds);
+          const retryPrompt = buildAgentPrompt({
+            message: body.message,
+            chips: body.chips ?? [],
+            graphSummary,
+            assetContext: [assetInput.context, visionContext].filter((context) => context.trim()).join('\\n\\n'),
+          });
+          modelError = '';
+          const retry = await runAgentStream(cmd, retryPrompt, sendCollect, {
+            idleTimeoutMs: idleMs,
+            env: {
+              DIRECTOR_PROJECT_DIR: ctx.projectDir,
+              DIRECTOR_PROJECT_NAME: graph.projectName,
+            },
+          });
+          idleKilled = retry.idleKilled;
+          flushPending();
+        } catch (err) {
+          send(`\\n\\n（${err instanceof Error ? err.message : String(err)}）`);
+        }
+      }
+
       appendChatMessage(ctx.projectDir, sessionId, 'agent', agentText);
       if (idleKilled) send('\n\n（输出已空闲停止）');
       else if (agentText.trim().length === 0) {

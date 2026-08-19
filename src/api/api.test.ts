@@ -381,6 +381,59 @@ describe('API agent 模型', () => {
     vi.unstubAllEnvs();
   });
 
+  it('POST /api/agent/chat 注入 @ 素材上下文', async () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'director-home-agent-asset-'));
+    vi.stubEnv('HOME', fakeHome);
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_ECHO_STDIN', '1');
+    try {
+      const created = await a.inject({
+        method: 'POST', url: '/api/assets/import-text',
+        payload: { name: '世界观.md', content: '精灵王国位于北境，冬季漫长。' },
+      });
+      const assetId = created.json().asset.id as string;
+      const res = await a.inject({
+        method: 'POST', url: '/api/agent/chat',
+        payload: {
+          message: '结合这个素材分析',
+          assetRefs: [{ id: assetId, name: '世界观.md', kind: 'txt' }],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.payload).toContain('世界观.md');
+      expect(res.payload).toContain('精灵王国位于北境');
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /api/agent/chat 的图像素材引用作为 pi 图像文件参数传入', async () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'director-home-agent-image-'));
+    vi.stubEnv('HOME', fakeHome);
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_ECHO_ARGS', '1');
+    try {
+      const form = new FormData();
+      form.append('file', new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }), '角色.png');
+      const created = await a.inject({
+        method: 'POST', url: '/api/assets/upload', payload: form,
+        headers: { 'content-type': 'multipart/form-data' },
+      });
+      const assetId = created.json().asset.id as string;
+      const res = await a.inject({
+        method: 'POST', url: '/api/agent/chat',
+        payload: { message: '参考这张图', assetRefs: [{ id: assetId, name: '角色.png', kind: 'img' }] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.payload).toContain('@');
+      expect(res.payload).toContain('.png');
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+
   it('POST /api/agent/chat 透传 thinking 到 pi 命令；非法级别忽略', async () => {
     vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
     vi.stubEnv('MOCK_ECHO_MODEL', '1');

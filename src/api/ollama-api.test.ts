@@ -6,7 +6,7 @@ import Fastify from 'fastify';
 import type { FastifyRequest } from 'fastify';
 import { buildApp } from '../index.js';
 import { saveSettings } from '../settings/settings-store.js';
-import { importAssetFile } from '../assets/assets-store.js';
+import { importAssetFile, listAssets, setAssetCaption } from '../assets/assets-store.js';
 
 // —— Ollama 图像转提示词 API：mock Ollama 服务 + 隔离 HOME（settings/assets 落到临时目录）——
 let ollama: ReturnType<typeof Fastify>;
@@ -162,6 +162,66 @@ describe('API Ollama 图像转提示词', () => {
     expect(res.body).not.toContain('director-story-img-');
   });
 
+  it('AGENT 引用已有 caption 时直接注入描述，不发送图片文件', async () => {
+    const img = listAssets().find((asset) => asset.kind === 'img')!;
+    setAssetCaption(img.id, '银发精灵骑士站在雾林中，冷绿色调。');
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_ECHO_STDIN', '1');
+    const res = await a.inject({
+      method: 'POST', url: '/api/agent/chat',
+      payload: { message: '参考图片继续创作', assetRefs: [{ id: img.id, name: img.name, kind: 'img' }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('银发精灵骑士站在雾林中');
+    expect(res.body).not.toContain('/.director/assets/');
+  });
+
+  it('AGENT 图片视觉失败时回退 Ollama，并把描述写回 caption', async () => {
+    const img = listAssets().find((asset) => asset.kind === 'img')!;
+    const marker = join(home, 'agent-vision-fallback-once');
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_VISION_ERROR_ONCE', marker);
+    vi.stubEnv('MOCK_ECHO_STDIN', '1');
+    const res = await a.inject({
+      method: 'POST', url: '/api/agent/chat',
+      payload: { message: '参考图片继续创作', assetRefs: [{ id: img.id, name: img.name, kind: 'img' }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(lastChatBody?.model).toBe('llava:13b');
+    expect(listAssets().find((asset) => asset.id === img.id)?.caption).toContain('银发精灵骑士');
+    expect(res.body).toContain('银发精灵骑士');
+  });
+
+  it('故事对话引用已有 caption 时直接注入描述，不发送图片文件', async () => {
+    const img = listAssets().find((asset) => asset.kind === 'img')!;
+    setAssetCaption(img.id, '银发精灵骑士站在雾林中，冷绿色调。');
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_ECHO_STDIN', '1');
+    const res = await a.inject({
+      method: 'POST', url: '/api/story/chat',
+      payload: { message: '参考图片继续创作', assetRefs: [{ id: img.id, name: img.name, kind: 'img' }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('银发精灵骑士站在雾林中');
+    expect(res.body).not.toContain('/.director/assets/');
+  });
+
+  it('故事对话图片视觉失败时回退 Ollama，并把描述写回 caption', async () => {
+    const img = listAssets().find((asset) => asset.kind === 'img')!;
+    const marker = join(home, 'story-asset-vision-fallback-once');
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_VISION_ERROR_ONCE', marker);
+    vi.stubEnv('MOCK_ECHO_STDIN', '1');
+    const res = await a.inject({
+      method: 'POST', url: '/api/story/chat',
+      payload: { message: '参考图片继续创作', assetRefs: [{ id: img.id, name: img.name, kind: 'img' }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(lastChatBody?.model).toBe('llava:13b');
+    expect(listAssets().find((asset) => asset.id === img.id)?.caption).toContain('银发精灵骑士');
+    expect(res.body).toContain('银发精灵骑士');
+  });
+
   it('POST 未配置 Ollama（清空地址/模型）返回 400 引导配置', async () => {
     saveSettings({ ollamaUrl: '', ollamaModel: '' });
     const assets = (await a.inject({ method: 'GET', url: '/api/assets' })).json().assets as Array<{ id: string; kind: string }>;
@@ -193,5 +253,67 @@ describe('API 设置透传', () => {
     expect(res.json().settings.ollamaModel).toBe('qwen2.5vl:7b');
     const get = await a.inject({ method: 'GET', url: '/api/settings' });
     expect(get.json().settings.ollamaUrl).toBe('http://127.0.0.1:11434');
+  });
+});
+
+describe('API 素材图像 captioning', () => {
+  it('POST /api/assets/:id/caption 生成同名 .txt 素材并返回描述', async () => {
+    const assets = (await a.inject({ method: 'GET', url: '/api/assets' })).json().assets as Array<{ id: string; kind: string; name: string }>;
+    const img = assets.find((x) => x.kind === 'img')!;
+    const res = await a.inject({ method: 'POST', url: `/api/assets/${img.id}/caption` });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().caption).toContain('银发精灵骑士');
+    // 请求体透传：视觉模型 + base64 图像（1 张）+ captioning 指令
+    expect(lastChatBody?.model).toBe('llava:13b');
+    expect(lastChatBody?.messages[0]?.images).toHaveLength(1);
+    expect(lastChatBody?.messages[0]?.content).toContain('caption');
+    // 同名 txt 素材入库：ref.png → ref.txt
+    const after = (await a.inject({ method: 'GET', url: '/api/assets' })).json().assets as Array<{ id: string; kind: string; name: string; caption?: string }>;
+    const txt = after.find((x) => x.kind === 'txt' && x.name === 'ref.txt');
+    expect(txt).toBeTruthy();
+    const content = (await a.inject({ method: 'GET', url: `/api/assets/${txt!.id}/content` })).json().content;
+    expect(content).toContain('银发精灵骑士');
+    // caption 同时写回图像记录：缩略图下方/预览可直接展示
+    const imgRec = after.find((x) => x.id === img.id);
+    expect(imgRec?.caption).toContain('银发精灵骑士');
+  });
+
+  it('重复 caption 覆盖同名 txt，不产生重复素材', async () => {
+    const assets = (await a.inject({ method: 'GET', url: '/api/assets' })).json().assets as Array<{ id: string; kind: string }>;
+    const img = assets.find((x) => x.kind === 'img')!;
+    await a.inject({ method: 'POST', url: `/api/assets/${img.id}/caption` });
+    await a.inject({ method: 'POST', url: `/api/assets/${img.id}/caption` });
+    const after = (await a.inject({ method: 'GET', url: '/api/assets' })).json().assets as Array<{ id: string; kind: string; name: string }>;
+    const captions = after.filter((x) => x.kind === 'txt' && x.name === 'ref.txt');
+    expect(captions).toHaveLength(1);
+  });
+
+  it('POST 非图像素材返回 400', async () => {
+    const txtDir = mkdtempSync(join(tmpdir(), 'director-caption-txt-'));
+    const txtPath = join(txtDir, 'note.txt');
+    writeFileSync(txtPath, 'hello', 'utf8');
+    const asset = importAssetFile(txtPath);
+    rmSync(txtDir, { recursive: true, force: true });
+    const res = await a.inject({ method: 'POST', url: `/api/assets/${asset.id}/caption` });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('INVALID_PATCH');
+    expect(res.json().message).toContain('只有图像');
+  });
+
+  it('POST 素材不存在返回 404', async () => {
+    const res = await a.inject({ method: 'POST', url: '/api/assets/missing/caption' });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().code).toBe('NODE_NOT_FOUND');
+  });
+
+  it('POST 未配置 Ollama 返回 400 引导配置', async () => {
+    saveSettings({ ollamaUrl: '', ollamaModel: '' });
+    const assets = (await a.inject({ method: 'GET', url: '/api/assets' })).json().assets as Array<{ id: string; kind: string }>;
+    const img = assets.find((x) => x.kind === 'img')!;
+    const res = await a.inject({ method: 'POST', url: `/api/assets/${img.id}/caption` });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().message).toContain('配置 Ollama');
+    // 恢复配置，避免影响后续用例
+    saveSettings({ ollamaUrl, ollamaModel: 'llava:13b' });
   });
 });

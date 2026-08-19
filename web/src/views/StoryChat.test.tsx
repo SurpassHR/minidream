@@ -47,6 +47,13 @@ beforeEach(() => {
     if (u.includes('/api/story/chat/history')) {
       return new Response(JSON.stringify({ messages: HISTORY }), { status: 200 });
     }
+    if (u === '/api/assets') {
+      return new Response(JSON.stringify({ assets: [
+        { id: 'txt-1', kind: 'txt', name: '世界观.md' },
+        { id: 'img-1', kind: 'img', name: '角色.png' },
+        { id: 'vid-1', kind: 'vid', name: '参考视频.mp4' },
+      ] }), { status: 200 });
+    }
     if (u.includes('/api/assets/') && u.endsWith('/file')) {
       return new Response(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }), { status: 200 });
     }
@@ -116,6 +123,31 @@ describe('StoryChat', () => {
     expect(composer).toContainElement(screen.getByTestId('chat-attach-btn'));
     expect(composer).toContainElement(screen.getByRole('button', { name: '发送' }));
     expect(composer).toContainElement(screen.getByText('总结成稿'));
+  });
+
+  it('首次加载后输入 @ 只保留一个字符并打开候选菜单', async () => {
+    presetLegacySession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    const input = screen.getByTestId('chat-input');
+    // 模拟浏览器在 contenteditable 子节点外插入字符（首次刷新后的真实输入路径）。
+    input.appendChild(document.createTextNode('@'));
+    fireEvent.input(input);
+    await waitFor(() => expect(input.textContent).toBe('@'));
+    expect(screen.getByTestId('chat-asset-mention-menu')).toBeInTheDocument();
+    expect((input.textContent ?? '').match(/@/g)).toHaveLength(1);
+  });
+
+  it('候选菜单使用浮层并限制在输入容器宽度内', async () => {
+    presetLegacySession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    const input = screen.getByTestId('chat-input');
+    fireEvent.change(input, { target: { value: '@' } });
+    const menu = await screen.findByTestId('chat-asset-mention-menu');
+    expect(menu).toHaveClass('asset-mention-menu');
+    expect(menu).toHaveAttribute('data-placement', 'above');
+    expect(menu).toHaveAttribute('data-width-bound', 'container');
   });
 
   it('Shift+Enter 保留多行输入，不触发发送', async () => {
@@ -197,15 +229,39 @@ describe('StoryChat', () => {
     } as unknown as DragEvent);
     drop({ id: 'txt-1', name: '世界观.md', kind: 'txt' });
     drop({ id: 'vid-1', name: '参考视频.mp4', kind: 'vid' });
-    await waitFor(() => expect(screen.getByText('世界观.md')).toBeInTheDocument());
-    expect(screen.getByText('参考视频.mp4')).toBeInTheDocument();
-    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: '结合这些素材继续创作' } });
+    await waitFor(() => expect(screen.getByTestId('chat-input')).toHaveValue('@世界观.md @参考视频.mp4 '));
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: `${(screen.getByTestId('chat-input') as HTMLTextAreaElement).value}结合这些素材继续创作` } });
     fireEvent.click(screen.getByText('发送'));
     await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(0));
     expect(CHAT_BODIES.at(-1)!.assetRefs).toEqual([
       { id: 'txt-1', name: '世界观.md', kind: 'txt' },
       { id: 'vid-1', name: '参考视频.mp4', kind: 'vid' },
     ]);
+  });
+
+  it('输入 @ 可搜索并引用任意素材，发送时透传素材引用', async () => {
+    presetLegacySession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    const input = screen.getByTestId('chat-input');
+    fireEvent.change(input, { target: { value: '@' } });
+    expect(screen.getByTestId('chat-asset-mention-menu')).toBeInTheDocument();
+    expect(screen.getByText('世界观.md')).toBeInTheDocument();
+    expect(screen.getByText('角色.png')).toBeInTheDocument();
+    expect(screen.getByText('参考视频.mp4')).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: '@世' } });
+    expect(screen.getByText('世界观.md')).toBeInTheDocument();
+    expect(screen.queryByText('角色.png')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('chat-asset-mention-txt-1'));
+    expect(screen.queryByTestId('chat-asset-ref-txt-1')).not.toBeInTheDocument();
+    expect(input).toHaveValue('@世界观.md ');
+    fireEvent.change(input, { target: { value: `${(input as HTMLTextAreaElement).value}结合这个素材继续创作` } });
+    fireEvent.click(screen.getByText('发送'));
+    await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(0));
+    expect(CHAT_BODIES.at(-1)!.assetRefs).toEqual([
+      { id: 'txt-1', name: '世界观.md', kind: 'txt' },
+    ]);
+    expect(CHAT_BODIES.at(-1)!.message).toContain('@世界观.md');
   });
 
   it('附件可移除：点 × 后预览消失', async () => {

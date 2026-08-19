@@ -416,7 +416,7 @@ function CanvasInner({ onNodeSubmit, onDeleteNode, onAssetDrop }: CanvasProps) {
       <div className="vf bl" /><div className="vf br" />
       {!graph?.nodes.length && (
         <div className="canvas-empty">
-          空画布——在左侧素材库拖入素材，或让 agent 生成分镜
+          空画布——从顶栏「素材库」拖入素材，或让 agent 生成分镜
         </div>
       )}
       {/* 右键菜单 */}

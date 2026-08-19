@@ -197,6 +197,12 @@ export const client = {
     return { projects: r.projects, projectOpen: r.projectOpen ?? r.projects.some((p) => p.current) };
   },
 
+  // 使用本机原生文件浏览器选择项目目录；取消时返回 null
+  async pickProjectDirectory(): Promise<string | null> {
+    const r = await req<{ path: string | null }>('/api/projects/pick-directory');
+    return r.path;
+  },
+
   // 手动添加项目：校验为剧本项目（mmh3_prompts/prompts）或空目录后才可添加；
   // 成功后持久化注册表，之后自动显示在项目栏
   async addProject(path: string): Promise<ProjectInfo[]> {
@@ -236,8 +242,8 @@ export const client = {
     });
   },
 
-  async listAssets(): Promise<Array<{ id: string; kind: 'txt' | 'img' | 'vid'; name: string; meta?: string }>> {
-    const r = await req<{ assets: Array<{ id: string; kind: 'txt' | 'img' | 'vid'; name: string; meta?: string }> }>('/api/assets');
+  async listAssets(): Promise<Array<{ id: string; kind: 'txt' | 'img' | 'vid'; name: string; meta?: string; caption?: string }>> {
+    const r = await req<{ assets: Array<{ id: string; kind: 'txt' | 'img' | 'vid'; name: string; meta?: string; caption?: string }> }>('/api/assets');
     return r.assets;
   },
 
@@ -326,6 +332,13 @@ export const client = {
       method: 'POST', body: JSON.stringify({ assetId, instruction }),
     });
     return r.prompt;
+  },
+
+  // 图像 captioning：视觉模型描述图片 → 在图像同一位置生成同名 .txt 素材（重复执行覆盖更新）
+  async captionAsset(assetId: string): Promise<{ caption: string; asset: AssetRecord }> {
+    return await req<{ caption: string; asset: AssetRecord }>(`/api/assets/${encodeURIComponent(assetId)}/caption`, {
+      method: 'POST',
+    });
   },
 
   // 文本素材导入：名称 + 内容直接入库
@@ -513,7 +526,7 @@ export const client = {
     boardId?: string | null,
     images?: Array<{ name: string; data: string }>,
     modelSupportsImages?: boolean,
-    assetRefs?: Array<{ id: string; name: string; kind: 'txt' | 'vid' }>,
+    assetRefs?: Array<{ id: string; name: string; kind: 'txt' | 'img' | 'vid' }>,
   ): Promise<void> {
     const res = await fetch('/api/story/chat', {
       method: 'POST',

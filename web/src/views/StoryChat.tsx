@@ -10,17 +10,19 @@ import { resolveBoardPrompt, resolvePrompt, withArmorBreak } from './roles';
 import { AiButton, EmptyState, ErrorBanner } from './role-ui';
 import type { SessionMeta, StoryBoard } from '../types';
 import type { AssetItem } from '../panels/AssetLibrary';
+import { insertAssetMention, useAssetMentions, type MentionAsset } from '../panels/AssetMentionPicker';
+import { MentionComposer } from '../panels/MentionComposer';
 
 // images：用户消息携带的图像附件（data URL 缩略图展示；历史重载不还原，仅即时会话可见）
 export interface ChatMsg {
   who: 'user' | 'agent';
   text: string;
   images?: Array<{ name: string; dataUrl: string }>;
-  assetRefs?: Array<{ id: string; name: string; kind: 'txt' | 'vid' }>;
+  assetRefs?: MentionAsset[];
 }
 
 // 待发送的图像附件（预览 + 随消息发送）
-export interface ChatAttachment { id: string; name: string; dataUrl: string }
+export interface ChatAttachment { id: string; name: string; dataUrl: string; assetId?: string; fromMention?: boolean }
 
 // 六步答案约定格式解析：按行匹配 `stepId: 内容`，非法行忽略（导出便于测试）
 export function parseStoryAnswers(text: string): Record<string, string> {
@@ -80,10 +82,11 @@ export function StoryChat(props: {
   const [sessionDialogBusy, setSessionDialogBusy] = useState(false);
   // 图像附件：Ctrl+V 粘贴 / 附件按钮选择 → 预览列表 → 随下一条消息发送
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
-  const [assetRefs, setAssetRefs] = useState<Array<{ id: string; name: string; kind: 'txt' | 'vid' }>>([]);
+  const [assetRefs, setAssetRefs] = useState<MentionAsset[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // 当前剧本项目 id（归组会话 + 后端解析项目级提示词/RAG）
   const boardId = props.board?.id ?? null;
+  const assetMention = useAssetMentions(input);
 
   // 发送/总结完成后重新拉取会话列表：后端在首条用户消息后自动命名会话并 bump updatedAt，
   // 不刷新则当前会话一直显示「新会话」直到页面重载
@@ -232,7 +235,9 @@ export function StoryChat(props: {
   };
 
   const removeAttachment = (id: string) => {
+    const removed = attachments.find((a) => a.id === id);
     setAttachments((prev) => prev.filter((a) => a.id !== id));
+    if (removed?.assetId) setAssetRefs((prev) => prev.filter((asset) => asset.id !== removed.assetId));
   };
 
   const removeAssetRef = (id: string) => {
@@ -240,7 +245,7 @@ export function StoryChat(props: {
   };
 
   // 从全局素材库拖入故事对话：图像转图片附件，文本/视频保留为素材引用。
-  const addAssetAttachment = async (item: AssetItem) => {
+  const addAssetAttachment = async (item: AssetItem, fromMention = false) => {
     if (item.kind !== 'img') {
       if (!item.id) {
         setError('素材缺少可引用的 id');
@@ -270,6 +275,8 @@ export function StoryChat(props: {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         name: item.name,
         dataUrl,
+        assetId: item.id,
+        fromMention,
       }]);
       setError('');
     } catch (err) {
@@ -277,12 +284,26 @@ export function StoryChat(props: {
     }
   };
 
+  const selectAssetMention = (item: MentionAsset) => {
+    setInput(insertAssetMention(input, item));
+    setAssetRefs((prev) => prev.some((asset) => asset.id === item.id) ? prev : [...prev, item]);
+
+  };
+
+  const handleInputChange = (value: string) => {
+    setInput(value);
+    setAssetRefs((prev) => prev.filter((asset) => value.includes(`@${asset.name}`)));
+    setAttachments((prev) => prev.filter((attachment) => !attachment.fromMention || value.includes(`@${attachment.name}`)));
+  };
+
   const handleAssetDrop = (e: React.DragEvent) => {
     const raw = e.dataTransfer.getData('application/x-asset');
     if (!raw) return;
     e.preventDefault();
     try {
-      void addAssetAttachment(JSON.parse(raw) as AssetItem);
+      const item = JSON.parse(raw) as AssetItem;
+      setInput((value) => `${value}${value && !/\s$/.test(value) ? ' ' : ''}@${item.name} `);
+      void addAssetAttachment(item);
     } catch {
       setError('无法读取拖入的素材');
     }
@@ -452,25 +473,15 @@ export function StoryChat(props: {
           }}
           onDrop={handleAssetDrop}
         >
-          {(attachments.length > 0 || assetRefs.length > 0) && (
+          {attachments.some((a) => !a.fromMention) && (
             <div className="chat-attach-row" data-testid="chat-attach-row">
-              {attachments.map((a) => (
+              {attachments.filter((a) => !a.fromMention).map((a) => (
                 <div key={a.id} className="chat-attach" data-testid={`chat-attach-${a.id}`}>
                   <img src={a.dataUrl} alt={a.name} />
                   <span className="chat-attach-name">{a.name}</span>
                   <span
                     className="chat-attach-x" role="button" tabIndex={0} title="移除附件"
                     onClick={() => removeAttachment(a.id)}
-                  ><Icon name="x" /></span>
-                </div>
-              ))}
-              {assetRefs.map((asset) => (
-                <div key={asset.id} className="chat-asset-ref" data-testid={`chat-asset-ref-${asset.id}`}>
-                  <Icon name={asset.kind === 'txt' ? 'file-text' : 'video'} />
-                  <span className="chat-attach-name">{asset.name}</span>
-                  <span
-                    className="chat-attach-x" role="button" tabIndex={0} title="移除素材引用"
-                    onClick={() => removeAssetRef(asset.id)}
                   ><Icon name="x" /></span>
                 </div>
               ))}
@@ -486,19 +497,26 @@ export function StoryChat(props: {
               ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }}
               onChange={(e) => pickFiles(e)}
             />
-            <textarea
-              className="ne-input chat-input" data-testid="chat-input"
-              placeholder="和编剧聊聊你的故事…（Enter 发送 · Ctrl+V 粘贴图片作为参考）"
+            <MentionComposer
+              className="chat-input"
+              testId="chat-input"
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              assets={assetMention.assets}
+              placeholder="和编剧聊聊你的故事…（Enter 发送 · Ctrl+V 粘贴图片作为参考）"
+              mentionOpen={assetMention.open}
+              mentionItems={assetMention.candidates}
+              mentionActiveIndex={assetMention.activeIndex}
+              mentionTestIdPrefix="chat"
+              onChange={handleInputChange}
               onPaste={handlePaste}
+              onSelectMention={selectAssetMention}
               onKeyDown={(e) => {
+                if (assetMention.handleKeyDown(e, selectAssetMention)) return;
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   send();
                 }
               }}
-              rows={2}
             />
             <button className="btn-primary" onClick={send} disabled={busy || (!input.trim() && attachments.length === 0 && assetRefs.length === 0)}>发送</button>
           </div>

@@ -20,6 +20,17 @@ describe('buildAgentPrompt', () => {
     expect(p).toContain('3 分镜 · 4 关键帧');
     expect(p).toContain('分析分镜节奏');
   });
+
+  it('包含 @ 素材引用上下文', () => {
+    const p = buildAgentPrompt({
+      message: '结合素材分析',
+      chips: [],
+      graphSummary: '空画布',
+      assetContext: '文本素材「世界观.md」：精灵王国位于北境',
+    });
+    expect(p).toContain('世界观.md');
+    expect(p).toContain('精灵王国位于北境');
+  });
 });
 
 describe('runAgentStream', () => {

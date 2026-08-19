@@ -99,6 +99,8 @@ export interface AssetRecord {
   ext: string;
   size: number;
   importedAt: number;
+  /** 图像 captioning 生成的描述（写回图像记录，卡片缩略图下方/预览可直接展示） */
+  caption?: string;
 }
 
 // 会话元数据（镜像后端 src/sessions/store.ts）

@@ -93,9 +93,8 @@ afterEach(() => {
 });
 
 describe('App 布局骨架', () => {
-  it('渲染五区布局（项目名与项目栏来自真实接口）', async () => {
+  it('渲染工作区布局（项目名与项目栏来自真实接口）', async () => {
     render(<App />);
-    expect(screen.getByTestId('left-panel')).toBeInTheDocument();
     expect(screen.getByTestId('canvas')).toBeInTheDocument();
     expect(screen.getByTestId('agent-panel')).toBeInTheDocument();
     expect(screen.getByTestId('timeline')).toBeInTheDocument();
@@ -200,16 +199,16 @@ describe('顶栏项目切换器高亮', () => {
 });
 
 describe('App 面板分割条', () => {
-  it('拖拽左分割条改变左栏宽度并持久化', async () => {
+  it('拖拽右分割条改变右栏宽度并持久化', async () => {
     render(<App />);
-    const left = screen.getByTestId('left-panel');
-    expect(left.style.flexBasis).toBe('270px');
-    // 模拟拖拽：按下 → window 移动 +100px → 抬起
-    fireEvent.mouseDown(screen.getByTestId('splitter-left'), { clientX: 300, clientY: 100 });
-    fireEvent.mouseMove(window, { clientX: 400, clientY: 100 });
+    const right = screen.getByTestId('agent-panel');
+    expect(right.style.flexBasis).toBe('300px');
+    // 模拟拖拽：按下 → window 移动 -100px → 抬起（向左拖 = 右栏变宽）
+    fireEvent.mouseDown(screen.getByTestId('splitter-right'), { clientX: 300, clientY: 100 });
+    fireEvent.mouseMove(window, { clientX: 200, clientY: 100 });
     fireEvent.mouseUp(window);
-    expect(left.style.flexBasis).toBe('370px');
-    expect(localStorage.getItem('dw:leftW')).toBe('370');
+    expect(right.style.flexBasis).toBe('400px');
+    expect(localStorage.getItem('dw:rightW')).toBe('400');
   });
 
   it('拖拽下分割条改变底部高度，双击恢复默认', async () => {
@@ -228,11 +227,11 @@ describe('App 面板分割条', () => {
 
   it('面板尺寸有上下限（不会拖没）', () => {
     render(<App />);
-    const left = screen.getByTestId('left-panel');
-    fireEvent.mouseDown(screen.getByTestId('splitter-left'), { clientX: 100, clientY: 100 });
-    fireEvent.mouseMove(window, { clientX: -5000, clientY: 100 });
+    const right = screen.getByTestId('agent-panel');
+    fireEvent.mouseDown(screen.getByTestId('splitter-right'), { clientX: 300, clientY: 100 });
+    fireEvent.mouseMove(window, { clientX: 400, clientY: 100 });
     fireEvent.mouseUp(window);
-    expect(left.style.flexBasis).toBe('200px'); // 最小 200
+    expect(right.style.flexBasis).toBe('240px'); // 最小 240
   });
 });
 

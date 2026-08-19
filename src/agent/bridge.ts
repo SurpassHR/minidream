@@ -4,6 +4,7 @@ export interface AgentChatInput {
   message: string;
   chips: Array<{ name: string; content: string }>;
   graphSummary: string;
+  assetContext?: string;
 }
 
 // 组装提示词：chips 上下文 + 画布摘要 + 用户消息（纯函数）
@@ -16,6 +17,7 @@ export function buildAgentPrompt(input: AgentChatInput): string {
       parts.push(`\n[${c.name}]\n${c.content}`);
     }
   }
+  if (input.assetContext?.trim()) parts.push(input.assetContext.trim());
   parts.push('\n用户消息：\n' + input.message);
   return parts.join('\n');
 }

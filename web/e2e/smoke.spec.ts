@@ -1,9 +1,8 @@
 import { expect, test } from '@playwright/test';
 
-// 冒烟：页面加载出五区；后端未启动时画布为空提示仍可见
-test('工作台加载出五区布局', async ({ page }) => {
+// 冒烟：页面加载出主要区域；后端未启动时画布为空提示仍可见
+test('工作台加载出工作区布局', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByTestId('left-panel')).toBeVisible();
   await expect(page.getByTestId('canvas')).toBeVisible();
   await expect(page.getByTestId('agent-panel')).toBeVisible();
   await expect(page.getByTestId('timeline')).toBeVisible();
@@ -13,12 +12,14 @@ test('工作台加载出五区布局', async ({ page }) => {
 
 test('素材库空态与导入菜单', async ({ page }) => {
   await page.goto('/');
-  // 空素材库显示空态卡片（非 mock）
+  // 全局素材库在抽屉内：顶栏按钮打开，空态卡片（非 mock）
+  await page.getByTestId('asset-library-toggle').click();
+  await expect(page.getByTestId('asset-drawer')).toHaveClass(/open/);
   await expect(page.getByTestId('asset-empty')).toBeVisible();
   await expect(page.getByText('素材库是空的')).toBeVisible();
-  // 作用域限定到左侧面板：顶栏也有一个“＋ 导入”按钮（项目导入）；
+  // 作用域限定到抽屉：顶栏也有一个“＋ 导入”按钮（项目导入）；
   // 空态内另有“＋ 导入素材”按钮，需精确匹配工具栏按钮
-  await page.getByTestId('left-panel').getByText('＋ 导入', { exact: true }).click();
+  await page.getByTestId('asset-drawer').getByText('＋ 导入', { exact: true }).click();
   await expect(page.getByText('文字 / 提示词')).toBeVisible();
 });
 test('项目栏：真实项目列表 + 当前项目高亮 + 头部项目名一致', async ({ page }) => {
@@ -91,20 +92,20 @@ test('素材库：Ctrl+V 粘贴图像自动入库', async ({ page }) => {
   if (hit) await page.request.delete(`/api/assets/${hit.id}?confirm=true`);
 });
 
-test('面板分割条：拖拽调整左栏宽度并持久化', async ({ page }) => {
+test('面板分割条：拖拽调整右栏宽度并持久化', async ({ page }) => {
   await page.goto('/');
-  const left = page.getByTestId('left-panel');
-  const splitter = page.getByTestId('splitter-left');
+  const right = page.getByTestId('agent-panel');
+  const splitter = page.getByTestId('splitter-right');
   const box = await splitter.boundingBox();
   expect(box).not.toBeNull();
-  // 拖拽：按下 → 移动 +80px → 抬起
-  await page.mouse.move((box?.x ?? 0) + 2, (box?.y ?? 0) + 200);
+  // 拖拽：按下 → 移动 -80px → 抬起（向左拖 = 右栏变宽）
+  await page.mouse.move((box?.x ?? 0) - 2, (box?.y ?? 0) + 200);
   await page.mouse.down();
-  await page.mouse.move((box?.x ?? 0) + 82, (box?.y ?? 0) + 200, { steps: 5 });
+  await page.mouse.move((box?.x ?? 0) - 82, (box?.y ?? 0) + 200, { steps: 5 });
   await page.mouse.up();
-  const basis = await left.evaluate((el) => (el as HTMLElement).style.flexBasis);
-  expect(Number.parseFloat(basis)).toBeGreaterThan(232);
+  const basis = await right.evaluate((el) => (el as HTMLElement).style.flexBasis);
+  expect(Number.parseFloat(basis)).toBeGreaterThan(308);
   // 持久化
-  const stored = await page.evaluate(() => localStorage.getItem('dw:leftW'));
-  expect(Number(stored)).toBeGreaterThan(232);
+  const stored = await page.evaluate(() => localStorage.getItem('dw:rightW'));
+  expect(Number(stored)).toBeGreaterThan(308);
 });
