@@ -3,6 +3,7 @@ import type { WsEvent } from '../types';
 export interface ConnectWsHooks {
   onOpen?: () => void;
   onClose?: () => void;
+  onResync?: () => void;
 }
 
 // 连接 WS；断线 3 秒自动重连（指数退避：3s→6s→12s→上限 30s）；返回断开函数
@@ -19,6 +20,7 @@ export function connectWs(onEvent: (ev: WsEvent) => void, hooks: ConnectWsHooks 
     ws.onopen = () => {
       retryMs = 3000; // 连接成功重置退避
       hooks.onOpen?.();
+      hooks.onResync?.();
     };
     ws.onmessage = (e) => {
       try { onEvent(JSON.parse(e.data as string) as WsEvent); } catch { /* 忽略坏消息 */ }

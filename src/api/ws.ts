@@ -5,7 +5,7 @@ import chokidar, { type FSWatcher } from 'chokidar';
 import { mappedFile } from '../sync/dual-writer.js';
 import { loadGraph } from '../graph/graph-store.js';
 import { onGraphChanged, applyMutation } from './mutations.js';
-import { onTaskChanged } from '../generation/queue.js';
+import type { TaskQueue } from '../tasks/queue.js';
 
 const clients = new Set<WebSocket>();
 
@@ -20,7 +20,7 @@ export interface WsHandle {
 
 // 项目热切换后 watcher 需要跟随新的 projectDir；用 getProjectDir 访问器保持
 // 与 mountRoutes 共享的同一可变上下文（单一事实来源），避免两处各自维护副本。
-export function registerWs(server: http.Server, getProjectDir: () => string): WsHandle {
+export function registerWs(server: http.Server, getProjectDir: () => string, taskQueue?: TaskQueue): WsHandle {
   const wss = new WebSocketServer({ server, path: '/ws' });
   wss.on('connection', (ws) => {
     clients.add(ws);
@@ -34,9 +34,9 @@ export function registerWs(server: http.Server, getProjectDir: () => string): Ws
     }
   });
 
-  // 生成任务状态变更 → WS 广播 generation 事件（前端队列面板实时更新）
-  onTaskChanged((task) => {
-    const payload = JSON.stringify({ type: 'generation', task });
+  // 统一任务状态变更 → WS 广播 task 事件（前端任务队列实时更新）。
+  const unsubscribeTasks = taskQueue?.subscribe((task) => {
+    const payload = JSON.stringify({ type: 'task', task });
     for (const ws of clients) {
       if (ws.readyState === WebSocket.OPEN) ws.send(payload);
     }
@@ -112,6 +112,7 @@ export function registerWs(server: http.Server, getProjectDir: () => string): Ws
     ready,
     close: async () => {
       await watcher.close();
+      unsubscribeTasks?.();
       wss.close();
     },
     switchDir: async (dir: string) => {

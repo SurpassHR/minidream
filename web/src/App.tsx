@@ -22,11 +22,14 @@ import { useHashRoute } from './router';
 import { StoryTellerView } from './views/StoryTellerView';
 import { ObjectDesignerView } from './views/ObjectDesignerView';
 import type { MentionAsset } from './panels/AssetMentionPicker';
+import type { TaskRecord } from './types';
+import { TaskQueue } from './panels/TaskQueue';
 
 // 工作区布局骨架：素材库为全局抽屉，画布右侧 AGENT 面板、底部时间线/版本/队列
 export default function App() {
   const route = useHashRoute();
   const tasks = useGraphStore((s) => s.tasks);
+  const taskRecords = useGraphStore((s) => s.taskRecords);
   const graph = useGraphStore((s) => s.graph);
   const chips = useGraphStore((s) => s.chips);
   const removeChip = useGraphStore((s) => s.removeChip);
@@ -54,6 +57,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   // 全局素材抽屉：非模态侧栏，打开时不遮挡画布/对话
   const [assetDrawerOpen, setAssetDrawerOpen] = useState(false);
+  const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
   // agent 活动回传（MCP 工具调用 → WS agent-activity）：显示在 AGENT 面板顶部
   const [agentActivity, setAgentActivity] = useState<{ text: string; at: number } | null>(null);
 
@@ -124,6 +128,8 @@ export default function App() {
   const applyGraph = useGraphStore((s) => s.applyGraph);
   const setConnected = useGraphStore((s) => s.setConnected);
   const upsertTask = useGraphStore((s) => s.upsertTask);
+  const replaceTaskRecords = useGraphStore((s) => s.replaceTaskRecords);
+  const upsertTaskRecord = useGraphStore((s) => s.upsertTaskRecord);
   // ComfyUI 连接状态三态：null=检测中、true=已连接、false=未连接
   const [comfyHealthy, setComfyHealthy] = useState<boolean | null>(null);
   // 当前 ComfyUI 地址（来自健康检查/设置）
@@ -155,19 +161,26 @@ export default function App() {
     });
   };
 
+  const refreshTasks = useCallback(() => {
+    void client.listTasks().then((list) => replaceTaskRecords(Array.isArray(list) ? list : [])).catch(() => {});
+  }, [replaceTaskRecords]);
+
   useEffect(() => {
     void client.getGraph().then(applyGraph).catch(() => {});
+    refreshTasks();
     const disconnect = connectWs((ev) => {
       if (ev.type === 'graph') { applyGraph(ev.graph); setConnected(true); }
       else if (ev.type === 'generation') { upsertTask(ev.task); }
+      else if (ev.type === 'task') { upsertTaskRecord(ev.task); }
       else if (ev.type === 'agent-activity') { setAgentActivity({ text: ev.text, at: ev.at }); }
       // file-changed：图已由后端回填，等下一个 graph 事件即可
     }, {
       onOpen: () => setConnected(true),
       onClose: () => setConnected(false),
+      onResync: refreshTasks,
     });
     return disconnect;
-  }, [applyGraph, setConnected, upsertTask]);
+  }, [applyGraph, refreshTasks, setConnected, upsertTask, upsertTaskRecord]);
 
   // ComfyUI 健康检查：挂载时立即拉取 + 每 15 秒轮询刷新
   useEffect(() => {
@@ -367,6 +380,19 @@ export default function App() {
     }
   }, [removeChip]);
 
+  const generationTaskList = [...taskRecords.values()]
+    .filter((task) => task.kind === 'comfy-generation')
+    .map((task) => ({
+      id: typeof task.payload.nodeId === 'string' ? task.payload.nodeId : task.id,
+      status: task.status === 'interrupted' ? 'failed' as const : task.status as 'queued' | 'running' | 'success' | 'failed' | 'cancelled',
+      progress: task.progress,
+      error: task.error,
+      promptId: typeof task.result?.promptId === 'string' ? task.result.promptId : undefined,
+      result: typeof task.result?.videoPath === 'string'
+        ? { videoPath: task.result.videoPath, lastFramePath: typeof task.result.lastFramePath === 'string' ? task.result.lastFramePath : '' }
+        : undefined,
+    }));
+
   return (
     <div className="app" data-theme={theme}>
       <header className="topbar">
@@ -406,8 +432,15 @@ export default function App() {
           data-testid="asset-library-toggle"
           aria-expanded={assetDrawerOpen}
           title="打开全局素材库（可拖到画布或对话）"
-          onClick={() => setAssetDrawerOpen((open) => !open)}
+          onClick={() => { setAssetDrawerOpen((open) => !open); setTaskDrawerOpen(false); }}
         ><Icon name="image" />素材库</button>
+        <button
+          className={`btn-ghost task-queue-toggle${taskDrawerOpen ? ' active' : ''}`}
+          data-testid="task-queue-toggle"
+          aria-expanded={taskDrawerOpen}
+          title="查看全部后台任务"
+          onClick={() => { setTaskDrawerOpen((open) => !open); setAssetDrawerOpen(false); }}
+        ><Icon name="text-lines" />任务队列{taskRecords.size > 0 && <span className="task-queue-count" data-testid="task-queue-count">{[...taskRecords.values()].filter((task) => task.status === 'queued' || task.status === 'running').length}</span>}</button>
         <button
           className="btn-ghost theme-toggle"
           data-testid="theme-toggle"
@@ -450,7 +483,17 @@ export default function App() {
             </aside>
               </>
             ) : <ProjectEmptyState />}
-            <AssetDrawer open={assetDrawerOpen} onClose={() => setAssetDrawerOpen(false)} items={assets ?? []} onDropToCanvas={handleDropToCanvas} onAssetsChanged={refreshAssets} />
+            <WorkspaceDrawer
+              open={assetDrawerOpen || taskDrawerOpen}
+              mode={taskDrawerOpen ? 'tasks' : 'assets'}
+              onClose={() => { setAssetDrawerOpen(false); setTaskDrawerOpen(false); }}
+              items={assets ?? []}
+              tasks={[...taskRecords.values()]}
+              onDropToCanvas={handleDropToCanvas}
+              onAssetsChanged={refreshAssets}
+              onCancel={(id) => { void client.cancelTask(id).then((r) => { if (r.task) upsertTaskRecord(r.task); else refreshTasks(); }); }}
+              onRetry={(id) => { void client.retryTask(id).then(upsertTaskRecord).catch(() => {}); }}
+            />
           </main>
           {projectOpen && <>
           <div
@@ -463,7 +506,7 @@ export default function App() {
           <footer className="footer" style={{ height: footerH }}>
             <div className="timeline-wrap" data-testid="timeline"><Timeline /></div>
             <div className="versions-wrap" data-testid="versions"><VersionsList onRollback={handleRollback} /></div>
-            <div className="queue-wrap" data-testid="queue"><GenQueue tasks={[...tasks.values()]} /></div>
+            <div className="queue-wrap" data-testid="queue"><GenQueue tasks={generationTaskList} /></div>
           </footer>
           </>}
         </>
@@ -479,7 +522,17 @@ export default function App() {
               thinkingLevel={settings.agentThinking}
             />
           ) : <ProjectEmptyState />}
-          <AssetDrawer open={assetDrawerOpen} onClose={() => setAssetDrawerOpen(false)} items={assets ?? []} onDropToCanvas={handleDropToCanvas} onAssetsChanged={refreshAssets} />
+          <WorkspaceDrawer
+            open={assetDrawerOpen || taskDrawerOpen}
+            mode={taskDrawerOpen ? 'tasks' : 'assets'}
+            onClose={() => { setAssetDrawerOpen(false); setTaskDrawerOpen(false); }}
+            items={assets ?? []}
+            tasks={[...taskRecords.values()]}
+            onDropToCanvas={handleDropToCanvas}
+            onAssetsChanged={refreshAssets}
+            onCancel={(id) => { void client.cancelTask(id).then((r) => { if (r.task) upsertTaskRecord(r.task); else refreshTasks(); }); }}
+            onRetry={(id) => { void client.retryTask(id).then(upsertTaskRecord).catch(() => {}); }}
+          />
         </div>
       ) : (
         <div className="role-workspace">
@@ -491,7 +544,17 @@ export default function App() {
               armorBreakEnabled={settings.armorBreakEnabled}
             />
           ) : <ProjectEmptyState />}
-          <AssetDrawer open={assetDrawerOpen} onClose={() => setAssetDrawerOpen(false)} items={assets ?? []} onDropToCanvas={handleDropToCanvas} onAssetsChanged={refreshAssets} />
+          <WorkspaceDrawer
+            open={assetDrawerOpen || taskDrawerOpen}
+            mode={taskDrawerOpen ? 'tasks' : 'assets'}
+            onClose={() => { setAssetDrawerOpen(false); setTaskDrawerOpen(false); }}
+            items={assets ?? []}
+            tasks={[...taskRecords.values()]}
+            onDropToCanvas={handleDropToCanvas}
+            onAssetsChanged={refreshAssets}
+            onCancel={(id) => { void client.cancelTask(id).then((r) => { if (r.task) upsertTaskRecord(r.task); else refreshTasks(); }); }}
+            onRetry={(id) => { void client.retryTask(id).then(upsertTaskRecord).catch(() => {}); }}
+          />
         </div>
       )}
       <ConfirmDialog
@@ -543,28 +606,39 @@ function ProjectEmptyState() {
   );
 }
 
-function AssetDrawer(props: {
+function WorkspaceDrawer(props: {
   open: boolean;
+  mode: 'assets' | 'tasks';
   onClose: () => void;
   items: AssetItem[];
+  tasks: TaskRecord[];
   onDropToCanvas: (item: AssetItem, position: { x: number; y: number }) => void;
   onAssetsChanged: () => void;
+  onCancel: (id: string) => void;
+  onRetry: (id: string) => void;
 }) {
+  const isTasks = props.mode === 'tasks';
   return (
     <aside
-      className={`asset-drawer${props.open ? ' open' : ''}`}
-      data-testid="asset-drawer"
-      aria-label="全局素材库"
+      className={`${isTasks ? 'task-drawer' : 'asset-drawer'} workspace-drawer workspace-drawer-${props.mode}${props.open ? ' open' : ''}`}
+      data-testid={isTasks ? 'task-drawer' : 'asset-drawer'}
+      aria-label={isTasks ? '任务队列' : '全局素材库'}
     >
-      <div className="asset-drawer-head">
-        <div>
-          <div className="asset-drawer-eyebrow">ASSET LIBRARY · GLOBAL</div>
-          <div className="asset-drawer-title">全局素材库</div>
+      <div key={props.mode} className={`drawer-content drawer-content-${props.mode} drawer-content-enter`}>
+        <div className="asset-drawer-head">
+          <div>
+            <div className="asset-drawer-eyebrow">{isTasks ? 'TASK QUEUE · GLOBAL' : 'ASSET LIBRARY · GLOBAL'}</div>
+            <div className="asset-drawer-title">{isTasks ? '任务队列' : '全局素材库'}</div>
+          </div>
+          <button type="button" className="asset-drawer-close" aria-label={isTasks ? '关闭任务队列' : '关闭素材库'} onClick={props.onClose}>×</button>
         </div>
-        <button type="button" className="asset-drawer-close" aria-label="关闭素材库" onClick={props.onClose}>×</button>
+        <div className="asset-drawer-sub">
+          {isTasks ? 'Ollama 与 ComfyUI 任务串行执行，重启中断任务可手动重试' : '可直接拖到画布、故事对话或其他面板'}
+        </div>
+        {isTasks
+          ? <TaskQueue tasks={props.tasks} onCancel={props.onCancel} onRetry={props.onRetry} />
+          : <AssetLibrary items={props.items} onDropToCanvas={props.onDropToCanvas} onAssetsChanged={props.onAssetsChanged} />}
       </div>
-      <div className="asset-drawer-sub">可直接拖到画布、故事对话或其他面板</div>
-      <AssetLibrary items={props.items} onDropToCanvas={props.onDropToCanvas} onAssetsChanged={props.onAssetsChanged} />
     </aside>
   );
 }

@@ -6,6 +6,8 @@ import { mountRoutes, type ProjectContext } from './api/routes.js';
 import { registerWs } from './api/ws.js';
 import { ComfyUIClient } from './comfy/client.js';
 import { GenerationQueue } from './generation/queue.js';
+import { TaskQueue } from './tasks/queue.js';
+import { registerTaskHandlers } from './tasks/handlers.js';
 import { readLastProject, rememberLastProject, resolveComfyUrl } from './projects/projects-store.js';
 import { startMcpServer } from './mcp/server.js';
 
@@ -14,6 +16,7 @@ export interface BuildOptions {
   projectDir?: string;
   comfyBaseUrl?: string; // 测试注入 mock 地址
   mcpPort?: number;      // 显式传入才启动 MCP server（测试不传，避免端口冲突）
+  taskQueueFilePath?: string; // 测试注入任务队列持久化路径
 }
 
 // 构建 Fastify 应用实例；测试用 inject，不需要监听端口
@@ -28,15 +31,19 @@ export function buildApp(opts: BuildOptions) {
   // 使用仓库外的占位路径维持 watcher/队列对象的字符串契约；
   // projectOpen=false 时所有项目 API 会在路由前置钩子中拒绝，不会读写此路径或 cwd。
   const projectDir = opts.projectDir ?? join(process.cwd(), '.director-no-project');
+  const taskQueue = new TaskQueue({ filePath: opts.taskQueueFilePath });
   const ctx: ProjectContext = {
     projectDir,
     projectOpen: opts.projectDir !== undefined,
     comfy: new ComfyUIClient(opts.comfyBaseUrl ? opts.comfyBaseUrl : resolveComfyUrl(projectDir)),
     queue: null as unknown as GenerationQueue,
+    taskQueue,
   };
-  ctx.queue = new GenerationQueue(ctx.projectDir, ctx.comfy);
+  ctx.queue = new GenerationQueue(ctx.projectDir, ctx.comfy, taskQueue);
+  registerTaskHandlers(taskQueue);
+  taskQueue.start();
   const server: http.Server = app.server;
-  const wsHandle = registerWs(server, () => ctx.projectDir);
+  const wsHandle = registerWs(server, () => ctx.projectDir, taskQueue);
   mountRoutes(app, ctx, wsHandle);
   app.addHook('onClose', async () => { await wsHandle.close(); });
   // 显式传入 mcpPort 才启用 MCP（CLI 入口传；测试不传避免固定端口冲突）。

@@ -402,7 +402,7 @@
 .playhead .ph-tip { position: absolute; top: -2px; left: 6px; background: var(--rec); color: #fff; font-family: var(--mono); font-size: 8.5px; padding: 1px 5px; border-radius: 3px; }
 .queue-wrap { flex: 0 0 300px; display: flex; flex-direction: column; padding: 8px 12px 10px; overflow: auto; }
 .q-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
-.q-icon { font-size: 12px; flex: 0 0 16px; text-align: center; }
+.q-icon { display: inline-flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; flex: 0 0 16px; text-align: center; }
 .q-icon.ok { color: var(--ok); }
 .q-icon.rec { color: var(--rec); }
 .q-name { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2023,13 +2023,16 @@ button > .dw-icon, a > .dw-icon, .mid-tab > .dw-icon, .ctx-tab > .dw-icon { marg
 .role-workspace > .role-view { flex: 1; min-width: 0; }
 .asset-drawer-toggle { color: var(--amber-soft); border-color: rgba(232, 163, 61, .35); }
 .asset-drawer-toggle:hover, .asset-drawer-toggle.active { color: var(--amber-soft); border-color: var(--amber); background: var(--amber-dim); }
-.asset-drawer {
+.task-queue-toggle { color: var(--text-dim); border-color: var(--border-2); }
+.task-queue-toggle:hover, .task-queue-toggle.active { color: var(--amber-soft); border-color: var(--amber); background: var(--amber-dim); }
+.task-queue-count { min-width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; margin-left: 4px; padding: 0 4px; border-radius: 999px; background: var(--amber-dim); color: var(--amber-soft); font: 10px var(--mono); }
+.asset-drawer, .workspace-drawer {
   flex: 0 0 0; width: 0; min-width: 0; overflow: hidden;
   display: flex; flex-direction: column; min-height: 0;
   background: var(--panel); border-left: 0 solid var(--border-2);
   box-shadow: none; transition: flex-basis .24s cubic-bezier(.22, .8, .24, 1), width .24s cubic-bezier(.22, .8, .24, 1), border-color .18s;
 }
-.asset-drawer.open {
+.asset-drawer.open, .workspace-drawer.open {
   flex-basis: min(420px, 38vw); width: min(420px, 38vw); min-width: 320px;
   border-left-width: 1px; box-shadow: -8px 0 24px rgba(0, 0, 0, .25);
 }
@@ -2045,15 +2048,42 @@ button > .dw-icon, a > .dw-icon, .mid-tab > .dw-icon, .ctx-tab > .dw-icon { marg
 .asset-drawer-close:hover { border-color: var(--amber); color: var(--amber-soft); }
 .asset-drawer-sub { flex: none; padding: 7px 14px 9px; color: var(--text-dim); font-size: 10.5px; border-bottom: 1px solid var(--border); min-width: 320px; }
 .asset-drawer > .assets { flex: 1; min-width: 320px; }
-.asset-drawer .asset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.workspace-drawer > .drawer-content { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.workspace-drawer .asset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.workspace-drawer .task-queue { flex: 1; min-width: 0; overflow: auto; }
+.task-drawer > .task-queue { flex: 1; min-width: 320px; overflow: auto; }
+.task-queue { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 14px; }
+.task-queue-summary { display: flex; gap: 8px; padding: 2px 2px 6px; color: var(--text-faint); font: 10px var(--mono); }
+.task-row { display: flex; align-items: center; gap: 7px; padding: 9px 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); }
+.task-main { min-width: 0; flex: 1; }
+.task-row-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 16px; }
+.task-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 11px; line-height: 16px; }
+.task-status { flex: none; color: var(--text-faint); font: 10px/16px var(--mono); white-space: nowrap; }
+.task-meta { display: flex; gap: 8px; margin-top: 4px; color: var(--text-faint); font: 9px var(--mono); }
+.task-progress { height: 3px; margin-top: 7px; overflow: hidden; border-radius: 999px; background: var(--border-2); }
+.task-progress i { display: block; height: 100%; background: var(--amber); transition: width .2s; }
+.task-error { margin-top: 5px; color: var(--rec); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.task-actions { flex: none; }
+.task-actions .btn-ghost { padding: 3px 6px; font-size: 10px; }
+.task-empty { padding: 28px 8px; color: var(--text-faint); text-align: center; font-size: 11px; }
+.drawer-content-enter { animation: drawer-content-in .18s cubic-bezier(.22, .8, .24, 1) both; transform-origin: 100% 50%; }
+@keyframes drawer-content-in {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .asset-drawer, .workspace-drawer { transition: none; }
+  .drawer-content-enter { animation: none; }
+}
+.asset-drawer .asset-grid, .workspace-drawer .asset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .asset-edit-dialog { display: flex; flex-direction: column; gap: 10px; }
 .asset-edit-label { display: flex; flex-direction: column; gap: 5px; color: var(--text-dim); font-size: 11px; }
 .asset-edit-label .ne-textarea { min-height: 180px; resize: vertical; }
 .asset-edit-file { padding: 9px; background: var(--panel); border: 1px solid var(--border); border-radius: 5px; color: var(--text-dim); font-size: 11px; }
 .asset-edit-dialog input[type='file'] { color: var(--text-dim); font-size: 11px; }
 @media (max-width: 900px) {
-  .asset-drawer.open { flex-basis: min(400px, 45vw); width: min(400px, 45vw); min-width: 280px; }
-  .asset-drawer-head, .asset-drawer-sub, .asset-drawer > .assets { min-width: 280px; }
+  .asset-drawer.open, .workspace-drawer.open { flex-basis: min(400px, 45vw); width: min(400px, 45vw); min-width: 280px; }
+  .asset-drawer-head, .asset-drawer-sub, .asset-drawer > .assets, .workspace-drawer > .drawer-content, .task-drawer > .task-queue { min-width: 280px; }
 }
 
 /* @ 素材引用候选菜单：两个对话输入框共享 */

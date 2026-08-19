@@ -40,6 +40,25 @@ export interface SnapshotMeta {
 }
 
 export type GenStatus = 'queued' | 'running' | 'success' | 'failed' | 'cancelled';
+export type TaskKind = 'comfy-generation' | 'comfy-design' | 'ollama-vision' | 'ollama-embedding';
+export type TaskStatus = 'queued' | 'running' | 'success' | 'failed' | 'cancelled' | 'interrupted';
+
+export interface TaskRecord {
+  id: string;
+  kind: TaskKind;
+  label: string;
+  status: TaskStatus;
+  projectDir?: string;
+  progress: number;
+  createdAt: number;
+  startedAt?: number;
+  updatedAt: number;
+  finishedAt?: number;
+  error?: string;
+  payload: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  dedupeKey?: string;
+}
 
 export interface GenTask {
   id: string;
@@ -63,6 +82,7 @@ export interface ProjectInfo {
 export type WsEvent =
   | { type: 'graph'; graph: Graph }
   | { type: 'generation'; task: GenTask }
+  | { type: 'task'; task: TaskRecord }
   | { type: 'file-changed'; path: string }
   // agent 活动回传（借鉴 kanban hooks：agent 工具调用即活动，前端实时展示）
   | { type: 'agent-activity'; text: string; at: number };

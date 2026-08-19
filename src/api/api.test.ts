@@ -14,7 +14,7 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'director-api-'));
   mkdirSync(join(dir, 'mmh3'), { recursive: true });
   writeFileSync(join(dir, 'mmh3', 'shot_01.md'), '# SHOT 01\n牵绳慢步', 'utf8');
-  a = buildApp({ projectDir: dir, comfyBaseUrl: 'http://127.0.0.1:59999' });
+  a = buildApp({ projectDir: dir, comfyBaseUrl: 'http://127.0.0.1:59999', taskQueueFilePath: join(dir, '.director', 'tasks.json') });
 });
 afterEach(async () => {
   delete process.env.DIRECTOR_WATCH_POLLING;
@@ -280,6 +280,26 @@ describe('API 生成', () => {
     });
     expect(st.statusCode).toBe(200);
     expect(['queued', 'running', 'success', 'failed']).toContain(st.json().task.status);
+  });
+
+  it('GET /api/tasks 返回统一 generation 任务并保留业务 payload', async () => {
+    const p = await a.inject({
+      method: 'POST', url: '/api/nodes',
+      payload: {
+        type: 'params', title: '参数',
+        fields: { template: 'keyframe-video', params: { keyframes: 'KF0,KF1', width: 768, height: 1344, steps: 8, ref_seconds: 4, seam: 'Hard cut', seed: 0, run_id: 'tasks', chain_previous_last: false } },
+      },
+    });
+    const gen = await a.inject({
+      method: 'POST', url: '/api/nodes',
+      payload: { type: 'generation', title: '任务测试', fields: { paramsNodeId: p.json().node.id } },
+    });
+    await a.inject({ method: 'POST', url: '/api/generation/submit', payload: { nodeId: gen.json().node.id, confirm: true } });
+    const list = await a.inject({ method: 'GET', url: '/api/tasks' });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'comfy-generation', payload: expect.objectContaining({ nodeId: gen.json().node.id }) }),
+    ]));
   });
 
   it('POST /api/generation/cancel 无 confirm 返回 400', async () => {

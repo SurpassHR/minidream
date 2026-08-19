@@ -8,6 +8,7 @@ import { startMcpServer } from './server.js';
 import { loadGraph } from '../graph/graph-store.js';
 import { ComfyUIClient } from '../comfy/client.js';
 import { GenerationQueue } from '../generation/queue.js';
+import { TaskQueue } from '../tasks/queue.js';
 import type { ProjectContext } from '../api/routes.js';
 import { listSnapshots } from '../snapshots/snapshot-store.js';
 
@@ -18,7 +19,7 @@ let client: Client;
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'director-mcp-'));
   const queue = new GenerationQueue(dir, new ComfyUIClient('http://127.0.0.1:59999'));
-  const ctx: ProjectContext = { projectDir: dir, projectOpen: true, queue, comfy: new ComfyUIClient('http://127.0.0.1:59999') };
+  const ctx: ProjectContext = { projectDir: dir, projectOpen: true, queue, taskQueue: new TaskQueue({ filePath: join(dir, '.director', 'tasks.json') }), comfy: new ComfyUIClient('http://127.0.0.1:59999') };
   mcp = await startMcpServer({ ctx, port: 0 });
   client = new Client({ name: 'test', version: '1.0.0' });
   const transport = new StreamableHTTPClientTransport(new URL(mcp.url));
@@ -44,6 +45,7 @@ describe('MCP server', () => {
       projectDir: dir,
       projectOpen: true,
       queue: new GenerationQueue(dir, new ComfyUIClient('http://127.0.0.1:59999')),
+      taskQueue: new TaskQueue({ filePath: join(dir, '.director', 'tasks-activity.json') }),
       comfy: new ComfyUIClient('http://127.0.0.1:59999'),
     };
     const mcp2 = await startMcpServer({ ctx: ctx2, port: 0, onActivity: (text) => activities.push(text) });
@@ -69,6 +71,7 @@ describe('MCP server', () => {
       projectDir: dir,
       projectOpen: true,
       queue: new GenerationQueue(dir, new ComfyUIClient('http://127.0.0.1:59999')),
+      taskQueue: new TaskQueue({ filePath: join(dir, '.director', 'tasks-activity.json') }),
       comfy: new ComfyUIClient('http://127.0.0.1:59999'),
     };
     const mcp2 = await startMcpServer({ ctx, port: 0 });

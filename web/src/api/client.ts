@@ -1,5 +1,5 @@
 import type {
-  DirectorEdge, DirectorNode, EdgeKind, GenTask, Graph, NodeType, ProjectInfo, SnapshotMeta,
+  DirectorEdge, DirectorNode, EdgeKind, GenTask, Graph, NodeType, ProjectInfo, SnapshotMeta, TaskRecord,
   StoryProgress, AssetRecord, DesignKind, DesignObject, AppSettings, SessionMeta, StoryBoard, RagHit,
 } from '../types';
 
@@ -140,6 +140,20 @@ export const client = {
       method: 'POST', body: JSON.stringify({ path, type, title }),
     });
     return r.node;
+  },
+
+  async listTasks(): Promise<TaskRecord[]> {
+    const r = await req<{ tasks: TaskRecord[] }>('/api/tasks');
+    return r.tasks;
+  },
+
+  async cancelTask(id: string): Promise<{ ok: boolean; task?: TaskRecord }> {
+    return await req<{ ok: boolean; task?: TaskRecord }>(`/api/tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
+  },
+
+  async retryTask(id: string): Promise<TaskRecord> {
+    const r = await req<{ task: TaskRecord }>(`/api/tasks/${encodeURIComponent(id)}/retry`, { method: 'POST' });
+    return r.task;
   },
 
   async submitGeneration(nodeId: string): Promise<GenTask> {

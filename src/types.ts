@@ -44,7 +44,8 @@ export type DirectorErrorCode =
   | 'NODE_NOT_FOUND' | 'EDGE_NOT_FOUND' | 'EDGE_EXISTS'
   | 'CONFIRM_REQUIRED' | 'FILE_CONFLICT' | 'INVALID_PATCH'
   | 'PROJECT_NOT_FOUND' | 'PROJECT_NOT_ADDABLE' | 'PROJECT_NOT_OPEN' | 'EDGE_INVALID'
-  | 'YAML_EXPORT_FAILED' | 'STORY_ALREADY_COMPLETED' | 'SESSION_NOT_FOUND' | 'BOARD_NOT_FOUND';
+  | 'YAML_EXPORT_FAILED' | 'STORY_ALREADY_COMPLETED' | 'SESSION_NOT_FOUND' | 'BOARD_NOT_FOUND'
+  | 'SNAPSHOT_FUTURE_EXISTS';
 
 export class DirectorError extends Error {
   constructor(public code: DirectorErrorCode, message: string) {
@@ -55,6 +56,27 @@ export class DirectorError extends Error {
 
 // —— 生成执行（计划 2） ——
 export type GenStatus = 'queued' | 'running' | 'success' | 'failed' | 'cancelled';
+
+// —— 统一任务队列 ——
+export type TaskKind = 'comfy-generation' | 'comfy-design' | 'ollama-vision' | 'ollama-embedding';
+export type TaskStatus = 'queued' | 'running' | 'success' | 'failed' | 'cancelled' | 'interrupted';
+
+export interface TaskRecord {
+  id: string;
+  kind: TaskKind;
+  label: string;
+  status: TaskStatus;
+  projectDir?: string;
+  progress: number;
+  createdAt: number;
+  startedAt?: number;
+  updatedAt: number;
+  finishedAt?: number;
+  error?: string;
+  payload: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  dedupeKey?: string;
+}
 
 export interface ComfyMedia {
   filename: string;

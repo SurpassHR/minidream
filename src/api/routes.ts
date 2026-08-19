@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { applyMutation, applyHeadSwitch } from './mutations.js';
 import { graphToPromptYaml } from '../prompt/export.js';
 import { GenerationQueue } from '../generation/queue.js';
+import { TaskQueue } from '../tasks/queue.js';
 import { ComfyUIClient } from '../comfy/client.js';
 import {
   assetDirectoryPath, listAssets, importAssetFile, importAssetText, migrateAssetDirectory, upsertAssetText, setAssetCaption, deleteAsset, readAssetText, assetFilePath,
@@ -22,6 +23,7 @@ import {
 } from '../assets/assets-store.js';
 import { OllamaClient } from '../ollama/client.js';
 import { buildWorkflow } from '../comfy/workflow.js';
+import { submitEmbeddingTask, submitVisionTask } from '../tasks/handlers.js';
 import { buildAgentPrompt, runAgentCollect, runAgentStream } from '../agent/bridge.js';
 import {
   appendChatMessage, createChatSession, deleteChatSession,
@@ -53,6 +55,7 @@ export interface ProjectContext {
   projectDir: string;
   projectOpen: boolean;
   queue: GenerationQueue;
+  taskQueue: TaskQueue;
   comfy: ComfyUIClient;
 }
 
@@ -175,15 +178,18 @@ export function isVisionUnsupportedError(message: string): boolean {
 const STORY_VISION_INSTRUCTION = '请用中文描述这张参考图中与故事创作有关的内容：主体、人物外观、场景、构图、光线、色彩和关键动作。只输出客观、具体的视觉描述，不要解释。';
 
 // 图片附件 → 本地 Ollama 视觉描述。复用 OllamaClient 的文件路径能力，避免先写入全局素材库。
-async function describeImageFiles(files: string[]): Promise<string[]> {
-  const { ollamaUrl, ollamaModel } = readSettings();
-  if (!ollamaUrl || !ollamaModel) {
-    throw new DirectorError('INVALID_PATCH', '当前对话模型不支持视觉输入，且未配置本地 Ollama 视觉模型。请到设置中配置 Ollama 地址与视觉模型。');
-  }
+async function describeImageFiles(files: string[], taskQueue: TaskQueue): Promise<string[]> {
   try {
     const descriptions: string[] = [];
     for (const file of files) {
-      descriptions.push(await new OllamaClient(ollamaUrl).imageToPrompt(ollamaModel, file, STORY_VISION_INSTRUCTION));
+      const submitted = submitVisionTask(taskQueue, {
+        operation: 'image-to-prompt', imagePath: file, instruction: STORY_VISION_INSTRUCTION,
+      });
+      const done = await submitted.completion;
+      if (done.status !== 'success') throw new DirectorError('INVALID_PATCH', done.error ?? '视觉任务失败');
+      const description = done.result?.prompt;
+      if (typeof description !== 'string' || !description) throw new DirectorError('INVALID_PATCH', '视觉任务返回空描述');
+      descriptions.push(description);
     }
     return descriptions;
   } catch (err) {
@@ -193,26 +199,41 @@ async function describeImageFiles(files: string[]): Promise<string[]> {
   }
 }
 
-async function describeStoryImages(files: string[]): Promise<string> {
-  const descriptions = await describeImageFiles(files);
+async function describeStoryImages(files: string[], taskQueue: TaskQueue): Promise<string> {
+  const descriptions = await describeImageFiles(files, taskQueue);
   return `参考图视觉描述（由本地 Ollama 生成）：\n${descriptions.map((text, i) => `图片 ${i + 1}：${text}`).join('\n')}`;
 }
 
 // 对素材库图片做视觉 fallback，并把每条描述写回图片 caption，后续 @ 引用直接复用。
-async function describeAssetImages(assetIds: string[]): Promise<string> {
+async function describeAssetImages(assetIds: string[], taskQueue: TaskQueue): Promise<string> {
   const assets = assetIds
     .map((id) => listAssets().find((asset) => asset.id === id))
     .filter((asset) => asset?.kind === 'img' && !asset.caption) as Array<{ id: string; kind: 'img'; name: string }>;
   if (assets.length === 0) return '';
-  const descriptions = await describeImageFiles(assets.map((asset) => assetFilePath(asset.id)));
   const parts: string[] = [];
-  for (const [i, asset] of assets.entries()) {
-    const caption = descriptions[i] ?? '';
+  for (const asset of assets) {
+    const submitted = submitVisionTask(taskQueue, {
+      operation: 'image-to-prompt', assetId: asset.id, instruction: STORY_VISION_INSTRUCTION,
+    });
+    const done = await submitted.completion;
+    if (done.status !== 'success') throw new DirectorError('INVALID_PATCH', done.error ?? '视觉任务失败');
+    const caption = typeof done.result?.prompt === 'string' ? done.result.prompt : '';
     if (!caption) continue;
     setAssetCaption(asset.id, caption);
     parts.push(`图像素材「${asset.name}」的描述：${caption}`);
   }
   return parts.length > 0 ? `用户引用的图像素材描述（由本地 Ollama 生成）：\n${parts.join('\n')}` : '';
+}
+
+async function embedThroughQueue(taskQueue: TaskQueue, projectDir: string, texts: string[]): Promise<number[][]> {
+  const { ollamaEmbedModel } = readSettings();
+  if (!ollamaEmbedModel) throw new DirectorError('INVALID_PATCH', '未配置 Ollama Embedding 模型');
+  const submitted = submitEmbeddingTask(taskQueue, { projectDir, model: ollamaEmbedModel, texts });
+  const done = await submitted.completion;
+  if (done.status !== 'success' || !Array.isArray(done.result?.embeddings)) {
+    throw new DirectorError('INVALID_PATCH', done.error ?? 'Embedding 任务失败');
+  }
+  return done.result.embeddings as number[][];
 }
 
 // 故事对话拖入的非图像素材：文本读取内容，视频保留可识别的素材引用。
@@ -361,7 +382,7 @@ export function mountRoutes(
         ctx.projectDir = join(process.cwd(), '.director-no-project');
         ctx.projectOpen = false;
         ctx.comfy = new ComfyUIClient(resolveComfyUrl(ctx.projectDir));
-        ctx.queue = new GenerationQueue(ctx.projectDir, ctx.comfy);
+        ctx.queue = new GenerationQueue(ctx.projectDir, ctx.comfy, ctx.taskQueue);
         await ws.switchDir(ctx.projectDir);
       }
       return {
@@ -393,7 +414,7 @@ export function mountRoutes(
     ctx.projectOpen = true;
     rememberLastProject(target);
     ctx.comfy = new ComfyUIClient(resolveComfyUrl(target));
-    ctx.queue = new GenerationQueue(target, ctx.comfy);
+    ctx.queue = new GenerationQueue(target, ctx.comfy, ctx.taskQueue);
     await ws.switchDir(target);
     return {
       graph: loadGraph(ctx.projectDir),
@@ -669,6 +690,26 @@ export function mountRoutes(
     return { settings };
   });
 
+  // —— 统一任务队列：全局任务列表不依赖当前项目 ——
+  app.get('/api/tasks', async () => ({ tasks: ctx.taskQueue.list() }));
+
+  app.post('/api/tasks/:id/cancel', async (req) => {
+    const { id } = req.params as { id: string };
+    return { ok: ctx.taskQueue.cancel(id), task: ctx.taskQueue.get(id) };
+  });
+
+  app.post('/api/tasks/:id/retry', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const retried = ctx.taskQueue.retry(id);
+    if (!retried) {
+      const current = ctx.taskQueue.get(id);
+      if (!current) return reply.code(404).send({ code: 'NODE_NOT_FOUND', message: `任务不存在: ${id}` });
+      return reply.code(409).send({ code: 'INVALID_PATCH', message: `任务当前状态不可重试: ${current.status}` });
+    }
+    reply.code(202);
+    return { task: retried.task };
+  });
+
   app.post('/api/generation/submit', async (req, reply) => {
     const body = req.body as { nodeId: string; confirm?: boolean };
     if (!body.confirm) {
@@ -820,11 +861,16 @@ export function mountRoutes(
       return reply.code(400).send({ code: 'INVALID_PATCH', message: '请先在设置中配置 Ollama 地址与视觉模型' });
     }
     try {
-      const caption = await new OllamaClient(ollamaUrl).imageToPrompt(ollamaModel, assetFilePath(id), CAPTION_INSTRUCTION);
-      const txtName = `${basename(asset.name, extname(asset.name))}.txt`;
-      const rec = upsertAssetText(txtName, caption);
-      // 同时写回图像记录：卡片缩略图下方与图片预览可直接展示 caption
-      setAssetCaption(id, caption);
+      const submitted = submitVisionTask(ctx.taskQueue, { operation: 'caption', assetId: id });
+      const done = await submitted.completion;
+      if (done.status !== 'success') {
+        return reply.code(400).send({ code: 'INVALID_PATCH', message: done.error ?? 'caption 任务失败' });
+      }
+      const caption = typeof done.result?.caption === 'string' ? done.result.caption : '';
+      const rec = done.result?.asset;
+      if (!caption || !rec) {
+        return reply.code(400).send({ code: 'INVALID_PATCH', message: 'caption 任务返回空结果' });
+      }
       return { caption, asset: rec };
     } catch (err) {
       if (err instanceof DirectorError) {
@@ -954,7 +1000,13 @@ app.post('/api/story/boards/:id/rag/search', async (req, reply) => {
   const body = req.body as { query?: string; topK?: number };
   const board = findBoard(ctx.projectDir, id);
   if (!board) return reply.code(404).send({ code: 'BOARD_NOT_FOUND', message: '剧本项目不存在' });
-  const r = await ragSearch(ctx.projectDir, board, body.query ?? '', body.topK ?? 3);
+  const r = await ragSearch(
+    ctx.projectDir,
+    board,
+    body.query ?? '',
+    body.topK ?? 3,
+    (texts) => embedThroughQueue(ctx.taskQueue, ctx.projectDir, texts),
+  );
   return r;
 });
 
@@ -1015,7 +1067,13 @@ app.post('/api/story/chat', async (req, reply) => {
   // 系统动作（总结成稿等 persistAs 标记）不做 RAG 检索：查询是长指令，命中无意义
   let ragContext = '';
   if (message && board?.ragEnabled && board.ragAssets.length > 0 && !body.persistAs) {
-    const r = await ragSearch(ctx.projectDir, board, message, 3);
+    const r = await ragSearch(
+      ctx.projectDir,
+      board,
+      message,
+      3,
+      (texts) => embedThroughQueue(ctx.taskQueue, ctx.projectDir, texts),
+    );
     if (r.status === 'ok' && r.hits.length > 0) ragContext = formatRagHits(r.hits);
   }
   const assetContext = buildStoryAssetContext(assetRefs);
@@ -1106,8 +1164,8 @@ app.post('/api/story/chat', async (req, reply) => {
     const imageFiles = imageFilesForPi;
     const describeFallbackImages = async (): Promise<string> => {
       const contexts: string[] = [];
-      if (assetImageInput.ids.length > 0) contexts.push(await describeAssetImages(assetImageInput.ids));
-      if (imgAttach && imgAttach.files.length > 0) contexts.push(await describeStoryImages(imgAttach.files));
+      if (assetImageInput.ids.length > 0) contexts.push(await describeAssetImages(assetImageInput.ids, ctx.taskQueue));
+      if (imgAttach && imgAttach.files.length > 0) contexts.push(await describeStoryImages(imgAttach.files, ctx.taskQueue));
       return contexts.filter((context) => context.trim()).join('\\n\\n');
     };
     let runPrompt = prompt;
@@ -1284,39 +1342,26 @@ app.post('/api/designs/:id/generate', async (req, reply) => {
   if (!(await ctx.comfy.health())) {
     return reply.code(400).send({ code: 'INVALID_PATCH', message: '请先配置 ComfyUI 地址（点击顶栏 COMFYUI 徽章）' });
   }
-  // 标记生成中 → 提交 → 等待 → 下载 → 入库
+  // 标记生成中 → 提交统一任务 → 等待 → 下载 → 入库
   updateDesign(ctx.projectDir, id, { status: 'generating' });
-  try {
-    const workflow = buildWorkflow(design.template, {
-      prompt,
-      seed: Math.floor(Math.random() * 2 ** 31),
-      width: 1024, height: 1024, steps: 30, cfg: 7, negative_prompt: '',
-    });
-    const promptId = await ctx.comfy.submit(workflow, randomUUID());
-    const out = await ctx.comfy.waitForDone(promptId);
-    if (out.media.length === 0) {
-      throw new DirectorError('INVALID_PATCH', '生成完成但无输出媒体');
-    }
-    // 下载到临时文件（保留原始扩展名：importAssetFile 按扩展名判 kind）
-    const tmpDir = mkdtempSync(join(tmpdir(), 'director-design-'));
-    const ext = extname(out.media[0]!.filename) || '.png';
-    const tmpPath = join(tmpDir, `design-${id}${ext}`);
-    try {
-      await ctx.comfy.download(out.media[0]!, tmpPath);
-      const asset = importAssetFile(tmpPath);
-      // error 用空串而非 undefined：updateDesign 对 undefined 视为“不更新”，空串才能清除旧错误
-      const designDone = updateDesign(ctx.projectDir, id, {
-        status: 'done', assetId: asset.id, error: '',
-      });
-      return { design: designDone };
-    } finally {
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const designFailed = updateDesign(ctx.projectDir, id, { status: 'failed', error: message });
-    return { design: designFailed };
+  const submitted = ctx.taskQueue.submit({
+    kind: 'comfy-design',
+    label: `参考图：${design.name}`,
+    projectDir: ctx.projectDir,
+    payload: { designId: id, comfyBaseUrl: ctx.comfy.baseUrl },
+    dedupeKey: `comfy-design:${ctx.projectDir}:${id}`,
+  });
+  const done = await submitted.completion;
+  if (done.status !== 'success') {
+    const failed = updateDesign(ctx.projectDir, id, { status: 'failed', error: done.error ?? '参考图生成失败' });
+    return { design: failed };
   }
+  const generated = done.result?.design;
+  if (!generated || typeof generated !== 'object') {
+    const failed = updateDesign(ctx.projectDir, id, { status: 'failed', error: '参考图生成返回空结果' });
+    return { design: failed };
+  }
+  return { design: generated };
 });
 
 // —— Ollama 本地视觉模型：图像 → 提示词（物体设计器「图像转描述」）——
@@ -1360,7 +1405,15 @@ app.post('/api/ollama/image-to-prompt', async (req, reply) => {
   const instruction = (body.instruction ?? '').trim() ||
     '请用中文描述这张图片中主体（人物/场景/物品）的外观：外貌、材质、颜色、光影、构图要点。输出一段可直接作为文生图提示词的外观描述，只输出描述本身，不要解释、不要引号。';
   try {
-    const prompt = await new OllamaClient(ollamaUrl).imageToPrompt(ollamaModel, assetFilePath(assetId), instruction);
+    const submitted = submitVisionTask(ctx.taskQueue, {
+      operation: 'image-to-prompt', assetId, instruction,
+    });
+    const done = await submitted.completion;
+    if (done.status !== 'success') {
+      return reply.code(400).send({ code: 'INVALID_PATCH', message: done.error ?? '图像转提示词任务失败' });
+    }
+    const prompt = typeof done.result?.prompt === 'string' ? done.result.prompt : '';
+    if (!prompt) return reply.code(400).send({ code: 'INVALID_PATCH', message: '图像转提示词返回空结果' });
     return { prompt, assetId };
   } catch (err) {
     if (err instanceof DirectorError) {
@@ -1505,7 +1558,7 @@ app.get('/api/assets/:id/file', async (req, reply) => {
       if (assetInput.imageFiles.length > 0 && !idleKilled
         && agentText.trim().length === 0 && isVisionUnsupportedError(modelError)) {
         try {
-          const visionContext = await describeAssetImages(assetInput.imageAssetIds);
+          const visionContext = await describeAssetImages(assetInput.imageAssetIds, ctx.taskQueue);
           const retryPrompt = buildAgentPrompt({
             message: body.message,
             chips: body.chips ?? [],

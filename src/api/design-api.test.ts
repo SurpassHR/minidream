@@ -157,6 +157,22 @@ describe('API designs generate', () => {
     expect(asset?.name).toMatch(/^design-.*\.png$/);
   });
 
+  it('设计参考图生成进入统一 comfy-design 任务队列', async () => {
+    const created = await a2.inject({
+      method: 'POST', url: '/api/designs',
+      payload: { kind: 'character', name: '排队精灵' },
+    });
+    const id = created.json().design.id;
+    await a2.inject({
+      method: 'PUT', url: `/api/designs/${id}`,
+      payload: { patch: { style: '写实', description: '银发精灵', template: 'test-t2i' } },
+    });
+    const response = await a2.inject({ method: 'POST', url: `/api/designs/${id}/generate` });
+    expect(response.statusCode).toBe(200);
+    const tasks = (await a2.inject({ method: 'GET', url: '/api/tasks' })).json().tasks as Array<{ kind: string; payload: { designId?: string } }>;
+    expect(tasks.filter((task) => task.kind === 'comfy-design' && task.payload.designId === id)).toHaveLength(1);
+  });
+
   it('模板缺 ${prompt} 变量返回 400', async () => {
     // 写一个缺 prompt 的模板
     writeFileSync(join(wfDir, 'no-prompt.template.json'), JSON.stringify({

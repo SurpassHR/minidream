@@ -86,6 +86,7 @@ export async function ragSearch(
   board: StoryBoard,
   query: string,
   topK = 3,
+  embedTexts?: (texts: string[]) => Promise<number[][]>,
 ): Promise<RagSearchResult> {
   const { ollamaUrl, ollamaEmbedModel } = readSettings();
   if (!ollamaUrl || !ollamaEmbedModel) return { hits: [], status: 'unconfigured' };
@@ -98,14 +99,15 @@ export async function ragSearch(
   if (rags.length === 0) return { hits: [], status: 'ok' };
 
   try {
-    const client = new OllamaClient(ollamaUrl);
+    const client = embedTexts ? null : new OllamaClient(ollamaUrl);
+    const embed = embedTexts ?? ((texts: string[]) => client!.embed(ollamaEmbedModel, texts));
     const docs: Array<{ assetId: string; name: string; text: string; vec: number[] }> = [];
     for (const asset of rags) {
       const key = cacheKey(projectDir, board.id, asset.id, asset.size);
       let c = cache.get(key);
       if (!c) {
         const chunks = chunkText(readAssetText(asset.id));
-        const vectors = await client.embed(ollamaEmbedModel, chunks);
+        const vectors = await embed(chunks);
         c = { chunks, vectors };
         cache.set(key, c);
       }
@@ -114,7 +116,7 @@ export async function ragSearch(
         if (vec) docs.push({ assetId: asset.id, name: asset.name, text, vec });
       });
     }
-    const qv = (await client.embed(ollamaEmbedModel, [q]))[0];
+    const qv = (await embed([q]))[0];
     if (!qv) return { hits: [], status: 'error', error: '查询向量为空' };
     const scored = docs
       .map((d) => ({ assetId: d.assetId, name: d.name, text: d.text, score: cosine(qv, d.vec) }))

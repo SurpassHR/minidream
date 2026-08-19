@@ -137,11 +137,11 @@ export function trimSnapshots(projectDir: string): void {
     const base = JSON.parse(readFileSync(basePath(projectDir), 'utf8')) as Graph;
     let graph = structuredClone(base);
     for (let i = 0; i < excess; i++) {
-      const s = JSON.parse(readFileSync(snapPath(projectDir, snaps[i].seq), 'utf8')) as SnapshotFile;
+      const s = JSON.parse(readFileSync(snapPath(projectDir, snaps[i]!.seq), 'utf8')) as SnapshotFile;
       if (s.patch.length > 0) {
         graph = jsonpatch.applyPatch(graph, s.patch, false, false).newDocument;
       }
-      unlinkSync(snapPath(projectDir, snaps[i].seq));
+      unlinkSync(snapPath(projectDir, snaps[i]!.seq));
     }
     writeFileSync(basePath(projectDir), JSON.stringify(graph), 'utf8');
   }

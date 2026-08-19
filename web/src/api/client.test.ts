@@ -38,6 +38,20 @@ describe('client req 封装', () => {
     await expect(client.deleteNode('n1')).rejects.toMatchObject({ code: 'HTTP_500' });
   });
 
+  it('listTasks、cancelTask、retryTask 使用统一任务 API', async () => {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push([url, init]);
+      if (url === '/api/tasks') return new Response(JSON.stringify({ tasks: [] }), { status: 200 });
+      if (url.endsWith('/cancel')) return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      return new Response(JSON.stringify({ task: { id: 't1', kind: 'ollama-vision', label: '图像转描述', status: 'queued', progress: 0, createdAt: 1, updatedAt: 1, payload: {} } }), { status: 202 });
+    }));
+    expect(await client.listTasks()).toEqual([]);
+    expect((await client.cancelTask('t1')).ok).toBe(true);
+    expect((await client.retryTask('t1')).id).toBe('t1');
+    expect(calls.map(([url]) => url)).toEqual(['/api/tasks', '/api/tasks/t1/cancel', '/api/tasks/t1/retry']);
+  });
+
   it('storyChat 保留后端返回的具体错误消息', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
       JSON.stringify({ code: 'INVALID_PATCH', message: '当前模型不支持视觉输入，请配置 Ollama' }),

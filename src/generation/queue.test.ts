@@ -99,6 +99,17 @@ describe('GenerationQueue', () => {
     expect(t1).toBe(t2);
   });
 
+  it('同一节点完成后再次提交时状态指向最新任务', async () => {
+    const g = loadGraph(dir);
+    const gen = g.nodes.find((n) => n.type === 'generation')!;
+    queue.submit(gen.id);
+    await queue.drain();
+    const next = queue.submit(gen.id);
+    expect(next.status).toBe('queued');
+    expect(queue.status(gen.id)?.status).toBe('queued');
+    expect(queue.list().filter((task) => task.id === gen.id)).toHaveLength(2);
+  });
+
   it('cancel 仅对 queued 任务生效', () => {
     const g = loadGraph(dir);
     const gen = g.nodes.find((n) => n.type === 'generation')!;

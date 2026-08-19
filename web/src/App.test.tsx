@@ -148,6 +148,29 @@ describe('App 布局骨架', () => {
     expect(screen.getByTestId('agent-panel')).toBeInTheDocument();
   });
 
+  it('顶栏任务队列入口与素材库抽屉互斥', () => {
+    render(<App />);
+    fireEvent.click(screen.getByTestId('task-queue-toggle'));
+    expect(screen.getByTestId('task-drawer')).toHaveClass('open');
+    expect(screen.queryByTestId('asset-drawer')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('asset-library-toggle'));
+    expect(screen.getByTestId('asset-drawer')).toHaveClass('open');
+    expect(screen.queryByTestId('task-drawer')).not.toBeInTheDocument();
+  });
+
+  it('素材库与任务队列切换时复用同一个抽屉容器', () => {
+    render(<App />);
+    fireEvent.click(screen.getByTestId('task-queue-toggle'));
+    const drawer = document.querySelector('.workspace-drawer');
+    expect(drawer).toBeInTheDocument();
+    expect(document.querySelectorAll('.workspace-drawer')).toHaveLength(1);
+    expect(drawer).toHaveClass('workspace-drawer-tasks', 'open');
+    fireEvent.click(screen.getByTestId('asset-library-toggle'));
+    expect(document.querySelectorAll('.workspace-drawer')).toHaveLength(1);
+    expect(drawer).toHaveClass('workspace-drawer-assets', 'open');
+    expect(drawer?.querySelector('.drawer-content')).toHaveClass('drawer-content-enter');
+  });
+
   it('顶栏设置按钮打开设置弹窗', async () => {
     render(<App />);
     fireEvent.click(screen.getByTestId('settings-open'));
