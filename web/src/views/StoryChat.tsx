@@ -9,9 +9,15 @@ import { TextInputDialog } from '../panels/TextInputDialog';
 import { resolveBoardPrompt, resolvePrompt, withArmorBreak } from './roles';
 import { AiButton, EmptyState, ErrorBanner } from './role-ui';
 import type { SessionMeta, StoryBoard } from '../types';
+import type { AssetItem } from '../panels/AssetLibrary';
 
 // images：用户消息携带的图像附件（data URL 缩略图展示；历史重载不还原，仅即时会话可见）
-export interface ChatMsg { who: 'user' | 'agent'; text: string; images?: Array<{ name: string; dataUrl: string }> }
+export interface ChatMsg {
+  who: 'user' | 'agent';
+  text: string;
+  images?: Array<{ name: string; dataUrl: string }>;
+  assetRefs?: Array<{ id: string; name: string; kind: 'txt' | 'vid' }>;
+}
 
 // 待发送的图像附件（预览 + 随消息发送）
 export interface ChatAttachment { id: string; name: string; dataUrl: string }
@@ -51,6 +57,8 @@ export function StoryChat(props: {
   // 默认模型与思考强度（来自全局设置；透传到 /api/story/chat body，缺省走 pi 默认）
   agentModel?: string;
   thinkingLevel?: string;
+  // 当前模型的视觉能力（来自 pi --list-models；未知时由后端错误回退）
+  modelSupportsImages?: boolean;
   // 剧本项目（board）：boardId 归组会话 + 项目级系统提示词（board → 全局 → 内置）
   board?: StoryBoard | null;
   // 外部会话挂载点：故事页将会话树放进当前项目项下；独立渲染时回退到聊天区
@@ -72,6 +80,7 @@ export function StoryChat(props: {
   const [sessionDialogBusy, setSessionDialogBusy] = useState(false);
   // 图像附件：Ctrl+V 粘贴 / 附件按钮选择 → 预览列表 → 随下一条消息发送
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [assetRefs, setAssetRefs] = useState<Array<{ id: string; name: string; kind: 'txt' | 'vid' }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // 当前剧本项目 id（归组会话 + 后端解析项目级提示词/RAG）
   const boardId = props.board?.id ?? null;
@@ -226,22 +235,93 @@ export function StoryChat(props: {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   };
 
+  const removeAssetRef = (id: string) => {
+    setAssetRefs((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  // 从全局素材库拖入故事对话：图像转图片附件，文本/视频保留为素材引用。
+  const addAssetAttachment = async (item: AssetItem) => {
+    if (item.kind !== 'img') {
+      if (!item.id) {
+        setError('素材缺少可引用的 id');
+        return;
+      }
+      setAssetRefs((prev) => prev.some((a) => a.id === item.id)
+        ? prev
+        : [...prev, { id: item.id!, name: item.name, kind: item.kind as 'txt' | 'vid' }]);
+      setError('');
+      return;
+    }
+    if (!item.id) {
+      setError('图像素材缺少可读取的 id');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/assets/${encodeURIComponent(item.id)}/file`);
+      if (!res.ok) throw new Error(`素材读取失败：${res.status}`);
+      const blob = await res.blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ''));
+        reader.onerror = () => reject(new Error('素材读取失败'));
+        reader.readAsDataURL(blob);
+      });
+      setAttachments((prev) => [...prev, {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: item.name,
+        dataUrl,
+      }]);
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '素材读取失败');
+    }
+  };
+
+  const handleAssetDrop = (e: React.DragEvent) => {
+    const raw = e.dataTransfer.getData('application/x-asset');
+    if (!raw) return;
+    e.preventDefault();
+    try {
+      void addAssetAttachment(JSON.parse(raw) as AssetItem);
+    } catch {
+      setError('无法读取拖入的素材');
+    }
+  };
+
   const send = () => {
     const text = input.trim();
-    if ((!text && attachments.length === 0) || busy) return;
-    // 附件随消息发送：data URL 原样透传（后端转临时文件给 pi）
+    if ((!text && attachments.length === 0 && assetRefs.length === 0) || busy) return;
+    // 图像附件走 data URL；文本/视频以 assetRefs 交给后端读取并注入上下文。
     const imgs = attachments.map((a) => ({ name: a.name, data: a.dataUrl }));
+    const refs = [...assetRefs];
     // 气泡展示缩略图：消息内保留 dataUrl 字段（与发送载荷 data 字段区分）
     const msgImages = attachments.map((a) => ({ name: a.name, dataUrl: a.dataUrl }));
     setInput('');
     setAttachments([]);
+    setAssetRefs([]);
     setBusy(true);
     setError('');
-    setMsgs((m) => [...m, { who: 'user', text, images: msgImages.length > 0 ? msgImages : undefined }]);
+    setMsgs((m) => [...m, {
+      who: 'user', text,
+      images: msgImages.length > 0 ? msgImages : undefined,
+      assetRefs: refs.length > 0 ? refs : undefined,
+    }]);
     // 剧本项目存在时：systemPrompt 交给后端从 board 解析（board.storyTeller → 全局 → 内置）
     const sysPrompt = boardId ? undefined : resolvePrompt(props.prompts, 'storyTeller');
-    client.storyChat(text, appendStream, props.agentModel || undefined, props.thinkingLevel || undefined, undefined, activeId, sysPrompt, boardId, imgs.length > 0 ? imgs : undefined)
-      .catch(() => appendStream('\n\n（agent 连接失败）'))
+    client.storyChat(
+      text,
+      appendStream,
+      props.agentModel || undefined,
+      props.thinkingLevel || undefined,
+      undefined,
+      activeId,
+      sysPrompt,
+      boardId,
+      imgs.length > 0 ? imgs : undefined,
+      props.modelSupportsImages,
+      refs.length > 0 ? refs : undefined,
+    )
+      .catch((err) => appendStream(`\n\n（agent 连接失败：${err instanceof Error ? err.message : '未知错误'}）`))
       .finally(() => { setBusy(false); refreshSessions(); });
   };
 
@@ -275,8 +355,8 @@ export function StoryChat(props: {
       } else {
         props.onSummarized(answers);
       }
-    } catch {
-      appendStream('\n\n（agent 连接失败）');
+    } catch (err) {
+      appendStream(`\n\n（agent 连接失败：${err instanceof Error ? err.message : '未知错误'}）`);
     } finally {
       setBusy(false);
       setAction(null);
@@ -345,6 +425,13 @@ export function StoryChat(props: {
                       ))}
                     </div>
                   )}
+                  {m.assetRefs && m.assetRefs.length > 0 && (
+                    <div className="chat-msg-assets" data-testid="chat-msg-assets">
+                      {m.assetRefs.map((asset) => (
+                        <span key={asset.id} className="chat-msg-asset"><Icon name={asset.kind === 'txt' ? 'file-text' : 'video'} />{asset.name}</span>
+                      ))}
+                    </div>
+                  )}
                   {m.who === 'agent' ? (
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
                   ) : (
@@ -356,8 +443,16 @@ export function StoryChat(props: {
           ))}
           {busy && <div className="chat-thinking"><Icon name="loader" /> AI 思考中…</div>}
         </div>
-        <div className="chat-composer" data-testid="chat-composer" data-layout="inset-composer">
-          {attachments.length > 0 && (
+        <div
+          className="chat-composer"
+          data-testid="chat-composer"
+          data-layout="inset-composer"
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes('application/x-asset')) e.preventDefault();
+          }}
+          onDrop={handleAssetDrop}
+        >
+          {(attachments.length > 0 || assetRefs.length > 0) && (
             <div className="chat-attach-row" data-testid="chat-attach-row">
               {attachments.map((a) => (
                 <div key={a.id} className="chat-attach" data-testid={`chat-attach-${a.id}`}>
@@ -366,6 +461,16 @@ export function StoryChat(props: {
                   <span
                     className="chat-attach-x" role="button" tabIndex={0} title="移除附件"
                     onClick={() => removeAttachment(a.id)}
+                  ><Icon name="x" /></span>
+                </div>
+              ))}
+              {assetRefs.map((asset) => (
+                <div key={asset.id} className="chat-asset-ref" data-testid={`chat-asset-ref-${asset.id}`}>
+                  <Icon name={asset.kind === 'txt' ? 'file-text' : 'video'} />
+                  <span className="chat-attach-name">{asset.name}</span>
+                  <span
+                    className="chat-attach-x" role="button" tabIndex={0} title="移除素材引用"
+                    onClick={() => removeAssetRef(asset.id)}
                   ><Icon name="x" /></span>
                 </div>
               ))}
@@ -395,7 +500,7 @@ export function StoryChat(props: {
               }}
               rows={2}
             />
-            <button className="btn-primary" onClick={send} disabled={busy || (!input.trim() && attachments.length === 0)}>发送</button>
+            <button className="btn-primary" onClick={send} disabled={busy || (!input.trim() && attachments.length === 0 && assetRefs.length === 0)}>发送</button>
           </div>
           <div className="chat-actions">
             <AiButton busy={busy && action === 'summarize'} onClick={summarize}><Icon name="sparkles" />总结成稿</AiButton>

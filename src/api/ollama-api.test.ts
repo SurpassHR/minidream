@@ -119,6 +119,49 @@ describe('API Ollama 图像转提示词', () => {
     expect(res.json().message).toContain('不是图片');
   });
 
+  it('故事对话模型不支持视觉时：先调用 Ollama 描述图片，再发送纯文本提示词', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_ECHO_STDIN', '1');
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const res = await a.inject({
+      method: 'POST', url: '/api/story/chat',
+      payload: {
+        message: '根据参考图写故事开场',
+        model: 'deepseek/deepseek-v4-flash',
+        modelSupportsImages: false,
+        images: [{ name: '参考图.png', data: `data:image/png;base64,${png}` }],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(lastChatBody?.model).toBe('llava:13b');
+    expect(lastChatBody?.messages[0]?.images).toHaveLength(1);
+    expect(res.body).toContain('银发精灵骑士');
+    // 兜底后传给文本模型的是描述提示词，不是 @临时图片参数
+    expect(res.body).not.toContain('director-story-img-');
+    expect(res.body).toContain('根据参考图写故事开场');
+  });
+
+  it('模型能力未知但 pi 报视觉不支持时：自动重试 Ollama 描述后的纯文本请求', async () => {
+    const marker = join(home, 'vision-fallback-once');
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_VISION_ERROR_ONCE', marker);
+    vi.stubEnv('MOCK_ECHO_STDIN', '1');
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const res = await a.inject({
+      method: 'POST', url: '/api/story/chat',
+      payload: {
+        message: '模型未知时也要参考图片',
+        model: 'unknown/vision-model',
+        images: [{ name: '参考图.png', data: `data:image/png;base64,${png}` }],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(lastChatBody?.model).toBe('llava:13b');
+    expect(res.body).toContain('银发精灵骑士');
+    expect(res.body).toContain('模型未知时也要参考图片');
+    expect(res.body).not.toContain('director-story-img-');
+  });
+
   it('POST 未配置 Ollama（清空地址/模型）返回 400 引导配置', async () => {
     saveSettings({ ollamaUrl: '', ollamaModel: '' });
     const assets = (await a.inject({ method: 'GET', url: '/api/assets' })).json().assets as Array<{ id: string; kind: string }>;

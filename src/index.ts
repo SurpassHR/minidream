@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
 import type http from 'node:http';
+import { join } from 'node:path';
 import { mountRoutes, type ProjectContext } from './api/routes.js';
 import { registerWs } from './api/ws.js';
 import { ComfyUIClient } from './comfy/client.js';
@@ -9,7 +10,8 @@ import { resolveComfyUrl } from './projects/projects-store.js';
 import { startMcpServer } from './mcp/server.js';
 
 export interface BuildOptions {
-  projectDir: string;
+  // 未传入时以“未打开项目”启动；显式传入仅用于真实项目启动或测试注入。
+  projectDir?: string;
   comfyBaseUrl?: string; // 测试注入 mock 地址
   mcpPort?: number;      // 显式传入才启动 MCP server（测试不传，避免端口冲突）
 }
@@ -23,9 +25,13 @@ export function buildApp(opts: BuildOptions) {
   // 健康检查（Task 1 交付，验收冒烟依赖）
   app.get('/health', async () => ({ ok: true }));
   // 项目上下文：单一可变事实来源，/api/project/switch 热切换时整体替换（routes.ts 维护）
+  // 使用仓库外的占位路径维持 watcher/队列对象的字符串契约；
+  // projectOpen=false 时所有项目 API 会在路由前置钩子中拒绝，不会读写此路径或 cwd。
+  const projectDir = opts.projectDir ?? join(process.cwd(), '.director-no-project');
   const ctx: ProjectContext = {
-    projectDir: opts.projectDir,
-    comfy: new ComfyUIClient(opts.comfyBaseUrl ? opts.comfyBaseUrl : resolveComfyUrl(opts.projectDir)),
+    projectDir,
+    projectOpen: opts.projectDir !== undefined,
+    comfy: new ComfyUIClient(opts.comfyBaseUrl ? opts.comfyBaseUrl : resolveComfyUrl(projectDir)),
     queue: null as unknown as GenerationQueue,
   };
   ctx.queue = new GenerationQueue(ctx.projectDir, ctx.comfy);
@@ -53,7 +59,7 @@ export function buildApp(opts: BuildOptions) {
 
 // 直接运行时启动监听
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const projectDir = process.argv[2] ?? process.cwd();
+  const projectDir = process.argv[2];
   const mcpPort = Number(process.env.DIRECTOR_MCP_PORT ?? 4778);
   const app = buildApp({ projectDir, mcpPort });
   app.listen({ port: 4777, host: '127.0.0.1' }).then(() => {

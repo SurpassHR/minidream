@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -46,6 +46,27 @@ describe('API 项目注册表与热切换', () => {
     const res = await b.inject({ method: 'GET', url: '/api/projects' });
     expect(res.statusCode).toBe(200);
     expect(res.json().projects).toEqual([]);
+    expect(res.json().projectOpen).toBe(true);
+  });
+
+  it('未显式打开项目时不使用启动目录：项目接口只读且返回 PROJECT_NOT_OPEN', async () => {
+    const unopened = buildApp({ comfyBaseUrl: 'http://127.0.0.1:59999' } as Parameters<typeof buildApp>[0]);
+    try {
+      const list = await unopened.inject({ method: 'GET', url: '/api/projects' });
+      expect(list.statusCode).toBe(200);
+      expect(list.json().projectOpen).toBe(false);
+      const graph = await unopened.inject({ method: 'GET', url: '/api/graph' });
+      expect(graph.statusCode).toBe(409);
+      expect(graph.json().code).toBe('PROJECT_NOT_OPEN');
+      const write = await unopened.inject({
+        method: 'POST', url: '/api/nodes',
+        payload: { type: 'shot', title: '不应写入启动目录' },
+      });
+      expect(write.statusCode).toBe(409);
+      expect(write.json().code).toBe('PROJECT_NOT_OPEN');
+    } finally {
+      await unopened.close();
+    }
   });
 
   it('POST /api/projects/add 添加剧本项目（mmh3_prompts）→ 显示在列表并持久化', async () => {
@@ -95,6 +116,40 @@ describe('API 项目注册表与热切换', () => {
     expect(again.json().projects).toHaveLength(1);
   });
 
+  it('PATCH /api/projects/rename 更新项目显示名称', async () => {
+    await b.inject({ method: 'POST', url: '/api/projects/add', payload: { path: projA } });
+    const renamed = await b.inject({
+      method: 'PATCH', url: '/api/projects/rename',
+      payload: { path: projA, name: '精灵与哥布林' },
+    });
+    expect(renamed.statusCode).toBe(200);
+    expect(renamed.json().projects.find((p: { path: string }) => p.path === projA).name).toBe('精灵与哥布林');
+    expect(loadGraph(projA).projectName).toBe('精灵与哥布林');
+    const listed = await b.inject({ method: 'GET', url: '/api/projects' });
+    expect(listed.json().projects.find((p: { path: string }) => p.path === projA).name).toBe('精灵与哥布林');
+  });
+
+  it('DELETE /api/projects 删除注册记录并删除磁盘目录', async () => {
+    await b.inject({ method: 'POST', url: '/api/projects/add', payload: { path: projA } });
+    const missingConfirm = await b.inject({ method: 'DELETE', url: '/api/projects', payload: { path: projA } });
+    expect(missingConfirm.statusCode).toBe(400);
+    expect(existsSync(projA)).toBe(true);
+    const deleted = await b.inject({ method: 'DELETE', url: '/api/projects', payload: { path: projA, confirm: true } });
+    expect(deleted.statusCode).toBe(200);
+    expect(existsSync(projA)).toBe(false);
+    expect(deleted.json().projects.some((p: { path: string }) => p.path === projA)).toBe(false);
+  });
+
+  it('删除当前项目后自动回到未打开项目状态', async () => {
+    await b.inject({ method: 'POST', url: '/api/projects/add', payload: { path: projA } });
+    const deleted = await b.inject({ method: 'DELETE', url: '/api/projects', payload: { path: projA, confirm: true } });
+    expect(deleted.statusCode).toBe(200);
+    expect(deleted.json().projectOpen).toBe(false);
+    const graph = await b.inject({ method: 'GET', url: '/api/graph' });
+    expect(graph.statusCode).toBe(409);
+    expect(graph.json().code).toBe('PROJECT_NOT_OPEN');
+  });
+
   it('POST /api/projects/remove 移除后不再显示；不存在路径幂等', async () => {
     await b.inject({ method: 'POST', url: '/api/projects/add', payload: { path: projA } });
     await b.inject({ method: 'POST', url: '/api/projects/add', payload: { path: projB } });
@@ -113,6 +168,7 @@ describe('API 项目注册表与热切换', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().graph.projectName).toBe('proj-b');
+    expect(res.json().projectOpen).toBe(true);
     // 切换后读写都指向新项目；旧项目图不受影响
     const g = await b.inject({ method: 'GET', url: '/api/graph' });
     expect(g.json().graph.nodes).toHaveLength(0);

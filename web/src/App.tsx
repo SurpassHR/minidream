@@ -6,6 +6,7 @@ import { SettingsModal } from './panels/SettingsModal';
 import { AssetLibrary, type AssetItem } from './panels/AssetLibrary';
 import { ProjectSwitcher } from './panels/ProjectSwitcher';
 import { AddProjectDialog } from './panels/AddProjectDialog';
+import { TextInputDialog } from './panels/TextInputDialog';
 import { ImportDialog } from './panels/ImportDialog';
 import { AgentPanel, type ChatMsg } from './panels/AgentPanel';
 import { ConfirmDialog } from './panels/ConfirmDialog';
@@ -36,8 +37,11 @@ export default function App() {
   const [importOpen, setImportOpen] = useState(false);
   // 项目栏添加对话框开关
   const [addProjectOpen, setAddProjectOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<{ path: string; name: string } | null>(null);
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState('');
   // 内置 agent 模型：空字符串 = pi 默认模型；列表来自 /api/agent/models
-  const [agentModels, setAgentModels] = useState<Array<{ id: string; provider: string; thinking: boolean }>>([]);
+  const [agentModels, setAgentModels] = useState<Array<{ id: string; provider: string; thinking: boolean; images: boolean }>>([]);
   // agent 默认模型（全局设置 settings.json；AgentPanel 内可临时切换不回写）
   const [agentModel, setAgentModel] = useState('');
   // 思考强度（pi --thinking）：空字符串 = pi 默认；默认值来自全局设置
@@ -47,6 +51,8 @@ export default function App() {
   const [theme, setTheme] = useState<ThemeMode>('light');
   // 设置弹窗开关（顶栏 COMFYUI 徽章点击打开）
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 全局素材抽屉：非模态侧栏，打开时不遮挡画布/对话
+  const [assetDrawerOpen, setAssetDrawerOpen] = useState(false);
   // agent 活动回传（MCP 工具调用 → WS agent-activity）：显示在 AGENT 面板顶部
   const [agentActivity, setAgentActivity] = useState<{ text: string; at: number } | null>(null);
 
@@ -184,17 +190,24 @@ export default function App() {
   // 素材库真实数据源：成功 → 真实列表（空数组即空态）；失败 → null（显示空态，不误显 mock 数据）
   const refreshAssets = useCallback(() => {
     void client.listAssets().then((list) => setAssets(list.map((a) => ({
-      kind: a.kind, name: a.name, meta: a.meta,
+      id: a.id, kind: a.kind, name: a.name, meta: a.meta,
     })))).catch(() => setAssets(null));
   }, []);
 
   useEffect(() => { refreshAssets(); }, [refreshAssets]);
 
-  // 项目列表（真实数据源 /api/projects：当前项目 + 同根项目发现）
+  // 项目列表与打开状态：未打开时不使用 graph.projectName 作为虚拟项目
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [projectOpen, setProjectOpen] = useState(true);
 
   const refreshProjects = useCallback(() => {
-    void client.listProjects().then(setProjects).catch(() => setProjects([]));
+    void client.listProjects().then((r) => {
+      setProjects(r.projects);
+      setProjectOpen(r.projectOpen);
+    }).catch(() => {
+      setProjects([]);
+      setProjectOpen(false);
+    });
   }, []);
 
   useEffect(() => { refreshProjects(); }, [refreshProjects]);
@@ -206,6 +219,7 @@ export default function App() {
     try {
       const r = await client.switchProject(path);
       applyGraph(r.graph);
+      setProjectOpen(true);
       setProjects((prev) => {
         const merged = prev.map((p) => ({ ...p, current: p.path === path }));
         for (const p of r.projects) {
@@ -226,12 +240,42 @@ export default function App() {
     setProjects(projects);
   }, []);
 
-  // 从项目栏移除（仅移除注册表项，不删除目录内容）：走确认门
+  // 重命名项目：只更新项目栏显示名称，不改磁盘目录路径
+  const askRenameProject = useCallback((path: string, name: string) => {
+    setRenameError('');
+    setRenameTarget({ path, name });
+  }, []);
+
+  const saveProjectName = useCallback(async (name: string) => {
+    if (!renameTarget) return;
+    setRenameBusy(true);
+    setRenameError('');
+    try {
+      const next = await client.renameProject(renameTarget.path, name);
+      setProjects(next);
+      if (projects.find((p) => p.current)?.path === renameTarget.path) {
+        const currentGraph = useGraphStore.getState().graph;
+        if (currentGraph) applyGraph({ ...currentGraph, projectName: name });
+      }
+      setRenameTarget(null);
+    } catch (err) {
+      setRenameError(err instanceof Error ? err.message : '更新项目名称失败');
+    } finally {
+      setRenameBusy(false);
+    }
+  }, [applyGraph, projects, renameTarget]);
+
+  // 删除项目：确认后删除磁盘目录及项目注册记录
   const askRemoveProject = useCallback((path: string, name: string) => {
     setConfirm({
-      title: '移除项目',
-      body: `将「${name}」从项目栏移除？仅移除列表项，不会删除目录内容。`,
-      action: () => { void client.removeProject(path).then(setProjects).catch(() => {}); },
+      title: '删除项目文件',
+      body: `将永久删除「${name}」及其磁盘目录中的全部文件，且无法撤销。确认继续？`,
+      action: () => {
+        void client.deleteProject(path).then((r) => {
+          setProjects(r.projects);
+          setProjectOpen(r.projectOpen);
+        }).catch(() => {});
+      },
     });
   }, []);
 
@@ -344,9 +388,11 @@ export default function App() {
         <ProjectSwitcher
           projects={projects}
           activePath={projects.find((p) => p.current)?.path ?? ''}
+          projectOpen={projectOpen}
           fallbackName={graph?.projectName ?? ''}
           onSelect={handleProjectSelect}
           onAdd={() => setAddProjectOpen(true)}
+          onRename={askRenameProject}
           onRemove={askRemoveProject}
         />
         {comfyHealthy === null ? (
@@ -357,6 +403,13 @@ export default function App() {
           <div className="badge clickable" title="打开设置" onClick={() => setSettingsOpen(true)}><span className="dot" style={{ background: 'var(--rec)', boxShadow: '0 0 6px var(--rec)' }} />COMFYUI&nbsp;未连接</div>
         )}
         <div className="spacer" />
+        <button
+          className={`btn-ghost asset-drawer-toggle${assetDrawerOpen ? ' active' : ''}`}
+          data-testid="asset-library-toggle"
+          aria-expanded={assetDrawerOpen}
+          title="打开全局素材库（可拖到画布或对话）"
+          onClick={() => setAssetDrawerOpen((open) => !open)}
+        ><Icon name="image" />素材库</button>
         <button
           className="btn-ghost theme-toggle"
           data-testid="theme-toggle"
@@ -370,12 +423,14 @@ export default function App() {
           title="设置：ComfyUI 地址 / 默认模型 / 思考强度"
           onClick={() => setSettingsOpen(true)}
         ><Icon name="gear" />设置</button>
-        <button className="btn-ghost" onClick={() => setImportOpen(true)}>＋ 导入</button>
-        <button className="run-btn"><span className="tri">▶</span>运行流水线</button>
+        <button className="btn-ghost" onClick={() => setImportOpen(true)} disabled={!projectOpen}>＋ 导入</button>
+        <button className="run-btn" disabled={!projectOpen}><span className="tri">▶</span>运行流水线</button>
       </header>
       {route === 'canvas' ? (
         <>
           <main className="main">
+            {projectOpen ? (
+              <>
             <aside className="left" style={{ flexBasis: leftW }} data-testid="left-panel">
               <div className="panel-title">素材库 <span className="mini">全局 · 跨项目</span></div>
               <AssetLibrary items={assets ?? []} onDropToCanvas={handleDropToCanvas} onAssetsChanged={refreshAssets} />
@@ -406,7 +461,11 @@ export default function App() {
               <div className="panel-title">AGENT · pi <span className="mini">mmh3 skills</span></div>
               <AgentPanel chips={chips} onChipsChange={handleChipsChange} onSend={handleAgentSend} onStream={handleAgentStream} models={agentModels} selectedModel={agentModel} onModelChange={setAgentModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={setThinkingLevel} historyKey={graph?.projectName ?? 'none'} activity={agentActivity} />
             </aside>
+              </>
+            ) : <ProjectEmptyState />}
+            <AssetDrawer open={assetDrawerOpen} onClose={() => setAssetDrawerOpen(false)} items={assets ?? []} onDropToCanvas={handleDropToCanvas} onAssetsChanged={refreshAssets} />
           </main>
+          {projectOpen && <>
           <div
             className={`splitter splitter-h ${dragging === 'footer' ? 'active' : ''}`}
             data-testid="splitter-footer"
@@ -419,23 +478,34 @@ export default function App() {
             <div className="versions-wrap" data-testid="versions"><VersionsList onRollback={handleRollback} /></div>
             <div className="queue-wrap" data-testid="queue"><GenQueue tasks={[...tasks.values()]} /></div>
           </footer>
+          </>}
         </>
       ) : route === 'story-teller' ? (
-        <StoryTellerView
-          projectName={graph?.projectName ?? ''}
-          prompts={settings.prompts}
-          armorBreak={settings.armorBreak}
-          armorBreakEnabled={settings.armorBreakEnabled}
-          agentModel={settings.agentModel}
-          thinkingLevel={settings.agentThinking}
-        />
+        <div className="role-workspace">
+          {projectOpen ? (
+            <StoryTellerView
+              projectName={graph?.projectName ?? ''}
+              prompts={settings.prompts}
+              armorBreak={settings.armorBreak}
+              armorBreakEnabled={settings.armorBreakEnabled}
+              agentModel={settings.agentModel}
+              thinkingLevel={settings.agentThinking}
+            />
+          ) : <ProjectEmptyState />}
+          <AssetDrawer open={assetDrawerOpen} onClose={() => setAssetDrawerOpen(false)} items={assets ?? []} onDropToCanvas={handleDropToCanvas} onAssetsChanged={refreshAssets} />
+        </div>
       ) : (
-        <ObjectDesignerView
-          projectName={graph?.projectName ?? ''}
-          prompts={settings.prompts}
-          armorBreak={settings.armorBreak}
-          armorBreakEnabled={settings.armorBreakEnabled}
-        />
+        <div className="role-workspace">
+          {projectOpen ? (
+            <ObjectDesignerView
+              projectName={graph?.projectName ?? ''}
+              prompts={settings.prompts}
+              armorBreak={settings.armorBreak}
+              armorBreakEnabled={settings.armorBreakEnabled}
+            />
+          ) : <ProjectEmptyState />}
+          <AssetDrawer open={assetDrawerOpen} onClose={() => setAssetDrawerOpen(false)} items={assets ?? []} onDropToCanvas={handleDropToCanvas} onAssetsChanged={refreshAssets} />
+        </div>
       )}
       <ConfirmDialog
         open={confirm !== null}
@@ -446,6 +516,18 @@ export default function App() {
         confirmLabel={confirm?.title === '提交生成' ? '确认提交' : confirm?.title === '回滚快照' ? '确认回滚' : '确认删除'}
       />
       <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
+      <TextInputDialog
+        open={renameTarget !== null}
+        title="更新项目名称"
+        body="只更新项目栏显示名称，不会修改磁盘目录。"
+        defaultValue={renameTarget?.name ?? ''}
+        placeholder="输入项目名称"
+        confirmLabel="保存名称"
+        busy={renameBusy}
+        error={renameError}
+        onConfirm={(name) => { void saveProjectName(name); }}
+        onCancel={() => { if (!renameBusy) setRenameTarget(null); }}
+      />
       <AddProjectDialog
         open={addProjectOpen}
         onClose={() => setAddProjectOpen(false)}
@@ -461,5 +543,41 @@ export default function App() {
         onError={handleSettingsError}
       />
     </div>
+  );
+}
+
+function ProjectEmptyState() {
+  return (
+    <section className="project-empty-state" data-testid="project-empty-state" aria-live="polite">
+      <div className="project-empty-icon"><Icon name="package" /></div>
+      <h2>未打开项目</h2>
+      <p>请先打开或添加项目，当前工作区为只读状态。</p>
+    </section>
+  );
+}
+
+function AssetDrawer(props: {
+  open: boolean;
+  onClose: () => void;
+  items: AssetItem[];
+  onDropToCanvas: (item: AssetItem, position: { x: number; y: number }) => void;
+  onAssetsChanged: () => void;
+}) {
+  return (
+    <aside
+      className={`asset-drawer${props.open ? ' open' : ''}`}
+      data-testid="asset-drawer"
+      aria-label="全局素材库"
+    >
+      <div className="asset-drawer-head">
+        <div>
+          <div className="asset-drawer-eyebrow">ASSET LIBRARY · GLOBAL</div>
+          <div className="asset-drawer-title">全局素材库</div>
+        </div>
+        <button type="button" className="asset-drawer-close" aria-label="关闭素材库" onClick={props.onClose}>×</button>
+      </div>
+      <div className="asset-drawer-sub">可直接拖到画布、故事对话或其他面板</div>
+      <AssetLibrary items={props.items} onDropToCanvas={props.onDropToCanvas} onAssetsChanged={props.onAssetsChanged} />
+    </aside>
   );
 }

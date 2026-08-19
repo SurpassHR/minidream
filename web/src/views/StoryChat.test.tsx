@@ -6,7 +6,7 @@ import { StoryChat, parseStoryAnswers } from './StoryChat';
 let SESSIONS: Array<{ id: string; title: string; createdAt: number; updatedAt: number }> = [];
 let ACTIVE: string | null = null;
 let HISTORY: Array<{ who: string; text: string; at: number }> = [];
-let CHAT_BODIES: Array<{ message: string; sessionId?: string }> = [];
+let CHAT_BODIES: Array<{ message: string; sessionId?: string; assetRefs?: Array<{ id: string; name: string; kind: string }> }> = [];
 
 // 既有用例预置：会话列表 + 激活会话 + 历史。
 // 注：仅预置 HISTORY 不够——「无会话自动新建」分支（POST sessions）会把 HISTORY 清空，
@@ -46,6 +46,9 @@ beforeEach(() => {
     }
     if (u.includes('/api/story/chat/history')) {
       return new Response(JSON.stringify({ messages: HISTORY }), { status: 200 });
+    }
+    if (u.includes('/api/assets/') && u.endsWith('/file')) {
+      return new Response(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }), { status: 200 });
     }
     if (u.includes('/api/story/chat')) {
       if (method === 'POST') {
@@ -165,6 +168,46 @@ describe('StoryChat', () => {
     await waitFor(() => expect(screen.getByAltText('clipboard.png')).toBeInTheDocument());
   });
 
+  it('素材库图像拖入对话编辑区：转换为图片附件预览', async () => {
+    presetLegacySession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    const composer = screen.getByTestId('chat-composer');
+    fireEvent.drop(composer, {
+      dataTransfer: {
+        getData: (type: string) => type === 'application/x-asset'
+          ? JSON.stringify({ id: 'a1', kind: 'img', name: 'library.png' })
+          : '',
+      },
+    } as unknown as DragEvent);
+    await waitFor(() => expect(screen.getByText('library.png')).toBeInTheDocument());
+    expect(screen.getByTestId('chat-attach-row')).toBeInTheDocument();
+    expect(screen.getByAltText('library.png')).toBeInTheDocument();
+  });
+
+  it('素材库文本与视频拖入对话：显示引用并随请求透传', async () => {
+    presetLegacySession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    const composer = screen.getByTestId('chat-composer');
+    const drop = (item: { id: string; name: string; kind: string }) => fireEvent.drop(composer, {
+      dataTransfer: {
+        getData: (type: string) => type === 'application/x-asset' ? JSON.stringify(item) : '',
+      },
+    } as unknown as DragEvent);
+    drop({ id: 'txt-1', name: '世界观.md', kind: 'txt' });
+    drop({ id: 'vid-1', name: '参考视频.mp4', kind: 'vid' });
+    await waitFor(() => expect(screen.getByText('世界观.md')).toBeInTheDocument());
+    expect(screen.getByText('参考视频.mp4')).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: '结合这些素材继续创作' } });
+    fireEvent.click(screen.getByText('发送'));
+    await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(0));
+    expect(CHAT_BODIES.at(-1)!.assetRefs).toEqual([
+      { id: 'txt-1', name: '世界观.md', kind: 'txt' },
+      { id: 'vid-1', name: '参考视频.mp4', kind: 'vid' },
+    ]);
+  });
+
   it('附件可移除：点 × 后预览消失', async () => {
     presetLegacySession();
     render(<StoryChat projectName="demo" onSummarized={() => {}} />);
@@ -237,7 +280,7 @@ describe('StoryChat', () => {
     await waitFor(() => expect(screen.getByText('总结成稿')).toBeInTheDocument());
     fireEvent.click(screen.getByText('总结成稿'));
     // 出现连接失败提示
-    await waitFor(() => expect(screen.getByText(/（agent 连接失败）/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/（agent 连接失败：story chat 请求失败: 500）/)).toBeInTheDocument());
     // 不出现格式错误提示（旧实现会同时显示两条矛盾提示）
     expect(screen.queryByText('未识别到答案格式，请重试')).not.toBeInTheDocument();
   });

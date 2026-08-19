@@ -25,7 +25,15 @@ const PROMPT_META: Array<{ key: 'storyTeller' | 'storySummarize'; label: string;
   { key: 'storySummarize', label: 'storySummarize', desc: '总结成稿 · 六步答案格式' },
 ];
 
-export function StoryTellerView(props: { projectName: string; prompts?: Record<string, string>; armorBreak?: string; armorBreakEnabled?: boolean; agentModel?: string; thinkingLevel?: string }) {
+export function StoryTellerView(props: {
+  projectName: string;
+  prompts?: Record<string, string>;
+  armorBreak?: string;
+  armorBreakEnabled?: boolean;
+  agentModel?: string;
+  thinkingLevel?: string;
+  models?: Array<{ id: string; images: boolean }>;
+}) {
   const [story, setStory] = useState<StoryProgress>({ step: 0, answers: {}, completedAt: null });
   const [md, setMd] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -290,6 +298,7 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
                   armorBreakEnabled={props.armorBreakEnabled}
                   agentModel={props.agentModel}
                   thinkingLevel={props.thinkingLevel}
+                  modelSupportsImages={props.models?.find((m) => m.id === props.agentModel)?.images}
                   board={activeBoard}
                   sessionHost={sessionHost}
                   onCreateSessionReady={registerCreateSession}

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import fg from 'fast-glob';
@@ -15,6 +15,8 @@ function registryPath(): string {
 
 interface RegistryEntry {
   path: string;
+  // 显示名称与磁盘目录名解耦；旧注册表没有 name 时回退 basename(path)
+  name?: string;
   addedAt: number;
 }
 
@@ -125,8 +127,8 @@ function statProject(dir: string): { shots: number; duration: number; mode: stri
   };
 }
 
-function pushProject(out: ProjectInfo[], dir: string, currentDir: string): void {
-  out.push({ path: dir, name: basename(dir), current: dir === currentDir, ...statProject(dir) });
+function pushProject(out: ProjectInfo[], dir: string, currentDir: string, displayName?: string): void {
+  out.push({ path: dir, name: displayName?.trim() || basename(dir), current: dir === currentDir, ...statProject(dir) });
 }
 
 // 路径解析：绝对路径直接使用；相对路径按 projectDir 父目录解析（与切换目标一致）
@@ -147,7 +149,7 @@ export function listProjects(projectDir: string): ProjectInfo[] {
   const out: ProjectInfo[] = [];
   for (const entry of readRegistry()) {
     if (!existsSync(entry.path)) continue;
-    pushProject(out, entry.path, projectDir);
+    pushProject(out, entry.path, projectDir, entry.name);
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -168,6 +170,29 @@ export function addProject(projectDir: string, path: string): ProjectInfo[] {
     registry.push({ path: abs, addedAt: Date.now() });
     writeRegistry(registry);
   }
+  return listProjects(projectDir);
+}
+
+// 更新项目显示名称：不改磁盘目录，只更新项目注册表中的 name 字段。
+export function renameProject(projectDir: string, path: string, name: string): ProjectInfo[] {
+  const abs = resolveDir(projectDir, path);
+  if (!abs) throw new DirectorError('PROJECT_NOT_FOUND', `项目目录不存在: ${path}`);
+  const nextName = name.trim();
+  if (!nextName) throw new DirectorError('INVALID_PATCH', '项目名称不能为空');
+  const registry = readRegistry();
+  const entry = registry.find((item) => item.path === abs);
+  if (!entry) throw new DirectorError('PROJECT_NOT_FOUND', `项目未添加到项目栏: ${path}`);
+  entry.name = nextName;
+  writeRegistry(registry);
+  return listProjects(projectDir);
+}
+
+// 删除项目：从注册表移除，并递归删除对应磁盘目录；调用方必须先经过确认门。
+export function deleteProject(projectDir: string, path: string): ProjectInfo[] {
+  const abs = resolveDir(projectDir, path);
+  if (!abs) throw new DirectorError('PROJECT_NOT_FOUND', `项目目录不存在: ${path}`);
+  rmSync(abs, { recursive: true, force: false });
+  writeRegistry(readRegistry().filter((entry) => entry.path !== abs));
   return listProjects(projectDir);
 }
 

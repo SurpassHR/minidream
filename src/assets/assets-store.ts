@@ -78,6 +78,39 @@ function findAsset(id: string): AssetRecord {
   return rec;
 }
 
+export function updateAsset(id: string, patch: { name?: string; content?: string }): AssetRecord {
+  const rec = findAsset(id);
+  const next = { ...rec };
+  if (patch.name !== undefined) {
+    const name = patch.name.trim();
+    if (!name) throw new DirectorError('INVALID_PATCH', '素材名称不能为空');
+    next.name = name;
+  }
+  if (patch.content !== undefined) {
+    if (rec.kind !== 'txt') throw new DirectorError('FILE_CONFLICT', '只有文本素材可以编辑内容');
+    writeFileSync(join(assetDir(), `${rec.id}${rec.ext}`), patch.content, 'utf8');
+    next.size = Buffer.byteLength(patch.content, 'utf8');
+  }
+  const records = readIndex().map((item) => item.id === id ? next : item);
+  writeIndex(records);
+  return next;
+}
+
+export function replaceAssetFile(id: string, sourcePath: string): AssetRecord {
+  const rec = findAsset(id);
+  const ext = extname(sourcePath).toLowerCase();
+  const kind = kindOf(ext);
+  if (kind !== rec.kind) {
+    throw new DirectorError('FILE_CONFLICT', `替换素材类型不一致: 需要 ${rec.kind}，收到 ${kind}`);
+  }
+  const next = { ...rec, name: basename(sourcePath), ext, size: statSync(sourcePath).size };
+  mkdirSync(assetDir(), { recursive: true });
+  if (ext !== rec.ext) rmSync(join(assetDir(), `${rec.id}${rec.ext}`), { force: true });
+  copyFileSync(sourcePath, join(assetDir(), `${rec.id}${ext}`));
+  writeIndex(readIndex().map((item) => item.id === id ? next : item));
+  return next;
+}
+
 export function deleteAsset(id: string): void {
   const rec = findAsset(id);
   rmSync(join(assetDir(), `${rec.id}${rec.ext}`), { force: true });

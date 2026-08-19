@@ -18,7 +18,7 @@ let client: Client;
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'director-mcp-'));
   const queue = new GenerationQueue(dir, new ComfyUIClient('http://127.0.0.1:59999'));
-  const ctx: ProjectContext = { projectDir: dir, queue, comfy: new ComfyUIClient('http://127.0.0.1:59999') };
+  const ctx: ProjectContext = { projectDir: dir, projectOpen: true, queue, comfy: new ComfyUIClient('http://127.0.0.1:59999') };
   mcp = await startMcpServer({ ctx, port: 0 });
   client = new Client({ name: 'test', version: '1.0.0' });
   const transport = new StreamableHTTPClientTransport(new URL(mcp.url));
@@ -42,6 +42,7 @@ describe('MCP server', () => {
   it('工具调用触发 onActivity 活动回传（kanban PreToolUse 语义，含标识字段）', async () => {    const activities: string[] = [];
     const ctx2: ProjectContext = {
       projectDir: dir,
+      projectOpen: true,
       queue: new GenerationQueue(dir, new ComfyUIClient('http://127.0.0.1:59999')),
       comfy: new ComfyUIClient('http://127.0.0.1:59999'),
     };
@@ -66,6 +67,7 @@ describe('MCP server', () => {
     const dir2 = mkdtempSync(join(tmpdir(), 'director-mcp2-'));
     const ctx: ProjectContext = {
       projectDir: dir,
+      projectOpen: true,
       queue: new GenerationQueue(dir, new ComfyUIClient('http://127.0.0.1:59999')),
       comfy: new ComfyUIClient('http://127.0.0.1:59999'),
     };

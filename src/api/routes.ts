@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { DirectorError, type Actor, type NodeType } from '../types.js';
 import {
   createNode, updateNode, deleteNode, moveNode,
-  createEdge, updateEdge, deleteEdge, loadGraph,
+  createEdge, updateEdge, deleteEdge, loadGraph, saveGraph,
 } from '../graph/graph-store.js';
 import { syncNodeToFile } from '../sync/dual-writer.js';
 import { listSnapshots, graphAtSnapshot, headSeq, futureSnapshotCount, approveOverwrite } from '../snapshots/snapshot-store.js';
@@ -16,7 +16,10 @@ import { applyMutation, applyHeadSwitch } from './mutations.js';
 import { graphToPromptYaml } from '../prompt/export.js';
 import { GenerationQueue } from '../generation/queue.js';
 import { ComfyUIClient } from '../comfy/client.js';
-import { listAssets, importAssetFile, importAssetText, deleteAsset, readAssetText, assetFilePath } from '../assets/assets-store.js';
+import {
+  listAssets, importAssetFile, importAssetText, deleteAsset, readAssetText, assetFilePath,
+  updateAsset, replaceAssetFile,
+} from '../assets/assets-store.js';
 import { OllamaClient } from '../ollama/client.js';
 import { buildWorkflow } from '../comfy/workflow.js';
 import { buildAgentPrompt, runAgentCollect, runAgentStream } from '../agent/bridge.js';
@@ -39,7 +42,7 @@ import { listDesigns, createDesign, updateDesign, deleteDesign } from '../design
 import { readSettings, saveSettings } from '../settings/settings-store.js';
 import type { DesignKind, DesignObject } from '../design/store.js';
 import {
-  addProject, listProjects, removeProject, resolveSwitchTarget, resolveComfyUrl,
+  addProject, deleteProject, listProjects, removeProject, renameProject, resolveSwitchTarget, resolveComfyUrl,
 } from '../projects/projects-store.js';
 import type { WsHandle } from './ws.js';
 
@@ -47,8 +50,24 @@ import type { WsHandle } from './ws.js';
 // （projectDir / queue / comfy 三者必须同属一个项目，避免切换后交叉引用旧目录）
 export interface ProjectContext {
   projectDir: string;
+  projectOpen: boolean;
   queue: GenerationQueue;
   comfy: ComfyUIClient;
+}
+
+const PROJECT_SCOPED_PREFIXES = [
+  '/api/graph', '/api/yaml/export', '/api/nodes', '/api/edges', '/api/import',
+  '/api/snapshots', '/api/workspace', '/api/generation', '/api/comfy/config',
+  '/api/agent', '/api/story', '/api/designs',
+];
+
+function isProjectScopedPath(pathname: string): boolean {
+  if (pathname === '/api/agent/models') return false;
+  return PROJECT_SCOPED_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+export function projectNotOpen(reply: { code: (statusCode: number) => { send: (payload: unknown) => unknown } }): unknown {
+  return reply.code(409).send({ code: 'PROJECT_NOT_OPEN', message: '请先打开一个项目' });
 }
 
 function confirmOf(query: unknown): boolean {
@@ -122,6 +141,81 @@ export function buildStoryChatPrompt(
   return parts.join('\n');
 }
 
+// —— story chat 图像附件：base64 → 临时文件，pi 通过 @file 参数接收 ——
+// 剪贴板粘贴的图片在前端已转 data URL（data:image/png;base64,...）；纯 base64 兜底按 png 处理。
+// 返回临时目录（含已写入的文件列表）；失败/空输入返回 null。调用方负责 finally 清理 tmpDir。
+const STORY_IMAGE_EXT: Record<string, string> = {
+  'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif',
+  'image/webp': '.webp', 'image/bmp': '.bmp',
+};
+export function writeStoryChatImages(images: Array<{ name?: string; data?: string }>): { files: string[]; tmpDir: string } | null {
+  if (!Array.isArray(images) || images.length === 0) return null;
+  const tmpDir = mkdtempSync(join(tmpdir(), 'director-story-img-'));
+  const files: string[] = [];
+  for (const [i, img] of images.entries()) {
+    const data = typeof img?.data === 'string' ? img.data : '';
+    const m = /^data:([a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+);base64,(.+)$/s.exec(data);
+    const mime = m ? m[1]!.toLowerCase() : 'image/png';
+    const buf = Buffer.from(m ? m[2]! : data, 'base64');
+    if (buf.length === 0) continue;
+    const file = join(tmpDir, `img-${i}${STORY_IMAGE_EXT[mime] ?? '.png'}`);
+    writeFileSync(file, buf);
+    files.push(file);
+  }
+  return { files, tmpDir };
+}
+
+// 仅把明确的视觉能力错误触发为降级，避免把鉴权/网络/限流错误误判为视觉不支持。
+export function isVisionUnsupportedError(message: string): boolean {
+  return /(vision|visual|image|multimodal|视觉|图像|图片)/i.test(message)
+    && /(not support|unsupported|does not support|cannot|can't|invalid|不支持|不可用)/i.test(message);
+}
+
+const STORY_VISION_INSTRUCTION = '请用中文描述这张参考图中与故事创作有关的内容：主体、人物外观、场景、构图、光线、色彩和关键动作。只输出客观、具体的视觉描述，不要解释。';
+
+// 图片附件 → 本地 Ollama 视觉描述。复用 OllamaClient 的文件路径能力，避免先写入全局素材库。
+async function describeStoryImages(files: string[]): Promise<string> {
+  const { ollamaUrl, ollamaModel } = readSettings();
+  if (!ollamaUrl || !ollamaModel) {
+    throw new DirectorError('INVALID_PATCH', '当前对话模型不支持视觉输入，且未配置本地 Ollama 视觉模型。请到设置中配置 Ollama 地址与视觉模型。');
+  }
+  try {
+    const descriptions: string[] = [];
+    for (const [i, file] of files.entries()) {
+      const text = await new OllamaClient(ollamaUrl).imageToPrompt(ollamaModel, file, STORY_VISION_INSTRUCTION);
+      descriptions.push(`图片 ${i + 1}：${text}`);
+    }
+    return `参考图视觉描述（由本地 Ollama 生成）：\n${descriptions.join('\n')}`;
+  } catch (err) {
+    if (err instanceof DirectorError && err.message.startsWith('视觉降级失败：')) throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    throw new DirectorError('INVALID_PATCH', `视觉降级失败：${message}`);
+  }
+}
+
+// 故事对话拖入的非图像素材：文本读取内容，视频保留可识别的素材引用。
+// 内容设置上限，避免单个大型知识文件撑爆对话上下文；视频不伪造视觉描述。
+export function buildStoryAssetContext(refs: Array<{ id?: string; name?: string; kind?: string }>): string {
+  const parts: string[] = [];
+  for (const ref of refs) {
+    if (typeof ref?.id !== 'string') continue;
+    const asset = listAssets().find((item) => item.id === ref.id);
+    if (!asset || (asset.kind !== 'txt' && asset.kind !== 'vid')) continue;
+    if (asset.kind === 'txt') {
+      try {
+        const content = readAssetText(asset.id).slice(0, 12_000);
+        parts.push(`文本素材「${asset.name}」：\n${content}`);
+      } catch {
+        parts.push(`文本素材「${asset.name}」：内容读取失败`);
+      }
+    } else {
+      const meta = asset.meta ? `（${asset.meta}）` : '';
+      parts.push(`视频素材「${asset.name}」${meta}：请将其作为参考视频素材理解；当前请求未提供视频画面内容。`);
+    }
+  }
+  return parts.length > 0 ? `用户引用的素材上下文：\n${parts.join('\n\n')}` : '';
+}
+
 
 export function mountRoutes(
   app: FastifyInstance,
@@ -129,6 +223,14 @@ export function mountRoutes(
   ws: WsHandle,
 ): void {
   const actor: Actor = 'user';
+
+  // 项目目录是显式打开后才可用；全局设置、项目注册表和素材库不受此保护。
+  app.addHook('preHandler', async (req, reply) => {
+    const pathname = req.url.split('?')[0] ?? req.url;
+    if (!ctx.projectOpen && isProjectScopedPath(pathname)) {
+      return projectNotOpen(reply);
+    }
+  });
 
   app.get('/api/graph', async () => ({ graph: loadGraph(ctx.projectDir) }));
 
@@ -138,14 +240,66 @@ export function mountRoutes(
   }));
 
   // —— 项目栏：手动添加的项目注册表（默认不自动发现） ——
-  app.get('/api/projects', async () => ({ projects: listProjects(ctx.projectDir) }));
+  app.get('/api/projects', async () => ({
+    projects: listProjects(ctx.projectDir).map((p) => ({ ...p, current: ctx.projectOpen && p.current })),
+    projectOpen: ctx.projectOpen,
+  }));
 
   // 添加项目：校验为剧本项目（mmh3_prompts/prompts）或空目录后才可加入；持久化注册表
   app.post('/api/projects/add', async (req) => ({
     projects: addProject(ctx.projectDir, (req.body as { path?: string }).path ?? ''),
   }));
 
-  // 从项目栏移除（仅移除注册表项，不删除目录内容）
+  // 更新项目显示名称（不改磁盘目录）
+  app.patch('/api/projects/rename', async (req, reply) => {
+    const body = req.body as { path?: string; name?: string };
+    try {
+      const projects = renameProject(ctx.projectDir, body.path ?? '', body.name ?? '');
+      const target = resolveSwitchTarget(ctx.projectDir, body.path ?? '');
+      if (target) {
+        const graph = loadGraph(target);
+        graph.projectName = body.name!.trim();
+        saveGraph(target, graph);
+      }
+      return { projects };
+    } catch (err) {
+      if (err instanceof DirectorError) {
+        return reply.code(err.code === 'PROJECT_NOT_FOUND' ? 404 : 400).send({ code: err.code, message: err.message });
+      }
+      throw err;
+    }
+  });
+
+  // 删除项目：确认后递归删除磁盘目录，并从项目注册表移除
+  app.delete('/api/projects', async (req, reply) => {
+    const body = req.body as { path?: string; confirm?: boolean };
+    if (body.confirm !== true) {
+      return reply.code(400).send({ code: 'CONFIRM_REQUIRED', message: '删除项目文件需 confirm=true' });
+    }
+    const target = resolveSwitchTarget(ctx.projectDir, body.path ?? '');
+    const deletingCurrent = ctx.projectOpen && target === ctx.projectDir;
+    try {
+      const projects = deleteProject(ctx.projectDir, body.path ?? '');
+      if (deletingCurrent) {
+        ctx.projectDir = join(process.cwd(), '.director-no-project');
+        ctx.projectOpen = false;
+        ctx.comfy = new ComfyUIClient(resolveComfyUrl(ctx.projectDir));
+        ctx.queue = new GenerationQueue(ctx.projectDir, ctx.comfy);
+        await ws.switchDir(ctx.projectDir);
+      }
+      return {
+        projects: projects.filter((p) => ctx.projectOpen ? true : !p.current),
+        projectOpen: ctx.projectOpen,
+      };
+    } catch (err) {
+      if (err instanceof DirectorError) {
+        return reply.code(err.code === 'PROJECT_NOT_FOUND' ? 404 : 400).send({ code: err.code, message: err.message });
+      }
+      throw err;
+    }
+  });
+
+  // 兼容旧调用：仅从注册表移除，不删除目录
   app.post('/api/projects/remove', async (req) => ({
     projects: removeProject(ctx.projectDir, (req.body as { path?: string }).path ?? ''),
   }));
@@ -159,10 +313,15 @@ export function mountRoutes(
     // 三者整体替换为同一项目，避免交叉引用旧目录：
     // comfy 按新项目 project 节点地址重建；queue 随之重建；watcher 切换监视目录
     ctx.projectDir = target;
+    ctx.projectOpen = true;
     ctx.comfy = new ComfyUIClient(resolveComfyUrl(target));
     ctx.queue = new GenerationQueue(target, ctx.comfy);
     await ws.switchDir(target);
-    return { graph: loadGraph(ctx.projectDir), projects: listProjects(ctx.projectDir) };
+    return {
+      graph: loadGraph(ctx.projectDir),
+      projects: listProjects(ctx.projectDir),
+      projectOpen: true,
+    };
   });
 
 
@@ -396,19 +555,22 @@ export function mountRoutes(
     });
     // ComfyUI 地址变化 → 写回当前项目节点 + 热切换（复用 comfy/config 行为）
     if (settings.comfyUrl) {
-      applyMutation(ctx.projectDir, actor, `配置 ComfyUI 地址 ${settings.comfyUrl}`, (g) => {
-        const proj = g.nodes.find((n) => n.type === 'project');
-        if (proj) {
-          proj.fields.comfyuiUrl = settings.comfyUrl;
-          proj.version += 1;
-        } else {
-          createNode(g, {
-            type: 'project', title: g.projectName,
-            fields: { comfyuiUrl: settings.comfyUrl },
-            position: { x: 40, y: 40 },
-          });
-        }
-      });
+      if (ctx.projectOpen) {
+        applyMutation(ctx.projectDir, actor, `配置 ComfyUI 地址 ${settings.comfyUrl}`, (g) => {
+          const proj = g.nodes.find((n) => n.type === 'project');
+          if (proj) {
+            proj.fields.comfyuiUrl = settings.comfyUrl;
+            proj.version += 1;
+          } else {
+            createNode(g, {
+              type: 'project', title: g.projectName,
+              fields: { comfyuiUrl: settings.comfyUrl },
+              position: { x: 40, y: 40 },
+            });
+          }
+        });
+      }
+      // settings.json 是全局配置；即使没有项目，也应立即更新健康检查地址。
       ctx.comfy.setBaseUrl(settings.comfyUrl);
     }
     return { settings };
@@ -478,6 +640,46 @@ export function mountRoutes(
       const asset = importAssetFile(tmpPath);
       reply.code(201);
       return { asset };
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  app.patch('/api/assets/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as { name?: string; content?: string };
+    try {
+      return { asset: updateAsset(id, {
+        name: typeof body.name === 'string' ? body.name : undefined,
+        content: typeof body.content === 'string' ? body.content : undefined,
+      }) };
+    } catch (err) {
+      if (err instanceof DirectorError) {
+        return reply.code(err.code === 'NODE_NOT_FOUND' ? 404 : 400).send({ code: err.code, message: err.message });
+      }
+      throw err;
+    }
+  });
+
+  // 浏览器端替换素材文件：必须与原素材保持同一类型（图像/视频/文本）
+  app.post('/api/assets/:id/replace', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const ct = req.headers['content-type'] ?? '';
+    if (!ct.includes('multipart/form-data')) {
+      return reply.code(400).send({ code: 'INVALID_PATCH', message: '请求必须为 multipart/form-data' });
+    }
+    const file = await req.file();
+    if (!file) return reply.code(400).send({ code: 'INVALID_PATCH', message: '缺少 file 字段' });
+    const tmpDir = mkdtempSync(join(tmpdir(), 'director-replace-'));
+    const tmpPath = join(tmpDir, file.filename || `replace-${randomUUID()}.bin`);
+    try {
+      await pipeline(file.file, createWriteStream(tmpPath));
+      return { asset: replaceAssetFile(id, tmpPath) };
+    } catch (err) {
+      if (err instanceof DirectorError) {
+        return reply.code(err.code === 'NODE_NOT_FOUND' ? 404 : 400).send({ code: err.code, message: err.message });
+      }
+      throw err;
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -562,7 +764,7 @@ app.post('/api/story/reset', async () => {
 });
 
 // —— 剧本项目（Story Boards）：项目容器 = 项目级系统提示词 + RAG 知识库 ——
-// 空库自动落「未命名项目」默认板；boardId 不存在时相关接口抛 BOARD_NOT_FOUND
+// 空库自动落 Minimax-H3 Prompt Writer 默认板；boardId 不存在时相关接口抛 BOARD_NOT_FOUND
 app.get('/api/story/boards', async () => ({ boards: listBoards(ctx.projectDir) }));
 app.post('/api/story/boards', async (req) => {
   const body = req.body as { name?: string };
@@ -651,11 +853,21 @@ app.get('/api/story/chat/history', async (req) => {
 });
 
 app.post('/api/story/chat', async (req, reply) => {
-  const body = req.body as { message?: string; model?: string; thinking?: string; persistAs?: string; sessionId?: string; systemPrompt?: string; boardId?: string };
+  const body = req.body as {
+    message?: string; model?: string; thinking?: string; persistAs?: string; sessionId?: string;
+    systemPrompt?: string; boardId?: string; modelSupportsImages?: boolean;
+    images?: Array<{ name?: string; data?: string }>;
+    assetRefs?: Array<{ id?: string; name?: string; kind?: 'txt' | 'vid' }>;
+  };
   const message = (body.message ?? '').trim();
-  if (!message) {
+  // 附件（图片）允许空文本：消息与图片至少其一
+  const images = Array.isArray(body.images) ? body.images : [];
+  const assetRefs = Array.isArray(body.assetRefs) ? body.assetRefs : [];
+  if (!message && images.length === 0 && assetRefs.length === 0) {
     return reply.code(400).send({ code: 'INVALID_PATCH', message: '消息不能为空' });
   }
+  // 图片附件 → 临时文件；随后作为 @file 传给 pi（模型可见）
+  const imgAttach = writeStoryChatImages(images);
   // 组装对话上下文：项目名 + 向导答案 + 最近历史 + （可选）剧本项目提示词与 RAG 命中
   const graph = loadGraph(ctx.projectDir);
   const story = readStory(ctx.projectDir);
@@ -667,22 +879,36 @@ app.post('/api/story/chat', async (req, reply) => {
   const effectiveSystem = body.systemPrompt?.trim() || boardPrompt || undefined;
   // 系统动作（总结成稿等 persistAs 标记）不做 RAG 检索：查询是长指令，命中无意义
   let ragContext = '';
-  if (board?.ragEnabled && board.ragAssets.length > 0 && !body.persistAs) {
+  if (message && board?.ragEnabled && board.ragAssets.length > 0 && !body.persistAs) {
     const r = await ragSearch(ctx.projectDir, board, message, 3);
     if (r.status === 'ok' && r.hits.length > 0) ragContext = formatRagHits(r.hits);
   }
-  const prompt = buildStoryChatPrompt(graph.projectName, story.answers, history, message, effectiveSystem, ragContext);
+  const assetContext = buildStoryAssetContext(assetRefs);
+  const buildPrompt = (visionContext = '') => {
+    const context = [assetContext, visionContext].filter((part) => part.trim()).join('\n\n');
+    return buildStoryChatPrompt(
+      graph.projectName,
+      story.answers,
+      history,
+      context ? `${message}\n\n${context}` : message,
+      effectiveSystem,
+      ragContext,
+    );
+  };
+  const prompt = buildPrompt();
 
-  const cmd = (process.env.DIRECTOR_PI_CMD ?? 'pi --mode json').split(' ').filter(Boolean);
+  const baseCmd = (process.env.DIRECTOR_PI_CMD ?? 'pi --mode json').split(' ').filter(Boolean);
   if (!process.env.DIRECTOR_PI_CMD) {
     const mcpPort = Number(process.env.DIRECTOR_MCP_PORT ?? 4778);
     const mcpFile = writeAgentMcpConfig(mcpPort);
-    if (mcpFile) cmd.push('--mcp-config', mcpFile);
+    if (mcpFile) baseCmd.push('--mcp-config', mcpFile);
   }
-  if (body.model) cmd.push('--model', body.model);
+  if (body.model) baseCmd.push('--model', body.model);
   if (body.thinking && THINKING_LEVELS.includes(body.thinking)) {
-    cmd.push('--thinking', body.thinking);
+    baseCmd.push('--thinking', body.thinking);
   }
+  // 图片附件：视觉模型走 @绝对路径；文本模型会在下方改走 Ollama 描述降级。
+  const imageCmd = imgAttach ? [...baseCmd, ...imgAttach.files.map((f) => '@' + f)] : baseCmd;
 
   reply.raw.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -694,7 +920,8 @@ app.post('/api/story/chat', async (req, reply) => {
   // persistAs：系统动作（总结成稿/回填向导）的落盘标记——message 是长指令 prompt，
   // 若原文落盘会快速消耗 100 条历史上限并污染下次对话的 20 条上下文窗口。
   // boardId：自动创建会话时归组到剧本项目
-  appendStoryChat(ctx.projectDir, sessionId, 'user', body.persistAs ?? message, body.boardId ?? null);
+  // 仅图片无文本时落盘标记占位，避免历史气泡为空；文本正常落盘
+  appendStoryChat(ctx.projectDir, sessionId, 'user', body.persistAs ?? (message || (images.length > 0 ? '[图片附件]' : '[素材引用]')), body.boardId ?? null);
   let agentText = '';
   let pending = '';
   let flushTimer: NodeJS.Timeout | null = null;
@@ -737,17 +964,60 @@ app.post('/api/story/chat', async (req, reply) => {
   };
   try {
     const idleMs = Number(process.env.DIRECTOR_AGENT_IDLE_MS) || 45_000;
-    // 注入项目上下文（kanban KANBAN_TASK_ID 语义）：agent 进程内可感知当前项目
-    const { idleKilled } = await runAgentStream(cmd, prompt, sendCollect, {
-      idleTimeoutMs: idleMs,
-      env: {
-        DIRECTOR_PROJECT_DIR: ctx.projectDir,
-        DIRECTOR_PROJECT_NAME: graph.projectName,
-      },
-    });
-    flushPending();
+    const imageFiles = imgAttach?.files ?? [];
+    let runPrompt = prompt;
+    let runCmd = imageCmd;
+    let idleKilled = false;
+    let failureMessage = '';
+
+    // 模型列表已明确标记为不支持视觉：先调用 Ollama，再把纯文本描述交给原模型。
+    if (imageFiles.length > 0 && body.modelSupportsImages === false) {
+      try {
+        const visionContext = await describeStoryImages(imageFiles);
+        runPrompt = buildPrompt(visionContext);
+        runCmd = baseCmd;
+      } catch (err) {
+        failureMessage = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    if (!failureMessage) {
+      // 注入项目上下文（kanban KANBAN_TASK_ID 语义）：agent 进程内可感知当前项目
+      const first = await runAgentStream(runCmd, runPrompt, sendCollect, {
+        idleTimeoutMs: idleMs,
+        env: {
+          DIRECTOR_PROJECT_DIR: ctx.projectDir,
+          DIRECTOR_PROJECT_NAME: graph.projectName,
+        },
+      });
+      idleKilled = first.idleKilled;
+      flushPending();
+
+      // 能力未知时，只有明确的视觉能力错误且尚无输出才自动重试一次 Ollama 降级。
+      const firstModelError = modelError;
+      if (imageFiles.length > 0 && !body.modelSupportsImages && !idleKilled
+        && agentText.trim().length === 0 && isVisionUnsupportedError(firstModelError)) {
+        try {
+          const visionContext = await describeStoryImages(imageFiles);
+          modelError = '';
+          const retry = await runAgentStream(baseCmd, buildPrompt(visionContext), sendCollect, {
+            idleTimeoutMs: idleMs,
+            env: {
+              DIRECTOR_PROJECT_DIR: ctx.projectDir,
+              DIRECTOR_PROJECT_NAME: graph.projectName,
+            },
+          });
+          idleKilled = retry.idleKilled;
+          flushPending();
+        } catch (err) {
+          failureMessage = err instanceof Error ? err.message : String(err);
+        }
+      }
+    }
+
     appendStoryChat(ctx.projectDir, sessionId, 'agent', agentText, body.boardId ?? null);
-    if (idleKilled) send('\n\n（输出已空闲停止）');
+    if (failureMessage) send(`\n\n（${failureMessage}）`);
+    else if (idleKilled) send('\n\n（输出已空闲停止）');
     else if (agentText.trim().length === 0) {
       send(modelError ? `\n\n（模型调用失败：${modelError}）` : '\n\n（输出为空）');
     }
@@ -755,6 +1025,9 @@ app.post('/api/story/chat', async (req, reply) => {
   } catch (err) {
     send(`（agent 启动失败：${err instanceof Error ? err.message : String(err)}）`);
     reply.raw.write('data: [DONE]\n\n');
+  } finally {
+    // 图片临时文件只在 pi 读取期间需要，流结束后立即清理
+    if (imgAttach) rmSync(imgAttach.tmpDir, { recursive: true, force: true });
   }
   reply.raw.end();
 });

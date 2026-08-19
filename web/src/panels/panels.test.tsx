@@ -46,7 +46,30 @@ describe('ProjectSwitcher', () => {
     expect(dropdown().getByText('＋ 添加项目')).toBeInTheDocument();
   });
 
-  it('移除按钮触发 onRemove（不冒泡到 onSelect）', () => {
+  it('未打开项目时不显示 graph fallback 名称', () => {
+    render(<ProjectSwitcher projects={[]} activePath="" fallbackName="director-workbench" projectOpen={false} onSelect={() => {}} onAdd={() => {}} onRemove={() => {}} />);
+    expect(screen.getByTestId('project-name')).toHaveTextContent('未打开项目');
+    expect(screen.getByTestId('project-name')).not.toHaveTextContent('director-workbench');
+  });
+
+  it('重命名按钮触发 onRename（不冒泡到 onSelect）', () => {
+    const onRename = vi.fn();
+    const onSelect = vi.fn();
+    render(<ProjectSwitcher
+      projects={[{ path: '/p/y', name: 'y', current: false, shots: 1, duration: 3.75, mode: '' }]}
+      activePath="" fallbackName="" onSelect={onSelect} onAdd={() => {}} onRename={onRename} onRemove={() => {}}
+    />);
+    openDropdown();
+    const actions = screen.getByTestId('project-y-actions');
+    expect(actions).toHaveClass('project-item-actions');
+    expect(within(actions).getByTitle('重命名项目')).toBeInTheDocument();
+    expect(within(actions).getByTitle('删除项目文件（不可恢复）')).toBeInTheDocument();
+    fireEvent.click(within(actions).getByTitle('重命名项目'));
+    expect(onRename).toHaveBeenCalledWith('/p/y', 'y');
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('删除按钮触发 onRemove（不冒泡到 onSelect）', () => {
     const onRemove = vi.fn();
     const onSelect = vi.fn();
     render(<ProjectSwitcher
@@ -54,7 +77,7 @@ describe('ProjectSwitcher', () => {
       activePath="" fallbackName="" onSelect={onSelect} onAdd={() => {}} onRemove={onRemove}
     />);
     openDropdown();
-    fireEvent.click(dropdown().getByTitle('从项目栏移除（不删除目录）'));
+    fireEvent.click(dropdown().getByTitle('删除项目文件（不可恢复）'));
     expect(onRemove).toHaveBeenCalledWith('/p/y', 'y');
     expect(onSelect).not.toHaveBeenCalled();
   });
@@ -179,6 +202,87 @@ describe('AssetLibrary 粘贴与拖入导入', () => {
       dataTransfer: { files: [txt], types: ['Files'] },
     } as unknown as DragEvent);
     await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/assets/import-text', expect.anything()));
+  });
+});
+
+describe('AssetLibrary CRUD', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/content')) {
+        return new Response(JSON.stringify({ content: '旧文本内容' }), { status: 200 });
+      }
+      if (init?.method === 'DELETE') {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      if (init?.method === 'PATCH') {
+        return new Response(JSON.stringify({ asset: { id: 'a1', kind: 'txt', name: '新名称.md' } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }));
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('文本素材可编辑名称与内容并保存', async () => {
+    const onChanged = vi.fn();
+    render(<AssetLibrary items={[{ id: 'a1', kind: 'txt', name: '旧名称.md' }]} onDropToCanvas={() => {}} onAssetsChanged={onChanged} />);
+    fireEvent.click(screen.getByTestId('asset-edit-a1'));
+    const name = await screen.findByTestId('asset-edit-name');
+    const content = await screen.findByTestId('asset-edit-content');
+    expect(content).toHaveValue('旧文本内容');
+    fireEvent.change(name, { target: { value: '新名称.md' } });
+    fireEvent.change(content, { target: { value: '新文本内容' } });
+    fireEvent.click(screen.getByTestId('asset-edit-save'));
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    const call = (fetch as ReturnType<typeof vi.fn>).mock.calls.find((entry) => (entry[1] as RequestInit | undefined)?.method === 'PATCH');
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ name: '新名称.md', content: '新文本内容' });
+  });
+
+  it('图像与视频素材卡片显示真实缩略图', () => {
+    render(<AssetLibrary items={[
+      { id: 'thumb-img', kind: 'img', name: 'thumb.png' },
+      { id: 'thumb-vid', kind: 'vid', name: 'thumb.mp4' },
+    ]} onDropToCanvas={() => {}} />);
+    expect(screen.getByTestId('asset-thumbnail-image')).toHaveAttribute('src', '/api/assets/thumb-img/file');
+    expect(screen.getByTestId('asset-thumbnail-video')).toHaveAttribute('src', '/api/assets/thumb-vid/file');
+  });
+
+  it('图像素材点击后打开图片预览', async () => {
+    render(<AssetLibrary items={[{ id: 'img-1', kind: 'img', name: 'preview.png' }]} onDropToCanvas={() => {}} />);
+    fireEvent.click(screen.getByText('preview.png'));
+    const preview = await screen.findByTestId('asset-preview-image');
+    expect(preview).toHaveAttribute('src', '/api/assets/img-1/file');
+    expect(within(screen.getByRole('dialog')).getByText('preview.png')).toBeInTheDocument();
+  });
+
+  it('视频素材点击后打开首帧预览', async () => {
+    render(<AssetLibrary items={[{ id: 'vid-1', kind: 'vid', name: 'preview.mp4' }]} onDropToCanvas={() => {}} />);
+    fireEvent.click(screen.getByText('preview.mp4'));
+    const preview = await screen.findByTestId('asset-preview-video');
+    expect(preview).toHaveAttribute('src', '/api/assets/vid-1/file');
+    expect(preview).toHaveAttribute('preload', 'metadata');
+  });
+
+  it('文本素材点击后读取并显示文本预览', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/content')) {
+        return new Response(JSON.stringify({ content: '# 预览内容\\n第二行' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    });
+    render(<AssetLibrary items={[{ id: 'txt-1', kind: 'txt', name: 'preview.md' }]} onDropToCanvas={() => {}} />);
+    fireEvent.click(screen.getByText('preview.md'));
+    expect(await screen.findByTestId('asset-preview-text')).toHaveTextContent('# 预览内容');
+    expect(screen.getByTestId('asset-preview-text')).toHaveTextContent('第二行');
+  });
+
+  it('素材删除需要确认并调用 DELETE', async () => {
+    const onChanged = vi.fn();
+    render(<AssetLibrary items={[{ id: 'a1', kind: 'img', name: 'a.png' }]} onDropToCanvas={() => {}} onAssetsChanged={onChanged} />);
+    fireEvent.click(screen.getByTestId('asset-delete-a1'));
+    expect(await screen.findByText('删除素材')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('确认删除'));
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls.some((entry) => String(entry[0]).includes('/api/assets/a1') && (entry[1] as RequestInit | undefined)?.method === 'DELETE')).toBe(true);
   });
 });
 

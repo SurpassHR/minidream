@@ -37,4 +37,12 @@ describe('client req 封装', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('oops', { status: 500 })));
     await expect(client.deleteNode('n1')).rejects.toMatchObject({ code: 'HTTP_500' });
   });
+
+  it('storyChat 保留后端返回的具体错误消息', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ code: 'INVALID_PATCH', message: '当前模型不支持视觉输入，请配置 Ollama' }),
+      { status: 400, headers: { 'content-type': 'application/json' } },
+    )));
+    await expect(client.storyChat('参考这张图', () => {})).rejects.toThrow('当前模型不支持视觉输入，请配置 Ollama');
+  });
 });

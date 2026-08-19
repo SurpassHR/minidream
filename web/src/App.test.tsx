@@ -1,8 +1,11 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import App from './App';
 
+let mockProjectOpen = true;
+
 beforeEach(() => {
+  mockProjectOpen = true;
   // 面板尺寸持久化隔离：拖拽测试不污染其他用例
   localStorage.clear();
   // mock fetch：/api/graph 返回空图；/api/snapshots 返回空；/api/comfy/health 返回已连接
@@ -31,13 +34,17 @@ beforeEach(() => {
           { path: '/p/t', name: 't', current: false, shots: 2, duration: 7.5, mode: 'KEYFRAME' },
           { path: '/p/b', name: 'b', current: true, shots: 1, duration: 3.75, mode: '' },
         ],
+        projectOpen: true,
       }), { status: 200 });
     }
     if (String(url).includes('/api/projects')) {
-      return new Response(JSON.stringify({ projects: [
+      return new Response(JSON.stringify({ projects: mockProjectOpen ? [
         { path: '/p/t', name: 't', current: true, shots: 2, duration: 7.5, mode: 'KEYFRAME' },
         { path: '/p/b', name: 'b', current: false, shots: 1, duration: 3.75, mode: '' },
-      ] }), { status: 200 });
+      ] : [], projectOpen: mockProjectOpen }), { status: 200 });
+    }
+    if (String(url).includes('/api/graph') && !mockProjectOpen) {
+      return new Response(JSON.stringify({ code: 'PROJECT_NOT_OPEN', message: '请先打开一个项目' }), { status: 409 });
     }
     if (String(url).includes('/api/agent/models')) {
       return new Response(JSON.stringify({ models: [] }), { status: 200 });
@@ -101,9 +108,45 @@ describe('App 布局骨架', () => {
     expect(screen.getByText('2 分镜 · 7.5s')).toBeInTheDocument();
   });
 
+  it('未打开项目时显示只读空工作区，不显示启动目录名称', async () => {
+    mockProjectOpen = false;
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('project-name')).toHaveTextContent('未打开项目'));
+    expect(screen.queryByTestId('canvas')).not.toBeInTheDocument();
+    expect(screen.getByTestId('project-empty-state')).toHaveTextContent('请先打开或添加项目');
+    expect(screen.getByTestId('asset-library-toggle')).toBeInTheDocument();
+  });
+
+  it('项目下拉支持更新名称与删除项目文件确认', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('project-name')).toHaveTextContent('t'));
+    fireEvent.click(screen.getByTestId('project-name'));
+    fireEvent.click(within(screen.getByTestId('project-dropdown')).getAllByTitle('重命名项目')[0]!);
+    const input = await screen.findByTestId('text-dialog-input');
+    fireEvent.change(input, { target: { value: '新项目名' } });
+    fireEvent.click(screen.getByTestId('text-dialog-confirm'));
+    await waitFor(() => expect((fetch as ReturnType<typeof vi.fn>).mock.calls.some(([url, init]) => String(url).includes('/api/projects/rename') && init?.method === 'PATCH')).toBe(true));
+    if (!screen.queryByTestId('project-dropdown')) fireEvent.click(screen.getByTestId('project-name'));
+    fireEvent.click(within(screen.getByTestId('project-dropdown')).getAllByTitle('删除项目文件（不可恢复）')[0]!);
+    expect(await screen.findByText('删除项目文件')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('确认删除'));
+    await waitFor(() => expect((fetch as ReturnType<typeof vi.fn>).mock.calls.some(([url, init]) => String(url) === '/api/projects' && init?.method === 'DELETE')).toBe(true));
+  });
+
   it('顶栏包含运行流水线按钮', () => {
     render(<App />);
     expect(screen.getByRole('button', { name: /运行流水线/ })).toBeInTheDocument();
+  });
+
+  it('顶栏素材库入口打开非模态侧栏，不显示前景遮罩', () => {
+    render(<App />);
+    const toggle = screen.getByTestId('asset-library-toggle');
+    expect(screen.getByTestId('asset-drawer')).not.toHaveClass('open');
+    fireEvent.click(toggle);
+    expect(screen.getByTestId('asset-drawer')).toHaveClass('open');
+    expect(screen.queryByTestId('asset-backdrop')).not.toBeInTheDocument();
+    expect(screen.getByTestId('canvas')).toBeInTheDocument();
+    expect(screen.getByTestId('agent-panel')).toBeInTheDocument();
   });
 
   it('顶栏设置按钮打开设置弹窗', async () => {

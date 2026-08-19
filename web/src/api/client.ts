@@ -192,9 +192,9 @@ export const client = {
   },
 
   // 项目列表：手动添加的项目注册表（含分镜/时长统计），默认不自动发现
-  async listProjects(): Promise<ProjectInfo[]> {
-    const r = await req<{ projects: ProjectInfo[] }>('/api/projects');
-    return r.projects;
+  async listProjects(): Promise<{ projects: ProjectInfo[]; projectOpen: boolean }> {
+    const r = await req<{ projects: ProjectInfo[]; projectOpen?: boolean }>('/api/projects');
+    return { projects: r.projects, projectOpen: r.projectOpen ?? r.projects.some((p) => p.current) };
   },
 
   // 手动添加项目：校验为剧本项目（mmh3_prompts/prompts）或空目录后才可添加；
@@ -206,7 +206,22 @@ export const client = {
     return r.projects;
   },
 
-  // 从项目栏移除（仅移除注册表项，不删除目录）
+  // 更新项目显示名称（不改磁盘目录）
+  async renameProject(path: string, name: string): Promise<ProjectInfo[]> {
+    const r = await req<{ projects: ProjectInfo[] }>('/api/projects/rename', {
+      method: 'PATCH', body: JSON.stringify({ path, name }),
+    });
+    return r.projects;
+  },
+
+  // 删除项目目录及其注册记录（后端再次确认并递归删除磁盘文件）
+  async deleteProject(path: string): Promise<{ projects: ProjectInfo[]; projectOpen: boolean }> {
+    return await req<{ projects: ProjectInfo[]; projectOpen: boolean }>('/api/projects', {
+      method: 'DELETE', body: JSON.stringify({ path, confirm: true }),
+    });
+  },
+
+  // 兼容旧调用：仅移除注册表项，不删除目录
   async removeProject(path: string): Promise<ProjectInfo[]> {
     const r = await req<{ projects: ProjectInfo[] }>('/api/projects/remove', {
       method: 'POST', body: JSON.stringify({ path }),
@@ -215,8 +230,8 @@ export const client = {
   },
 
   // 项目热切换：后端重建图/队列/监视目录，返回新项目图与更新后的项目列表
-  async switchProject(path: string): Promise<{ graph: Graph; projects: ProjectInfo[] }> {
-    return await req<{ graph: Graph; projects: ProjectInfo[] }>('/api/project/switch', {
+  async switchProject(path: string): Promise<{ graph: Graph; projects: ProjectInfo[]; projectOpen: boolean }> {
+    return await req<{ graph: Graph; projects: ProjectInfo[]; projectOpen: boolean }>('/api/project/switch', {
       method: 'POST', body: JSON.stringify({ path }),
     });
   },
@@ -224,6 +239,28 @@ export const client = {
   async listAssets(): Promise<Array<{ id: string; kind: 'txt' | 'img' | 'vid'; name: string; meta?: string }>> {
     const r = await req<{ assets: Array<{ id: string; kind: 'txt' | 'img' | 'vid'; name: string; meta?: string }> }>('/api/assets');
     return r.assets;
+  },
+
+  async updateAsset(id: string, patch: { name?: string; content?: string }): Promise<AssetRecord> {
+    const r = await req<{ asset: AssetRecord }>(`/api/assets/${encodeURIComponent(id)}`, {
+      method: 'PATCH', body: JSON.stringify(patch),
+    });
+    return r.asset;
+  },
+
+  async replaceAsset(id: string, file: File): Promise<AssetRecord> {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`/api/assets/${encodeURIComponent(id)}/replace`, { method: 'POST', body: form });
+    const payload = await res.json().catch(() => ({})) as { asset?: AssetRecord; code?: string; message?: string };
+    if (!res.ok || !payload.asset) {
+      throw new ApiError(payload.code ?? 'HTTP_' + res.status, payload.message ?? res.statusText);
+    }
+    return payload.asset;
+  },
+
+  async deleteAsset(id: string): Promise<void> {
+    await req(`/api/assets/${encodeURIComponent(id)}?confirm=true`, { method: 'DELETE' });
   },
 
   // —— AGENT 会话（多会话 CRUD；全部返回列表 + activeId）——
@@ -475,6 +512,8 @@ export const client = {
     systemPrompt?: string,
     boardId?: string | null,
     images?: Array<{ name: string; data: string }>,
+    modelSupportsImages?: boolean,
+    assetRefs?: Array<{ id: string; name: string; kind: 'txt' | 'vid' }>,
   ): Promise<void> {
     const res = await fetch('/api/story/chat', {
       method: 'POST',
@@ -485,9 +524,15 @@ export const client = {
         systemPrompt: systemPrompt ?? undefined,
         boardId: boardId ?? undefined,
         images: images && images.length > 0 ? images : undefined,
+        modelSupportsImages,
+        assetRefs: assetRefs && assetRefs.length > 0 ? assetRefs : undefined,
       }),
     });
-    if (!res.ok || !res.body) throw new Error(`story chat 请求失败: ${res.status}`);
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({})) as { message?: string };
+      throw new Error(payload.message || `story chat 请求失败: ${res.status}`);
+    }
+    if (!res.body) throw new Error(`story chat 请求失败: ${res.status}`);
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';

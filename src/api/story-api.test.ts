@@ -3,7 +3,7 @@ import { tmpdir, homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../index.js';
-import { listAssets, importAssetText } from '../assets/assets-store.js';
+import { listAssets, importAssetFile, importAssetText } from '../assets/assets-store.js';
 import { readStory } from '../story/store.js';
 import { saveSettings } from '../settings/settings-store.js';
 
@@ -197,6 +197,77 @@ describe('API 故事对话', () => {
     expect(messages[0].text).not.toContain('故事编剧');
   });
 
+  it('POST /api/story/chat 带图片附件：base64 → 临时文件 @file 传给 pi；空文本落盘标记', async () => {
+    // mock agent 输出完整 argv（MOCK_ECHO_ARGS）：验证图片附件以 @绝对路径 传入 pi
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_ECHO_ARGS', '1');
+    // 1×1 透明 PNG（真实 base64，仅验证写盘/传参链路，不做图片解码）
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const res = await a.inject({
+      method: 'POST', url: '/api/story/chat',
+      payload: { message: '', images: [{ name: '参考图.png', data: `data:image/png;base64,${png}` }] },
+    });
+    expect(res.statusCode).toBe(200);
+    // mock 输出的 argv 行经 SSE chunk 帧回传：断言 @临时图片路径已注入 pi 参数
+    expect(res.body).toContain('data: [DONE]');
+    expect(res.body).toContain('@');
+    expect(res.body).toContain('img-0.png');
+    // 历史：仅图片无文本 → 落盘占位标记（气泡不为空）
+    const hist = await a.inject({ method: 'GET', url: '/api/story/chat/history' });
+    const messages = hist.json().messages;
+    expect(messages[0].who).toBe('user');
+    expect(messages[0].text).toBe('[图片附件]');
+  });
+
+  it('POST /api/story/chat 带文本与图片：文本原样落盘，图片仍传给 pi', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_ECHO_ARGS', '1');
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const res = await a.inject({
+      method: 'POST', url: '/api/story/chat',
+      payload: { message: '参考这张图写开场', images: [{ name: 'a.png', data: `data:image/png;base64,${png}` }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('img-0.png');
+    const hist = await a.inject({ method: 'GET', url: '/api/story/chat/history' });
+    expect(hist.json().messages[0].text).toBe('参考这张图写开场');
+  });
+
+  it('POST /api/story/chat 文本与视频素材引用：读取文本并注入素材上下文', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_ECHO_STDIN', '1');
+    const text = importAssetText('世界观.md', '这是一个被雾笼罩的边境城镇。');
+    const videoPath = join(dir, '参考视频.mp4');
+    writeFileSync(videoPath, new Uint8Array([0, 1, 2]));
+    const video = importAssetFile(videoPath);
+    const res = await a.inject({
+      method: 'POST', url: '/api/story/chat',
+      payload: {
+        message: '结合素材继续写开场',
+        assetRefs: [
+          { id: text.id, name: text.name, kind: 'txt' },
+          { id: video.id, name: video.name, kind: 'vid' },
+        ],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('文本素材「世界观.md」');
+    expect(res.body).toContain('这是一个被雾笼罩的边境城镇。');
+    expect(res.body).toContain('视频素材「参考视频.mp4」');
+  });
+
+  it('POST /api/story/chat 图片 data 为空/非法：忽略该图不中断对话（文本仍可发送）', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_REPLY', 'ok');
+    const res = await a.inject({
+      method: 'POST', url: '/api/story/chat',
+      payload: { message: '只有文本', images: [{ name: 'bad.png', data: 'data:image/png;base64,###' }] },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('data: [DONE]');
+    expect(res.body).toContain('ok');
+  });
+
   it('POST /api/story/chat：模型报错且无输出时提示具体错误（非笼统空输出）', async () => {
     vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent-error.mjs')}`);
     const res = await a.inject({
@@ -327,7 +398,7 @@ describe('API 全局设置', () => {
 
 describe('buildStoryChatPrompt 纯函数', () => {
   it('buildStoryChatPrompt：systemPrompt 替换写死文本；缺省兜底', async () => {
-    const { buildStoryChatPrompt } = await import('./routes.js');
+    const { buildStoryChatPrompt, isVisionUnsupportedError } = await import('./routes.js');
     const base = buildStoryChatPrompt('p', {}, [], '你好');
     expect(base).toContain('你是导演工作台的故事编剧');
     const custom = buildStoryChatPrompt('p', {}, [], '你好', '你是定制系统提示词');
@@ -339,20 +410,23 @@ describe('buildStoryChatPrompt 纯函数', () => {
     // ragContext 注入：紧跟系统提示词
     const withRag = buildStoryChatPrompt('p', {}, [], '你好', undefined, '知识库检索（RAG）命中：- [设定.md] xxx');
     expect(withRag).toContain('知识库检索（RAG）命中');
+    expect(isVisionUnsupportedError('model does not support image inputs')).toBe(true);
+    expect(isVisionUnsupportedError('403 Your request was blocked.')).toBe(false);
   });
 });
 
 describe('API 剧本项目（boards：项目级提示词 + RAG）', () => {
-  it('GET /api/story/boards 空库自动落默认板', async () => {
+  it('GET /api/story/boards 空库自动落 Minimax-H3 Prompt Writer 默认板', async () => {
     const res = await a.inject({ method: 'GET', url: '/api/story/boards' });
     expect(res.statusCode).toBe(200);
     expect(res.json().boards).toHaveLength(1);
-    expect(res.json().boards[0].name).toBe('未命名项目');
+    expect(res.json().boards[0].name).toBe('Minimax-H3 Prompt Writer');
   });
-  it('默认未命名项目也可以重命名', async () => {
+
+  it('默认 Minimax-H3 Prompt Writer 也可以重命名', async () => {
     const initial = await a.inject({ method: 'GET', url: '/api/story/boards' });
     const defaultBoard = initial.json().boards[0];
-    expect(defaultBoard.name).toBe('未命名项目');
+    expect(defaultBoard.name).toBe('Minimax-H3 Prompt Writer');
     const renamed = await a.inject({
       method: 'PATCH', url: `/api/story/boards/${defaultBoard.id}`,
       payload: { name: '雾中的邮差' },
@@ -360,7 +434,6 @@ describe('API 剧本项目（boards：项目级提示词 + RAG）', () => {
     expect(renamed.statusCode).toBe(200);
     expect(renamed.json().boards.find((b: { id: string }) => b.id === defaultBoard.id).name).toBe('雾中的邮差');
   });
-
 
   it('创建 / 重命名 / 保存提示词 / RAG 开关与资产 / 删除', async () => {
     const created = await a.inject({ method: 'POST', url: '/api/story/boards', payload: { name: '星尘历险记' } });

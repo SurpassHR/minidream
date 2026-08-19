@@ -31,6 +31,12 @@ function createMcpServer(
 ): McpServer {
   const server = new McpServer({ name: 'director-workbench', version: '0.1.0' });
   const actor = 'agent' as const;
+  const projectTools = new Set([
+    'canvas.get_graph', 'node.create', 'node.update', 'node.delete', 'node.move',
+    'edge.create', 'edge.delete', 'workspace.list', 'workspace.search', 'workspace.read',
+    'generation.submit', 'generation.status', 'generation.cancel',
+    'snapshot.list', 'snapshot.diff', 'snapshot.rollback',
+  ]);
 
   // 包装 registerTool：工具调用前回传活动（agent → 工具名 + 标识字段），失败静默。
   // monkey-patch 场景用宽松签名（SDK 重载类型与包装不匹配，运行时行为不受影响）
@@ -41,6 +47,9 @@ function createMcpServer(
   ) => unknown;
   (server as unknown as { registerTool: typeof origRegister }).registerTool = (name, def, handler) => {
     return origRegister(name, def, async (args) => {
+      if (projectTools.has(name) && !ctx.projectOpen) {
+        return { content: [{ type: 'text', text: '错误：请先打开一个项目' }], isError: true };
+      }
       try {
         const id = args.id ?? args.nodeId ?? args.title ?? args.name ?? args.path ?? args.seq;
         const detail = typeof id === 'string' && id ? ` ${id}` : '';

@@ -15,11 +15,12 @@ function fmtMeta(p: ProjectInfo): string {
 export function ProjectSwitcher(props: {
   projects: ProjectInfo[];
   activePath: string;
-  // 当前项目名兜底：注册表列表可能不含当前目录（server 直接跑在非注册项目上），
-  // 此时显示画布图的项目名（旧顶栏行为），保证切换器始终有可见名称
+  // 当前项目名兜底：仅在已打开项目时使用 graph 项目名；未打开时固定显示引导文案
   fallbackName: string;
+  projectOpen?: boolean;
   onSelect: (path: string) => void;
   onAdd: () => void;
+  onRename?: (path: string, name: string) => void;
   onRemove: (path: string, name: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -46,7 +47,7 @@ export function ProjectSwitcher(props: {
         onClick={() => setOpen((v) => !v)}
       >
         <span className="ps-ico"><Icon name="film" /></span>
-        <span className="ps-name">{current?.name ?? (props.fallbackName || '加载中…')}</span>
+        <span className="ps-name">{props.projectOpen === false ? '未打开项目' : (current?.name ?? (props.fallbackName || '加载中…'))}</span>
         <span className="ps-caret">▾</span>
       </button>
       {open && (
@@ -66,11 +67,20 @@ export function ProjectSwitcher(props: {
                 <div className="pmeta">{fmtMeta(p)}</div>
               </div>
               {p.path === props.activePath && <span className="ps-check"><Icon name="check" /></span>}
-              <button
-                className="proj-remove"
-                title="从项目栏移除（不删除目录）"
-                onClick={(e) => { e.stopPropagation(); props.onRemove(p.path, p.name); }}
-              ><Icon name="x" /></button>
+              <div className="project-item-actions" data-testid={`project-${p.name}-actions`}>
+                {props.onRename && (
+                  <button
+                    className="proj-edit"
+                    title="重命名项目"
+                    onClick={(e) => { e.stopPropagation(); props.onRename?.(p.path, p.name); }}
+                  ><Icon name="pencil" /></button>
+                )}
+                <button
+                  className="proj-remove"
+                  title="删除项目文件（不可恢复）"
+                  onClick={(e) => { e.stopPropagation(); props.onRemove(p.path, p.name); }}
+                ><Icon name="trash" /></button>
+              </div>
             </div>
           ))}
           {props.projects.length === 0 && (

@@ -323,6 +323,36 @@ describe('API 素材上传', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().code).toBe('INVALID_PATCH');
   });
+
+  it('素材 CRUD：编辑文本、替换文件、确认删除', async () => {
+    const created = await a.inject({
+      method: 'POST', url: '/api/assets/import-text',
+      payload: { name: 'old.md', content: 'old content' },
+    });
+    const id = created.json().asset.id as string;
+    const updated = await a.inject({
+      method: 'PATCH', url: `/api/assets/${id}`,
+      payload: { name: 'new.md', content: 'new content' },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json().asset.name).toBe('new.md');
+    expect((await a.inject({ method: 'GET', url: `/api/assets/${id}/content` })).json().content).toBe('new content');
+
+    const imageForm = new FormData();
+    imageForm.append('file', new Blob([new Uint8Array([1])], { type: 'image/png' }), 'old.png');
+    const image = await a.inject({ method: 'POST', url: '/api/assets/upload', payload: imageForm, headers: { 'content-type': 'multipart/form-data' } });
+    const imageId = image.json().asset.id as string;
+    const replaceForm = new FormData();
+    replaceForm.append('file', new Blob([new Uint8Array([1, 2, 3])], { type: 'image/webp' }), 'new.webp');
+    const replaced = await a.inject({ method: 'POST', url: `/api/assets/${imageId}/replace`, payload: replaceForm, headers: { 'content-type': 'multipart/form-data' } });
+    expect(replaced.statusCode).toBe(200);
+    expect(replaced.json().asset.name).toBe('new.webp');
+
+    const denied = await a.inject({ method: 'DELETE', url: `/api/assets/${id}` });
+    expect(denied.statusCode).toBe(400);
+    const removed = await a.inject({ method: 'DELETE', url: `/api/assets/${id}?confirm=true` });
+    expect(removed.statusCode).toBe(200);
+  });
 });
 
 describe('API agent 模型', () => {
