@@ -131,7 +131,7 @@ export function GenerationNode(props: NodeProps) {
     <div className={`node gen ${d.status ?? ''}`}>
       <Connectors />
       <div className="node-head">
-        <span><Icon name="video" />{d.title}</span>
+        <span><Icon name="play" />{d.title}</span>
         <span className={`gen-tag ${success ? 'ok' : running ? 'run' : ''}`}>
           {success ? <><Icon name="check" />完成</> : running ? `${d.progress ?? 0}%` : '排队'}
         </span>
@@ -170,7 +170,7 @@ export function KeyframeNode(props: NodeProps) {
   return (
     <div className="node kf">
       <Connectors />
-      <div className="node-head"><Icon name="image" />{d.title}</div>
+      <div className="node-head"><Icon name="frame" />{d.title}</div>
       {thumbs.map((t, i) => (
         <div key={i} className={`thumb ${t}`}>
           <span className="kf-label">{fmt((d.fields.labels as unknown[] | undefined)?.[i] ?? t)}</span>
@@ -190,7 +190,7 @@ export function ParamsNode(props: NodeProps) {
   return (
     <div className="node params">
       <Connectors />
-      <div className="node-head"><Icon name="gear" />{d.title}</div>
+      <div className="node-head"><Icon name="sliders" />{d.title}</div>
       <div className="node-body">
         {entries.map(([k, v]) => (
           <div key={k}><span className="pk">{k}</span> <span className="pv">{fmt(v)}</span></div>

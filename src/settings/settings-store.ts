@@ -6,6 +6,8 @@ import { dirname, join } from 'node:path';
 // 存 ComfyUI 地址 + agent 默认模型 + 思考强度 + 提示词库（prompts）；
 // 目录用函数式求值（每次操作读取当前 HOME），测试 vi.stubEnv('HOME') 隔离不污染真实文件
 
+export type ThemeMode = 'dark' | 'light';
+
 export interface AppSettings {
   comfyUrl: string;      // ComfyUI 地址（http://...）
   agentModel: string;    // agent 默认模型 id（provider/model；空串 = pi 默认）
@@ -16,6 +18,7 @@ export interface AppSettings {
   ollamaUrl: string;     // Ollama 地址（http://...；空串 = 未配置）
   ollamaModel: string;   // Ollama 本地视觉模型名（图像转提示词用；空串 = 未配置）
   ollamaEmbedModel: string; // Ollama embedding 模型名（项目 RAG 向量检索用；空串 = 未配置）
+  theme?: ThemeMode;        // 工作台主题；缺失 = 深色默认
 }
 
 const DEFAULTS: AppSettings = {
@@ -53,6 +56,7 @@ export function readSettings(): AppSettings {
       ollamaModel: typeof data.ollamaModel === 'string' ? data.ollamaModel : DEFAULTS.ollamaModel,
       ollamaEmbedModel: typeof data.ollamaEmbedModel === 'string' ? data.ollamaEmbedModel : DEFAULTS.ollamaEmbedModel,
     };
+    if (data.theme === 'dark' || data.theme === 'light') out.theme = data.theme;
     // 键缺失（undefined）= 从未自定义，保持 out 无 prompts 键；
     // 已存在（含 {}）= 已保存过，原样过滤返回（删除的条目不复活）
     if (data.prompts !== undefined) {
@@ -85,6 +89,8 @@ export function saveSettings(patch: Partial<AppSettings>): AppSettings {
   } else {
     next.prompts = current.prompts;
   }
+  const theme = patch.theme === 'dark' || patch.theme === 'light' ? patch.theme : current.theme;
+  if (theme) next.theme = theme;
   const f = settingsFile();
   mkdirSync(dirname(f), { recursive: true });
   const tmp = `${f}.tmp`;

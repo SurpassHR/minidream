@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { client } from '../api/client';
@@ -7,7 +7,11 @@ import { resolveBoardPrompt, resolvePrompt, withArmorBreak } from './roles';
 import { AiButton, EmptyState, ErrorBanner } from './role-ui';
 import type { SessionMeta, StoryBoard } from '../types';
 
-export interface ChatMsg { who: 'user' | 'agent'; text: string }
+// images：用户消息携带的图像附件（data URL 缩略图展示；历史重载不还原，仅即时会话可见）
+export interface ChatMsg { who: 'user' | 'agent'; text: string; images?: Array<{ name: string; dataUrl: string }> }
+
+// 待发送的图像附件（预览 + 随消息发送）
+export interface ChatAttachment { id: string; name: string; dataUrl: string }
 
 // 六步答案约定格式解析：按行匹配 `stepId: 内容`，非法行忽略（导出便于测试）
 export function parseStoryAnswers(text: string): Record<string, string> {
@@ -56,6 +60,9 @@ export function StoryChat(props: {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false); // 发送/总结共用 busy（防并发）
   const [action, setAction] = useState<'summarize' | null>(null);
+  // 图像附件：Ctrl+V 粘贴 / 附件按钮选择 → 预览列表 → 随下一条消息发送
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   // 当前剧本项目 id（归组会话 + 后端解析项目级提示词/RAG）
   const boardId = props.board?.id ?? null;
 
@@ -158,16 +165,54 @@ export function StoryChat(props: {
     }
   };
 
+  // 读取图片文件为 data URL 并加入附件列表（粘贴/选择共用）
+  const addAttachment = (file: File) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result ?? '');
+      if (!dataUrl) return;
+      setAttachments((prev) => [...prev, { id, name: file.name || '粘贴图片.png', dataUrl }]);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Ctrl+V 粘贴：剪贴板含图像 → 转为附件（不发送、可预览/移除）；纯文本保持默认粘贴
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const images = Array.from(e.clipboardData?.items ?? [])
+      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => f !== null);
+    if (images.length === 0) return;
+    e.preventDefault();
+    for (const f of images) addAttachment(f);
+  };
+
+  const pickFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = ''; // 允许重复选择同一文件
+    for (const f of files) addAttachment(f);
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  };
+
   const send = () => {
     const text = input.trim();
-    if (!text || busy) return;
+    if ((!text && attachments.length === 0) || busy) return;
+    // 附件随消息发送：data URL 原样透传（后端转临时文件给 pi）
+    const imgs = attachments.map((a) => ({ name: a.name, data: a.dataUrl }));
+    // 气泡展示缩略图：消息内保留 dataUrl 字段（与发送载荷 data 字段区分）
+    const msgImages = attachments.map((a) => ({ name: a.name, dataUrl: a.dataUrl }));
     setInput('');
+    setAttachments([]);
     setBusy(true);
     setError('');
-    setMsgs((m) => [...m, { who: 'user', text }]);
+    setMsgs((m) => [...m, { who: 'user', text, images: msgImages.length > 0 ? msgImages : undefined }]);
     // 剧本项目存在时：systemPrompt 交给后端从 board 解析（board.storyTeller → 全局 → 内置）
     const sysPrompt = boardId ? undefined : resolvePrompt(props.prompts, 'storyTeller');
-    client.storyChat(text, appendStream, props.agentModel || undefined, props.thinkingLevel || undefined, undefined, activeId, sysPrompt, boardId)
+    client.storyChat(text, appendStream, props.agentModel || undefined, props.thinkingLevel || undefined, undefined, activeId, sysPrompt, boardId, imgs.length > 0 ? imgs : undefined)
       .catch(() => appendStream('\n\n（agent 连接失败）'))
       .finally(() => { setBusy(false); refreshSessions(); });
   };
@@ -249,6 +294,13 @@ export function StoryChat(props: {
             <div key={i} className={`chat-msg ${m.who}`}>
               <div className="chat-who">{m.who === 'user' ? 'YOU' : 'AI · 编剧'}</div>
               <div className="chat-bubble">
+                {m.images && m.images.length > 0 && (
+                  <div className="chat-msg-imgs">
+                    {m.images.map((img) => (
+                      <img key={img.dataUrl} src={img.dataUrl} alt={img.name} title={img.name} />
+                    ))}
+                  </div>
+                )}
                 {m.who === 'agent' ? (
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
                 ) : m.text}
@@ -257,25 +309,51 @@ export function StoryChat(props: {
           ))}
           {busy && <div className="chat-thinking"><Icon name="loader" /> AI 思考中…</div>}
         </div>
-        <div className="chat-input-row">
-          <textarea
-            className="ne-input chat-input" data-testid="chat-input"
-            placeholder="和编剧聊聊你的故事…（Enter 发送 · Shift+Enter 换行）"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            rows={2}
-          />
-          <button className="btn-primary" onClick={send} disabled={busy || !input.trim()}>发送</button>
-        </div>
-        <div className="chat-actions">
-          <AiButton busy={busy && action === 'summarize'} onClick={summarize}><Icon name="sparkles" />总结成稿</AiButton>
-          <span className="chat-hint">总结成稿：对话 → 完整故事文档入库</span>
+        <div className="chat-composer" data-testid="chat-composer">
+          {attachments.length > 0 && (
+            <div className="chat-attach-row" data-testid="chat-attach-row">
+              {attachments.map((a) => (
+                <div key={a.id} className="chat-attach" data-testid={`chat-attach-${a.id}`}>
+                  <img src={a.dataUrl} alt={a.name} />
+                  <span className="chat-attach-name">{a.name}</span>
+                  <span
+                    className="chat-attach-x" role="button" tabIndex={0} title="移除附件"
+                    onClick={() => removeAttachment(a.id)}
+                  ><Icon name="x" /></span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="chat-input-row">
+            <button
+              type="button" className="chat-attach-btn" data-testid="chat-attach-btn"
+              title="添加图片附件（Ctrl+V 粘贴）"
+              onClick={() => fileInputRef.current?.click()}
+            ><Icon name="paperclip" /></button>
+            <input
+              ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }}
+              onChange={(e) => pickFiles(e)}
+            />
+            <textarea
+              className="ne-input chat-input" data-testid="chat-input"
+              placeholder="和编剧聊聊你的故事…（Enter 发送 · Ctrl+V 粘贴图片作为参考）"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onPaste={handlePaste}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              rows={2}
+            />
+            <button className="btn-primary" onClick={send} disabled={busy || (!input.trim() && attachments.length === 0)}>发送</button>
+          </div>
+          <div className="chat-actions">
+            <AiButton busy={busy && action === 'summarize'} onClick={summarize}><Icon name="sparkles" />总结成稿</AiButton>
+            <span className="chat-hint">总结成稿：对话 → 完整故事文档入库</span>
+          </div>
         </div>
         {error && <ErrorBanner text={error} />}
       </div>

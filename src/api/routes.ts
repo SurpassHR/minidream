@@ -380,6 +380,7 @@ export function mountRoutes(
       prompts?: Record<string, string>;
       armorBreak?: string; armorBreakEnabled?: boolean;
       ollamaUrl?: string; ollamaModel?: string; ollamaEmbedModel?: string;
+      theme?: 'dark' | 'light';
     };
     const settings = saveSettings({
       comfyUrl: typeof body.comfyUrl === 'string' ? body.comfyUrl : undefined,
@@ -391,6 +392,7 @@ export function mountRoutes(
       ollamaUrl: typeof body.ollamaUrl === 'string' ? body.ollamaUrl : undefined,
       ollamaModel: typeof body.ollamaModel === 'string' ? body.ollamaModel : undefined,
       ollamaEmbedModel: typeof body.ollamaEmbedModel === 'string' ? body.ollamaEmbedModel : undefined,
+      theme: body.theme === 'dark' || body.theme === 'light' ? body.theme : undefined,
     });
     // ComfyUI 地址变化 → 写回当前项目节点 + 热切换（复用 comfy/config 行为）
     if (settings.comfyUrl) {

@@ -7,7 +7,9 @@ export type IconName =
   | 'video' | 'image' | 'file-text' | 'film'
   | 'monitor' | 'brain' | 'bot' | 'book' | 'shield' | 'alert' | 'wand'
   | 'user' | 'landscape' | 'package' | 'loader'
-  | 'check-circle' | 'x-circle' | 'sparkles' | 'chat' | 'scroll' | 'file';
+  | 'check-circle' | 'x-circle' | 'sparkles' | 'chat' | 'scroll' | 'file'
+  | 'paperclip' | 'sun' | 'moon'
+  | 'frame' | 'text-lines' | 'sliders' | 'play';
 
 const PATHS: Record<IconName, ReactNode> = {
   gear: (
@@ -46,6 +48,41 @@ const PATHS: Record<IconName, ReactNode> = {
       <polyline points="21 15 16 10 5 21" />
     </>
   ),
+  paperclip: <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />,
+  sun: (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </>
+  ),
+  moon: <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />,
+  frame: (
+    <>
+      <path d="M7 3H4a1 1 0 0 0-1 1v3" />
+      <path d="M17 3h3a1 1 0 0 1 1 1v3" />
+      <path d="M7 21H4a1 1 0 0 1-1-1v-3" />
+      <path d="M17 21h3a1 1 0 0 0 1-1v-3" />
+      <rect x="7" y="7" width="10" height="10" rx="1" />
+    </>
+  ),
+  'text-lines': (
+    <>
+      <path d="M5 7h14" />
+      <path d="M5 12h10" />
+      <path d="M5 17h12" />
+    </>
+  ),
+  sliders: (
+    <>
+      <path d="M4 6h16" />
+      <path d="M4 12h16" />
+      <path d="M4 18h16" />
+      <circle cx="9" cy="6" r="2" />
+      <circle cx="15" cy="12" r="2" />
+      <circle cx="8" cy="18" r="2" />
+    </>
+  ),
+  play: <polygon points="8 5 19 12 8 19 8 5" />,
   'file-text': (
     <>
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -192,7 +229,7 @@ type IconProps = {
   style?: CSSProperties;
 } & Omit<SVGProps<SVGSVGElement>, 'name' | 'size' | 'className' | 'style'>;
 
-export function Icon({ name, size = '1em', className, style, ...rest }: IconProps) {
+export function Icon({ name, size = 16, className, style, ...rest }: IconProps) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -200,10 +237,11 @@ export function Icon({ name, size = '1em', className, style, ...rest }: IconProp
       height={size}
       fill="none"
       stroke="currentColor"
-      strokeWidth={2}
+      strokeWidth={1.5}
       strokeLinecap="round"
       strokeLinejoin="round"
-      className={[name === 'loader' ? 'icon-spin' : undefined, className].filter(Boolean).join(' ') || undefined}
+      className={['dw-icon', name === 'loader' ? 'icon-spin' : undefined, className].filter(Boolean).join(' ')}
+      data-icon={name}
       style={{ verticalAlign: '-0.15em', ...style }}
       aria-hidden="true"
       focusable="false"

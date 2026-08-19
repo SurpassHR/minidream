@@ -120,6 +120,15 @@ describe('armorBreak 破甲预设', () => {
   });
 });
 
+describe('主题偏好', () => {
+  it('保存并读回主题偏好，非法值保持当前值', () => {
+    saveSettings({ theme: 'light' } as never);
+    expect(readSettings().theme).toBe('light');
+    const s = saveSettings({ theme: 'sepia' } as never);
+    expect(s.theme).toBe('light');
+  });
+});
+
 describe('ollama 本地视觉模型', () => {
   it("缺失字段返回默认（'' / ''）", () => {
     expect(readSettings().ollamaUrl).toBe('');

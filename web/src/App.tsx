@@ -1,7 +1,7 @@
 import './App.css';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import CanvasView from './canvas/CanvasView';
-import type { ProjectInfo, AppSettings } from './types';
+import type { ProjectInfo, AppSettings, ThemeMode } from './types';
 import { SettingsModal } from './panels/SettingsModal';
 import { AssetLibrary, type AssetItem } from './panels/AssetLibrary';
 import { ProjectSwitcher } from './panels/ProjectSwitcher';
@@ -44,6 +44,7 @@ export default function App() {
   const [thinkingLevel, setThinkingLevel] = useState('');
   // 全局设置（~/.director/settings.json）：comfyUrl / agentModel / agentThinking；设置弹窗读写
   const [settings, setSettings] = useState<AppSettings>({ comfyUrl: '', agentModel: '', agentThinking: '' });
+  const [theme, setTheme] = useState<ThemeMode>('light');
   // 设置弹窗开关（顶栏 COMFYUI 徽章点击打开）
   const [settingsOpen, setSettingsOpen] = useState(false);
   // agent 活动回传（MCP 工具调用 → WS agent-activity）：显示在 AGENT 面板顶部
@@ -109,6 +110,7 @@ export default function App() {
     void client.listAgentModels().then(setAgentModels).catch(() => setAgentModels([]));
     void client.getSettings().then((s) => {
       setSettings(s);
+      setTheme(s.theme ?? 'light');
       if (s.agentModel) setAgentModel(s.agentModel);
       if (s.agentThinking) setThinkingLevel(s.agentThinking);
     }).catch(() => {});
@@ -126,6 +128,7 @@ export default function App() {
   // 保存设置回调：ComfyUI 地址已由后端热切换，这里同步健康状态
   const handleSettingsSaved = (s: AppSettings) => {
     setSettings(s);
+    setTheme(s.theme ?? 'light');
     if (s.comfyUrl) {
       setComfyUrl(s.comfyUrl);
       void client.comfyHealth().then((r) => setComfyHealthy(r.healthy));
@@ -134,6 +137,18 @@ export default function App() {
 
   const handleSettingsError = (msg: string) => {
     console.error('保存设置失败', msg);
+  };
+
+  const toggleTheme = () => {
+    const next: ThemeMode = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    void client.saveSettings({ theme: next }).then((s) => {
+      setSettings(s);
+      setTheme(s.theme ?? next);
+    }).catch((err) => {
+      setTheme(theme);
+      handleSettingsError(err instanceof Error ? err.message : '保存主题失败');
+    });
   };
 
   useEffect(() => {
@@ -311,7 +326,7 @@ export default function App() {
   }, [removeChip]);
 
   return (
-    <div className="app">
+    <div className="app" data-theme={theme}>
       <header className="topbar">
         <div className="logo">
           <div className="slate" />
@@ -342,6 +357,13 @@ export default function App() {
           <div className="badge clickable" title="打开设置" onClick={() => setSettingsOpen(true)}><span className="dot" style={{ background: 'var(--rec)', boxShadow: '0 0 6px var(--rec)' }} />COMFYUI&nbsp;未连接</div>
         )}
         <div className="spacer" />
+        <button
+          className="btn-ghost theme-toggle"
+          data-testid="theme-toggle"
+          aria-label={theme === 'dark' ? '切换浅色主题' : '切换深色主题'}
+          title={theme === 'dark' ? '切换浅色主题' : '切换深色主题'}
+          onClick={toggleTheme}
+        ><Icon name={theme === 'dark' ? 'sun' : 'moon'} /><span>{theme === 'dark' ? '浅色' : '深色'}</span></button>
         <button
           className="btn-ghost settings-btn"
           data-testid="settings-open"

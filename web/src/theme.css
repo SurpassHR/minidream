@@ -1,20 +1,46 @@
 :root {
-  --bg: #0A0D13;
-  --panel: #10141D;
-  --panel-2: #161B26;
-  --panel-3: #1C2330;
-  --border: #232B3A;
-  --border-2: #2E3849;
-  --text: #C9D2E0;
-  --text-dim: #7C8698;
-  --text-faint: #55606F;
-  --amber: #E8A33D;
-  --amber-soft: #F5C26B;
-  --amber-dim: rgba(232, 163, 61, .14);
-  --rec: #E05252;
-  --ok: #4FAE7E;
-  --blue: #5B8DEF;
-  --blue-dim: rgba(91, 141, 239, .14);
-  --mono: "JetBrains Mono", "SF Mono", "Cascadia Mono", Consolas, "Noto Sans Mono", monospace;
-  --sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
+  --bg: #F7F5F2;
+  --panel: #FBFAF8;
+  --panel-2: #FFFDFB;
+  --panel-3: #EFEBE6;
+  --border: #DED9D2;
+  --border-2: #C9C1B8;
+  --text: #252321;
+  --text-dim: #756F68;
+  --text-faint: #A39C94;
+  --amber: #B85E48;
+  --amber-soft: #944934;
+  --amber-dim: #F2E2DC;
+  --rec: #B64F48;
+  --ok: #537B66;
+  --blue: #5E769E;
+  --blue-dim: #E6ECF4;
+  --shadow: rgba(47, 40, 34, .08);
+  --focus: #B85E48;
+  --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+  --mono: "SF Mono", "Cascadia Mono", Consolas, "Noto Sans Mono", monospace;
+  --serif: Georgia, "Songti SC", "Noto Serif SC", serif;
+}
+
+.app[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #080B10;
+  --panel: #101722;
+  --panel-2: #151E2A;
+  --panel-3: #1D2937;
+  --border: #263443;
+  --border-2: #37485A;
+  --text: #E7EDF2;
+  --text-dim: #A0AFBC;
+  --text-faint: #6D7D8D;
+  --amber: #E5A14A;
+  --amber-soft: #FFD18F;
+  --amber-dim: rgba(229, 161, 74, .14);
+  --rec: #DF6B61;
+  --ok: #74C59C;
+  --blue: #7AA8EA;
+  --blue-dim: rgba(122, 168, 234, .14);
+  --shadow: rgba(0, 0, 0, .38);
+  --focus: #F2B45C;
 }

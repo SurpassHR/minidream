@@ -7,7 +7,11 @@ body {
   font-size: 13px;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+  transition: background .22s ease, color .22s ease;
 }
+button, input, textarea, select { font: inherit; }
+button, a, input, textarea, select { -webkit-tap-highlight-color: transparent; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: #2A3343; border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--border-2); border: 2px solid transparent; background-clip: padding-box; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-faint); background-clip: padding-box; }
 ::-webkit-scrollbar-track { background: transparent; }

@@ -109,6 +109,8 @@ export interface SessionMeta {
   updatedAt: number;
 }
 
+export type ThemeMode = 'dark' | 'light';
+
 // 全局设置（镜像后端 src/settings/settings-store.ts）：ComfyUI 地址 / agent 默认模型 / 思考强度
 export interface AppSettings {
   comfyUrl: string;
@@ -124,6 +126,8 @@ export interface AppSettings {
   ollamaModel?: string;
   // Ollama embedding 模型（项目 RAG 向量检索）；空 = 未配置
   ollamaEmbedModel?: string;
+  // 工作台主题；未配置时前端使用深色默认
+  theme?: ThemeMode;
 }
 
 // 剧本项目（Story Board）：项目容器 = 项目级系统提示词 + RAG 知识库

@@ -119,6 +119,18 @@ describe('App 布局骨架', () => {
     expect(await screen.findByText(/COMFYUI/)).toBeInTheDocument();
     expect(await screen.findByText(/已连接/)).toBeInTheDocument();
   });
+
+  it('默认使用浅色主题，切换后更新 data-theme 并写入配置文件', async () => {
+    render(<App />);
+    const toggle = screen.getByTestId('theme-toggle');
+    expect(document.querySelector('.app')).toHaveAttribute('data-theme', 'light');
+    fireEvent.click(toggle);
+    await waitFor(() => expect(document.querySelector('.app')).toHaveAttribute('data-theme', 'dark'));
+    const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls as Array<[string, RequestInit?]>;
+    const settingsCall = calls.find(([url, init]) => String(url).includes('/api/settings') && init?.method === 'PUT');
+    expect(settingsCall).toBeTruthy();
+    expect(JSON.parse(String(settingsCall?.[1]?.body))).toMatchObject({ theme: 'dark' });
+  });
 });
 
 describe('顶栏项目切换器高亮', () => {

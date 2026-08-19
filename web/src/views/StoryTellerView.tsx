@@ -207,12 +207,12 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
         {/* 中栏：对话 / 系统提示词 / 知识库 RAG */}
         <div className="story-main mid-col">
           <div className="mid-tabs" data-testid="story-mid-tabs">
-            <button className={`mid-tab${midTab === 'chat' ? ' on' : ''}`} onClick={() => setMidTab('chat')}><Icon name="chat" />对话</button>
+            <button className={`mid-tab${midTab === 'chat' ? ' on' : ''}`} onClick={() => setMidTab('chat')}>对话</button>
             <button className={`mid-tab${midTab === 'prompts' ? ' on' : ''}`} onClick={() => setMidTab('prompts')}>
-              <Icon name="file-text" />系统提示词{promptCustomCount(activeBoard) > 0 && <span className="tab-dot" />}
+              系统提示词{promptCustomCount(activeBoard) > 0 && <span className="tab-dot" />}
             </button>
             <button className={`mid-tab${midTab === 'rag' ? ' on' : ''}`} onClick={() => setMidTab('rag')}>
-              <Icon name="book" />知识库 RAG{activeBoard.ragEnabled && activeBoard.ragAssets.length > 0 && <span className="tab-dot" />}
+              知识库 RAG{activeBoard.ragEnabled && activeBoard.ragAssets.length > 0 && <span className="tab-dot" />}
             </button>
           </div>
           <div className="mid-body">
@@ -258,8 +258,8 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
         {/* 右栏：生效上下文 / 剧本栏 */}
         <aside className="script-sidebar" data-testid="script-sidebar">
           <div className="ctx-tabs">
-            <button className={`ctx-tab${rightTab === 'ctx' ? ' on' : ''}`} onClick={() => setRightTab('ctx')}><Icon name="brain" />上下文</button>
-            <button className={`ctx-tab${rightTab === 'script' ? ' on' : ''}`} onClick={() => setRightTab('script')}><Icon name="scroll" />剧本</button>
+            <button className={`ctx-tab${rightTab === 'ctx' ? ' on' : ''}`} onClick={() => setRightTab('ctx')}>上下文</button>
+            <button className={`ctx-tab${rightTab === 'script' ? ' on' : ''}`} onClick={() => setRightTab('script')}>剧本</button>
           </div>
           {rightTab === 'ctx' ? (
             <ContextPanel board={activeBoard} globalPrompts={props.prompts} />

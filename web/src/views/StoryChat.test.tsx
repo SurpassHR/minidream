@@ -90,6 +90,16 @@ describe('StoryChat', () => {
     expect(screen.getByText('好设定！')).toBeInTheDocument();
   });
 
+  it('底部输入区使用编辑器式 Composer 容器', async () => {
+    presetLegacySession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    const composer = screen.getByTestId('chat-composer');
+    expect(composer).toContainElement(screen.getByTestId('chat-input'));
+    expect(composer).toContainElement(screen.getByRole('button', { name: '发送' }));
+    expect(composer).toContainElement(screen.getByText('总结成稿'));
+  });
+
   it('发送消息后流式渲染 agent 回复', async () => {
     presetLegacySession();
     render(<StoryChat projectName="demo" onSummarized={() => {}} />);
@@ -99,6 +109,63 @@ describe('StoryChat', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     // 新 mock 单帧 chunk（精灵骑士）+ DONE：断言随 mock 调整
     await waitFor(() => expect(screen.getByText(/精灵骑士/)).toBeInTheDocument());
+  });
+
+  // —— 图像附件：Ctrl+V 粘贴 → 预览 → 发送携带 images；纯文本粘贴不拦截 ——
+  it('Ctrl+V 粘贴图像成为附件：发送时 body.images 携带 data URL，气泡展示缩略图', async () => {
+    presetLegacySession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    const input = screen.getByTestId('chat-input');
+    const file = new File([new Uint8Array([1, 2, 3])], 'clipboard.png', { type: 'image/png' });
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }],
+        types: ['Files'],
+      },
+    } as unknown as ClipboardEvent);
+    // 附件预览出现（FileReader 异步读入）
+    await waitFor(() => expect(screen.getByText('clipboard.png')).toBeInTheDocument());
+    expect(screen.getByTestId('chat-attach-row')).toBeInTheDocument();
+    // 仅图片无文本也可发送：body.images 携带 data URL
+    fireEvent.click(screen.getByText('发送'));
+    await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(0));
+    const body = CHAT_BODIES.at(-1) as { message: string; images?: Array<{ name: string; data: string }> };
+    expect(body.message).toBe('');
+    expect(body.images).toHaveLength(1);
+    expect(body.images![0]!.name).toBe('clipboard.png');
+    expect(body.images![0]!.data).toMatch(/^data:image\/png;base64,/);
+    // 用户气泡展示缩略图
+    await waitFor(() => expect(screen.getByAltText('clipboard.png')).toBeInTheDocument());
+  });
+
+  it('附件可移除：点 × 后预览消失', async () => {
+    presetLegacySession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    const input = screen.getByTestId('chat-input');
+    const file = new File([new Uint8Array([1, 2, 3])], 'a.png', { type: 'image/png' });
+    fireEvent.paste(input, {
+      clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }], types: ['Files'] },
+    } as unknown as ClipboardEvent);
+    await waitFor(() => expect(screen.getByText('a.png')).toBeInTheDocument());
+    const chip = screen.getByText('a.png').closest('.chat-attach')!;
+    fireEvent.click(chip.querySelector('.chat-attach-x')!);
+    await waitFor(() => expect(screen.queryByText('a.png')).not.toBeInTheDocument());
+  });
+
+  it('粘贴纯文本不拦截（保持默认粘贴行为）', async () => {
+    presetLegacySession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    const input = screen.getByTestId('chat-input');
+    const prevented = { defaultPrevented: false };
+    const ev = {
+      clipboardData: { items: [], types: ['text/plain'] },
+      preventDefault: () => { prevented.defaultPrevented = true; },
+    };
+    fireEvent.paste(input, ev as unknown as ClipboardEvent);
+    expect(prevented.defaultPrevented).toBe(false);
   });
 
   it('总结成稿：解析后回调 onSummarized 携带答案', async () => {
