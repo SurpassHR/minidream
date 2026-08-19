@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { client } from '../api/client';
 import { Icon } from '../icons';
+import { ConfirmDialog } from '../panels/ConfirmDialog';
+import { TextInputDialog } from '../panels/TextInputDialog';
 import { resolveBoardPrompt, resolvePrompt, withArmorBreak } from './roles';
 import { AiButton, EmptyState, ErrorBanner } from './role-ui';
 import type { SessionMeta, StoryBoard } from '../types';
@@ -50,6 +53,10 @@ export function StoryChat(props: {
   thinkingLevel?: string;
   // 剧本项目（board）：boardId 归组会话 + 项目级系统提示词（board → 全局 → 内置）
   board?: StoryBoard | null;
+  // 外部会话挂载点：故事页将会话树放进当前项目项下；独立渲染时回退到聊天区
+  sessionHost?: HTMLElement | null;
+  // 故事页项目行上的“新建会话”按钮复用此组件内部的会话状态
+  onCreateSessionReady?: (handler: (() => void) | null) => void;
 }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
@@ -60,6 +67,9 @@ export function StoryChat(props: {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false); // 发送/总结共用 busy（防并发）
   const [action, setAction] = useState<'summarize' | null>(null);
+  const [renameTarget, setRenameTarget] = useState<SessionMeta | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null);
+  const [sessionDialogBusy, setSessionDialogBusy] = useState(false);
   // 图像附件：Ctrl+V 粘贴 / 附件按钮选择 → 预览列表 → 随下一条消息发送
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -126,6 +136,13 @@ export function StoryChat(props: {
     setMsgs([]);
   };
 
+  // 父级项目行提供新建按钮，但实际创建仍复用本组件的会话状态与 API。
+  useEffect(() => {
+    if (!props.onCreateSessionReady) return;
+    props.onCreateSessionReady(() => { void newSession(); });
+    return () => props.onCreateSessionReady?.(null);
+  }, [props.onCreateSessionReady, busy, boardId]);
+
   // 点选历史会话：流式中禁止
   const selectSession = (id: string) => {
     if (busy) return;
@@ -137,18 +154,29 @@ export function StoryChat(props: {
     }).catch(() => {});
   };
 
-  const renameSession = async (s: SessionMeta) => {
-    const title = window.prompt('会话标题', s.title);
-    if (!title || title.trim() === '' || title === s.title) return;
-    const r = await client.renameStorySession(s.id, title.trim(), boardId).catch(() => null);
-    if (r) setSessions(r.sessions);
+  const renameSession = (s: SessionMeta) => setRenameTarget(s);
+  const submitRenameSession = async (title: string) => {
+    const target = renameTarget;
+    if (!target) return;
+    setSessionDialogBusy(true);
+    const r = await client.renameStorySession(target.id, title, boardId).catch(() => null);
+    if (r) {
+      setSessions(r.sessions);
+      setRenameTarget(null);
+    }
+    setSessionDialogBusy(false);
   };
 
   // 删除会话：流式中禁止（否则在途流式 POST 会落盘到刚删除的会话，幽灵 AI 文本进入空视图）
-  const deleteSession = async (s: SessionMeta) => {
+  const deleteSession = (s: SessionMeta) => {
     if (busy) return;
-    if (!window.confirm(`删除会话「${s.title}」？其消息将一并删除。`)) return;
-    let r = await client.deleteStorySession(s.id, boardId).catch(() => null);
+    setDeleteTarget(s);
+  };
+  const confirmDeleteSession = async () => {
+    const target = deleteTarget;
+    if (!target) return;
+    setDeleteTarget(null);
+    let r = await client.deleteStorySession(target.id, boardId).catch(() => null);
     if (!r) return;
     if (!r.activeId) {
       // 删光会话：自动新建一个空会话，避免下次发送聊进 UI 看不见的会话（后端自动创建，UI 无从得知）
@@ -262,54 +290,73 @@ export function StoryChat(props: {
     return <div className="chat-wrap"><div className="role-loading">加载中…</div></div>;
   }
 
+  // 会话操作仍由 StoryChat 管理，但视觉位置由父级故事布局决定。
+  // 通过 portal 放入左侧项目栏，避免为了移动 DOM 而复制会话 API/状态逻辑。
+  const sessionPanel = (
+    <div className="session-panel" data-testid="session-panel">
+      {!props.sessionHost && (
+        <button type="button" className="btn-ghost session-new" data-testid="session-new" onClick={() => { void newSession(); }}>＋ 新建会话</button>
+      )}
+      <div className="session-list">
+        {sessions.map((s) => (
+          <div key={s.id} className={`session-item${s.id === activeId ? ' active' : ''}`} data-testid={`session-item-${s.id}`}>
+            <button type="button" className="session-select" onClick={() => selectSession(s.id)}>
+              <span className="session-title">{s.title}</span>
+              <span className="session-date">{fmtSessionDate(s.updatedAt)}</span>
+            </button>
+            <div className="session-acts">
+              <button type="button" className="session-act" data-testid={`session-rename-${s.id}`} title="重命名"
+                onClick={() => { void renameSession(s); }}><Icon name="pencil" /></button>
+              <button type="button" className="session-act" data-testid={`session-del-${s.id}`} title="删除"
+                onClick={() => { void deleteSession(s); }}><Icon name="trash" /></button>
+            </div>
+          </div>
+        ))}
+        {sessions.length === 0 && <div className="session-empty">暂无会话</div>}
+      </div>
+    </div>
+  );
+
   return (
     <div className="chat-wrap">
-      {/* 左侧会话列表面板：新建 / 点选 / 重命名 / 删除 */}
-      <div className="session-panel" data-testid="session-panel">
-        <button type="button" className="btn-ghost session-new" data-testid="session-new" onClick={() => { void newSession(); }}>＋ 新建会话</button>
-        <div className="session-list">
-          {sessions.map((s) => (
-            <div key={s.id} className={`session-item${s.id === activeId ? ' active' : ''}`} data-testid={`session-item-${s.id}`}>
-              <button type="button" className="session-select" onClick={() => selectSession(s.id)}>
-                <span className="session-title">{s.title}</span>
-                <span className="session-date">{fmtSessionDate(s.updatedAt)}</span>
-              </button>
-              <div className="session-acts">
-                <button type="button" className="session-act" data-testid={`session-rename-${s.id}`} title="重命名"
-                  onClick={() => { void renameSession(s); }}><Icon name="pencil" /></button>
-                <button type="button" className="session-act" data-testid={`session-del-${s.id}`} title="删除"
-                  onClick={() => { void deleteSession(s); }}><Icon name="trash" /></button>
-              </div>
-            </div>
-          ))}
-          {sessions.length === 0 && <div className="session-empty">暂无会话</div>}
-        </div>
-      </div>
+      {!props.sessionHost ? sessionPanel : createPortal(sessionPanel, props.sessionHost)}
       <div className="chat-main">
-        <div className="chat-msgs">
+        <div
+          className="chat-msgs chat-conversation"
+          data-testid="chat-conversation"
+          data-layout="reading-column"
+        >
           {msgs.length === 0 && (
             <EmptyState icon={<Icon name="chat" />} text="还没有对话，从任意创意开始吧——主题、角色、情节都可以聊" />
           )}
           {msgs.map((m, i) => (
-            <div key={i} className={`chat-msg ${m.who}`}>
-              <div className="chat-who">{m.who === 'user' ? 'YOU' : 'AI · 编剧'}</div>
-              <div className="chat-bubble">
-                {m.images && m.images.length > 0 && (
-                  <div className="chat-msg-imgs">
-                    {m.images.map((img) => (
-                      <img key={img.dataUrl} src={img.dataUrl} alt={img.name} title={img.name} />
-                    ))}
-                  </div>
-                )}
-                {m.who === 'agent' ? (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
-                ) : m.text}
+            <article key={i} className={`chat-msg ${m.who}`} data-testid={`chat-message-${i}`}>
+              <div className="chat-avatar" aria-hidden="true">{m.who === 'user' ? '你' : '✦'}</div>
+              <div className="chat-message-body" data-testid="chat-message-body">
+                <div className="chat-message-meta" data-testid="chat-message-meta">
+                  <strong>{m.who === 'user' ? '你' : '编剧'}</strong>
+                  <time>{m.who === 'user' ? '刚刚' : '现在'}</time>
+                </div>
+                <div className="chat-message-content chat-bubble">
+                  {m.images && m.images.length > 0 && (
+                    <div className="chat-msg-imgs">
+                      {m.images.map((img) => (
+                        <img key={img.dataUrl} src={img.dataUrl} alt={img.name} title={img.name} />
+                      ))}
+                    </div>
+                  )}
+                  {m.who === 'agent' ? (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+                  ) : (
+                    <p>{m.text}</p>
+                  )}
+                </div>
               </div>
-            </div>
+            </article>
           ))}
           {busy && <div className="chat-thinking"><Icon name="loader" /> AI 思考中…</div>}
         </div>
-        <div className="chat-composer" data-testid="chat-composer">
+        <div className="chat-composer" data-testid="chat-composer" data-layout="inset-composer">
           {attachments.length > 0 && (
             <div className="chat-attach-row" data-testid="chat-attach-row">
               {attachments.map((a) => (
@@ -324,7 +371,7 @@ export function StoryChat(props: {
               ))}
             </div>
           )}
-          <div className="chat-input-row">
+          <div className="chat-input-row" data-layout="centered-controls">
             <button
               type="button" className="chat-attach-btn" data-testid="chat-attach-btn"
               title="添加图片附件（Ctrl+V 粘贴）"
@@ -357,6 +404,25 @@ export function StoryChat(props: {
         </div>
         {error && <ErrorBanner text={error} />}
       </div>
+      <TextInputDialog
+        open={renameTarget !== null}
+        title="重命名会话"
+        body="为这段创作保留一个容易识别的标题。"
+        defaultValue={renameTarget?.title ?? ''}
+        placeholder="例如：开场与人物关系"
+        confirmLabel="保存名称"
+        busy={sessionDialogBusy}
+        onConfirm={(value) => { void submitRenameSession(value); }}
+        onCancel={() => { if (!sessionDialogBusy) setRenameTarget(null); }}
+      />
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="删除会话"
+        body={`删除「${deleteTarget?.title ?? ''}」？其中的消息也会一并删除。`}
+        confirmLabel="确认删除"
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => { void confirmDeleteSession(); }}
+      />
     </div>
   );
 }

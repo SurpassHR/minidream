@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { client } from '../api/client';
 import { Icon, type IconName } from '../icons';
+import { ConfirmDialog } from '../panels/ConfirmDialog';
 import type { DesignKind, DesignObject } from '../types';
 import { agentChat } from '../api/agent';
 import { resolvePrompt, withArmorBreak } from './roles';
@@ -35,6 +36,7 @@ export function ObjectDesignerView(props: { projectName: string; prompts?: Recor
   const [visionBusy, setVisionBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<DesignObject | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 防抖合并累积的字段 patch：500ms 窗口内多次编辑合并为一次 PUT，避免丢中间修改。
   // 按对象隔离 { id, patch }：切换选中对象后旧 pending 作废，绝不串对象（B 不会收到 A 的字段）。
@@ -94,12 +96,16 @@ export function ObjectDesignerView(props: { projectName: string; prompts?: Recor
   };
 
   const remove = () => {
-    if (!selected) return;
-    if (!window.confirm(`删除设计对象「${selected.name}」？`)) return;
+    if (selected) setDeleteTarget(selected);
+  };
+  const confirmRemove = () => {
+    const target = deleteTarget;
+    if (!target) return;
+    setDeleteTarget(null);
     // 清防抖 timer：删除后不再发送针对已删对象的在途 PUT
     if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
     pendingRef.current = null;
-    const id = selected.id;
+    const id = target.id;
     void client.deleteDesign(id).then(() => {
       setDesigns((prev) => prev.filter((d) => d.id !== id));
       setSelected(null);
@@ -283,6 +289,14 @@ export function ObjectDesignerView(props: { projectName: string; prompts?: Recor
         </div>
       </div>
       {error && <ErrorBanner text={error} />}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="删除设计对象"
+        body={`删除「${deleteTarget?.name ?? ''}」？该对象的设置和参考图关联也会从列表中移除。`}
+        confirmLabel="确认删除"
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmRemove}
+      />
       {creating && (
         <div className="dialog-mask" onClick={() => setCreating(false)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>

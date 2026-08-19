@@ -90,14 +90,40 @@ describe('StoryChat', () => {
     expect(screen.getByText('好设定！')).toBeInTheDocument();
   });
 
+  it('消息流使用居中阅读列与消息元信息结构', async () => {
+    presetLegacySession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    const conversation = screen.getByTestId('chat-conversation');
+    expect(conversation).toHaveClass('chat-conversation');
+    expect(conversation).toHaveAttribute('data-layout', 'reading-column');
+    expect(screen.getAllByTestId('chat-message-body')).toHaveLength(2);
+    expect(screen.getAllByTestId('chat-message-meta')).toHaveLength(2);
+    expect(screen.getByText('编剧')).toBeInTheDocument();
+  });
+
   it('底部输入区使用编辑器式 Composer 容器', async () => {
     presetLegacySession();
     render(<StoryChat projectName="demo" onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
     const composer = screen.getByTestId('chat-composer');
+    expect(composer).toHaveAttribute('data-layout', 'inset-composer');
     expect(composer).toContainElement(screen.getByTestId('chat-input'));
+    expect(composer.querySelector('.chat-input-row')).toHaveAttribute('data-layout', 'centered-controls');
+    expect(composer).toContainElement(screen.getByTestId('chat-attach-btn'));
     expect(composer).toContainElement(screen.getByRole('button', { name: '发送' }));
     expect(composer).toContainElement(screen.getByText('总结成稿'));
+  });
+
+  it('Shift+Enter 保留多行输入，不触发发送', async () => {
+    presetLegacySession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    const input = screen.getByTestId('chat-input');
+    fireEvent.change(input, { target: { value: '第一行' } });
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+    expect(input).toHaveValue('第一行');
+    expect(CHAT_BODIES).toHaveLength(0);
   });
 
   it('发送消息后流式渲染 agent 回复', async () => {
@@ -323,13 +349,16 @@ describe('StoryChat', () => {
   it('重命名/删除会话（确认后）', async () => {
     SESSIONS = [{ id: 's1', title: '旧名', createdAt: 1, updatedAt: 2 }];
     ACTIVE = 's1';
-    vi.spyOn(window, 'prompt').mockReturnValue('新名字');
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<StoryChat projectName="demo" onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByText('旧名')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('session-rename-s1'));
+    const renameInput = await screen.findByTestId('text-dialog-input');
+    fireEvent.change(renameInput, { target: { value: '新名字' } });
+    fireEvent.click(screen.getByTestId('text-dialog-confirm'));
     await waitFor(() => expect(screen.getByText('新名字')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('session-del-s1'));
+    await waitFor(() => expect(screen.getByText('确认删除')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('确认删除'));
     await waitFor(() => expect(screen.queryByText('新名字')).not.toBeInTheDocument());
     vi.restoreAllMocks();
   });
@@ -337,7 +366,6 @@ describe('StoryChat', () => {
   it('流式中点删除会话：busy 守卫不触发 DELETE 请求', async () => {
     // 覆盖 mock：POST /api/story/chat 返回延迟流（首帧 80ms 后），期间 busy 保持 true；
     // confirm 置 true——若无 busy 守卫，删除会真的发出 DELETE（与 jsdom confirm 默认 false 区分）
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       const u = String(url);
       const method = init?.method ?? 'GET';
@@ -385,10 +413,11 @@ describe('StoryChat', () => {
   it('删除最后一个会话后自动新建：列表恢复新会话并加载空历史', async () => {
     SESSIONS = [{ id: 's1', title: '唯一会话', createdAt: 1, updatedAt: 2 }];
     ACTIVE = 's1';
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<StoryChat projectName="demo" onSummarized={() => {}} />);
     await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('唯一会话'));
     fireEvent.click(screen.getByTestId('session-del-s1'));
+    await waitFor(() => expect(screen.getByText('确认删除')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('确认删除'));
     // 自动新建（POST create）已发出：新会话回到列表
     await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('新会话'));
     const posts = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
@@ -397,7 +426,6 @@ describe('StoryChat', () => {
     expect(posts.length).toBeGreaterThan(0);
     // 空历史加载：EmptyState 显示
     expect(screen.getByText(/还没有对话/)).toBeInTheDocument();
-    vi.restoreAllMocks();
   });
 
   // —— Final round：发送后刷新会话列表 ——

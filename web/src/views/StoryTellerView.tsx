@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { client } from '../api/client';
 import { Icon } from '../icons';
 import type { RagHit, StoryBoard, StoryProgress } from '../types';
 import { ErrorBanner, LoadingState, RoleHeader } from './role-ui';
 import { StoryChat } from './StoryChat';
 import { ScriptViewer } from './ScriptViewer';
+import { ConfirmDialog } from '../panels/ConfirmDialog';
+import { TextInputDialog } from '../panels/TextInputDialog';
 import { ROLE_PROMPT_KEYS } from './roles';
 
 // story-teller 仅对话式：自由聊天 + 总结成稿入库（向导式已移除）。
@@ -35,6 +37,22 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
   const [midTab, setMidTab] = useState<'chat' | 'prompts' | 'rag'>('chat');
   // 右栏 tab（生效上下文 / 剧本）
   const [rightTab, setRightTab] = useState<'ctx' | 'script'>('script');
+  // 项目操作弹窗：统一使用项目风格 modal，禁止浏览器原生 prompt/confirm
+  const [boardNameDialog, setBoardNameDialog] = useState<
+    { mode: 'create' } | { mode: 'rename'; board: StoryBoard } | null
+  >(null);
+  const [boardDeleteDialog, setBoardDeleteDialog] = useState<StoryBoard | null>(null);
+  const [resetDialog, setResetDialog] = useState(false);
+  const [boardDialogBusy, setBoardDialogBusy] = useState(false);
+  // StoryChat 保留会话状态，挂载位置由当前项目项提供
+  const [sessionHost, setSessionHost] = useState<HTMLDivElement | null>(null);
+  const createSessionRef = useRef<(() => void) | null>(null);
+  const setSessionHostRef = useCallback((node: HTMLDivElement | null) => {
+    setSessionHost(node);
+  }, []);
+  const registerCreateSession = useCallback((handler: (() => void) | null) => {
+    createSessionRef.current = handler;
+  }, []);
 
   const activeBoard = useMemo<StoryBoard>(
     () => boards.find((b) => b.id === activeBoardId) ?? VIRTUAL_BOARD,
@@ -94,8 +112,9 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
   };
 
   // 重新生成：清空进度与完成标记，回到未完成态（确认门防误触）
-  const reset = () => {
-    if (!window.confirm('重新生成将清空当前故事进度，确定？')) return;
+  const reset = () => setResetDialog(true);
+  const confirmReset = () => {
+    setResetDialog(false);
     void client.resetStory().then((s) => {
       setStory(s);
       setMd(null);
@@ -108,23 +127,39 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
     setActiveBoardId(id);
     setError('');
   };
-  const createBoard = () => {
-    const name = window.prompt('新剧本项目名称', '未命名项目');
-    if (name === null) return;
-    void client.createStoryBoard(name.trim() || '未命名项目').then((bs) => {
+  const createBoard = () => setBoardNameDialog({ mode: 'create' });
+  const renameBoard = (board: StoryBoard) => setBoardNameDialog({ mode: 'rename', board });
+  const submitBoardName = (value: string) => {
+    const dialog = boardNameDialog;
+    if (!dialog) return;
+    setBoardDialogBusy(true);
+    const request = dialog.mode === 'create'
+      ? client.createStoryBoard(value)
+      : client.renameStoryBoard(dialog.board.id, value);
+    void request.then((bs) => {
       if (!Array.isArray(bs)) return;
       setBoards(bs);
-      const created = bs.find((b) => b.name === (name.trim() || '未命名项目'));
-      setActiveBoardId(created?.id ?? bs[0]?.id ?? null);
-    }).catch((err) => setError(err instanceof Error ? err.message : '创建剧本项目失败'));
+      if (dialog.mode === 'create') {
+        const created = bs.find((b) => b.name === value);
+        setActiveBoardId(created?.id ?? bs[0]?.id ?? null);
+      }
+      setBoardNameDialog(null);
+      setError('');
+    }).catch((err) => setError(err instanceof Error ? err.message : `${dialog.mode === 'create' ? '创建' : '重命名'}剧本项目失败`))
+      .finally(() => setBoardDialogBusy(false));
   };
   const removeBoard = (id: string) => {
     const b = boards.find((x) => x.id === id);
-    if (!window.confirm(`删除剧本项目「${b?.name ?? ''}」？其项目级提示词与 RAG 配置将一并删除（会话消息保留）。`)) return;
-    void client.deleteStoryBoard(id).then((bs) => {
+    if (b) setBoardDeleteDialog(b);
+  };
+  const confirmRemoveBoard = () => {
+    const board = boardDeleteDialog;
+    if (!board) return;
+    setBoardDeleteDialog(null);
+    void client.deleteStoryBoard(board.id).then((bs) => {
       if (!Array.isArray(bs)) return;
       setBoards(bs);
-      if (activeBoardId === id) setActiveBoardId(bs[0]?.id ?? null);
+      if (activeBoardId === board.id) setActiveBoardId(bs[0]?.id ?? null);
     }).catch((err) => setError(err instanceof Error ? err.message : '删除剧本项目失败'));
   };
   // 保存项目级系统提示词（整体替换传入键；空 = 清空回退内置默认）
@@ -184,15 +219,38 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
                 data-testid={`board-item-${b.id}`}
                 onClick={() => selectBoard(b.id)}
               >
-                <span className="board-name">{b.name}</span>
-                <span className="board-badges">
-                  {promptCustomCount(b) > 0 && <span className="bb bb-prompt">提示词 {promptCustomCount(b)}</span>}
-                  {b.ragEnabled && b.ragAssets.length > 0 && <span className="bb bb-rag">RAG {b.ragAssets.length}</span>}
-                </span>
-                <span
-                  className="board-del" title="删除剧本项目"
-                  onClick={(e) => { e.stopPropagation(); removeBoard(b.id); }}
-                ><Icon name="trash" /></span>
+                <div className="board-item-head">
+                  <span className="board-name">{b.name}</span>
+                  <span className="board-badges">
+                    {promptCustomCount(b) > 0 && <span className="bb bb-prompt">提示词 {promptCustomCount(b)}</span>}
+                    {b.ragEnabled && b.ragAssets.length > 0 && <span className="bb bb-rag">RAG {b.ragAssets.length}</span>}
+                  </span>
+                  {b.id === activeBoard.id && (
+                    <button
+                      type="button"
+                      className="board-session-new"
+                      data-testid={`board-session-new-${b.id}`}
+                      aria-label={`在${b.name}下新建会话`}
+                      title="新建会话"
+                      onClick={(e) => { e.stopPropagation(); createSessionRef.current?.(); }}
+                    >＋</button>
+                  )}
+                  <button
+                    type="button"
+                    className="board-rename"
+                    data-testid={`board-rename-${b.id}`}
+                    aria-label={`重命名项目${b.name}`}
+                    title="重命名项目"
+                    onClick={(e) => { e.stopPropagation(); renameBoard(b); }}
+                  ><Icon name="pencil" /></button>
+                  <span
+                    className="board-del" title="删除剧本项目"
+                    onClick={(e) => { e.stopPropagation(); removeBoard(b.id); }}
+                  ><Icon name="trash" /></span>
+                </div>
+                {b.id === activeBoard.id && (
+                  <div className="board-session-host" data-testid="board-session-host" ref={setSessionHostRef} />
+                )}
               </div>
             ))}
             <button className="board-new-btn" data-testid="board-new" onClick={createBoard}>＋ 新建剧本项目</button>
@@ -233,6 +291,8 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
                   agentModel={props.agentModel}
                   thinkingLevel={props.thinkingLevel}
                   board={activeBoard}
+                  sessionHost={sessionHost}
+                  onCreateSessionReady={registerCreateSession}
                 />
                 {error && <ErrorBanner text={error} />}
               </>
@@ -278,6 +338,33 @@ export function StoryTellerView(props: { projectName: string; prompts?: Record<s
           )}
         </aside>
       </div>
+      <TextInputDialog
+        open={boardNameDialog !== null}
+        title={boardNameDialog?.mode === 'rename' ? '重命名剧本项目' : '新建剧本项目'}
+        body={boardNameDialog?.mode === 'rename' ? '修改后会同步更新项目树和项目上下文。' : '为新的剧本项目设置一个容易识别的名称。'}
+        defaultValue={boardNameDialog?.mode === 'rename' ? boardNameDialog.board.name : ''}
+        placeholder="例如：雾中的邮差"
+        confirmLabel={boardNameDialog?.mode === 'rename' ? '保存名称' : '创建项目'}
+        busy={boardDialogBusy}
+        onConfirm={submitBoardName}
+        onCancel={() => { if (!boardDialogBusy) setBoardNameDialog(null); }}
+      />
+      <ConfirmDialog
+        open={boardDeleteDialog !== null}
+        title="删除剧本项目"
+        body={`删除「${boardDeleteDialog?.name ?? ''}」？项目级提示词与 RAG 配置将一并删除，会话消息保留。`}
+        confirmLabel="确认删除"
+        onCancel={() => setBoardDeleteDialog(null)}
+        onConfirm={confirmRemoveBoard}
+      />
+      <ConfirmDialog
+        open={resetDialog}
+        title="重新生成故事"
+        body="将清空当前故事进度与右侧剧本文档，确定继续吗？"
+        confirmLabel="确认重置"
+        onCancel={() => setResetDialog(false)}
+        onConfirm={confirmReset}
+      />
     </div>
   );
 }
@@ -306,7 +393,7 @@ function PromptEditor(props: {
   };
 
   return (
-    <>
+    <div className="prompt-panel" data-testid="prompt-panel">
       <div className="pe-intro">项目级系统提示词 · 每个剧本项目完全自定义，未配置的键回退内置默认。替代原全局设置「提示词库」的 storyTeller / storySummarize。</div>
       <div className="pe-list">
         {PROMPT_META.map(({ key, label, desc }) => {
@@ -336,7 +423,7 @@ function PromptEditor(props: {
           );
         })}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -369,7 +456,7 @@ function RagPanel(props: {
   };
 
   return (
-    <>
+    <div className="rag-panel" data-testid="rag-panel">
       <div className="rag-top">
         <div className="rag-toggle">
           <span
@@ -437,7 +524,7 @@ function RagPanel(props: {
           {hits.status === 'error' && <span>检索失败：{hits.error}</span>}
         </div>
       )}
-    </>
+    </div>
   );
 }
 

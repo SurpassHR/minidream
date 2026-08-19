@@ -4,6 +4,8 @@ import remarkGfm from 'remark-gfm';
 import { client } from '../api/client';
 import { agentChat } from '../api/agent';
 import { Icon } from '../icons';
+import { ConfirmDialog } from './ConfirmDialog';
+import { TextInputDialog } from './TextInputDialog';
 import type { SessionMeta } from '../types';
 
 export interface ChatMsg { who: 'user' | 'agent'; text: string }
@@ -48,6 +50,9 @@ export function AgentPanel(props: {
   // 流式锁：onStream 返回 Promise（真实 agent 桥）或面板自行 agentChat 时置 true；
   // 期间禁止会话切换/新建/删除——否则旧会话的流式 push 会污染新选中的视图
   const [streaming, setStreaming] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<SessionMeta | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null);
+  const [sessionDialogBusy, setSessionDialogBusy] = useState(false);
   // 用户已发送标记：历史加载是异步的，若加载完成前用户已发消息，不覆盖进行中的对话
   const dirtyRef = useRef(false);
 
@@ -107,17 +112,28 @@ export function AgentPanel(props: {
     }).catch(() => {});
   };
 
-  const renameSession = async (s: SessionMeta) => {
-    const title = window.prompt('会话标题', s.title);
-    if (!title || title.trim() === '' || title === s.title) return;
-    const r = await client.renameAgentSession(s.id, title.trim()).catch(() => null);
-    if (r) setSessions(r.sessions);
+  const renameSession = (s: SessionMeta) => setRenameTarget(s);
+  const submitRenameSession = async (title: string) => {
+    const target = renameTarget;
+    if (!target) return;
+    setSessionDialogBusy(true);
+    const r = await client.renameAgentSession(target.id, title).catch(() => null);
+    if (r) {
+      setSessions(r.sessions);
+      setRenameTarget(null);
+    }
+    setSessionDialogBusy(false);
   };
 
-  const deleteSession = async (s: SessionMeta) => {
+  const deleteSession = (s: SessionMeta) => {
     if (streaming) return; // 流式中禁止：在途流式 POST 会落盘到刚删除的会话
-    if (!window.confirm(`删除会话「${s.title}」？其消息将一并删除。`)) return;
-    let r = await client.deleteAgentSession(s.id).catch(() => null);
+    setDeleteTarget(s);
+  };
+  const confirmDeleteSession = async () => {
+    const target = deleteTarget;
+    if (!target) return;
+    setDeleteTarget(null);
+    let r = await client.deleteAgentSession(target.id).catch(() => null);
     if (!r) return;
     if (!r.activeId) {
       // 删光会话：自动新建一个空会话，避免下次发送聊进 UI 看不见的会话（后端自动创建，UI 无从得知）
@@ -289,6 +305,25 @@ export function AgentPanel(props: {
         />
         <button onClick={send}>发送</button>
       </div>
+      <TextInputDialog
+        open={renameTarget !== null}
+        title="重命名会话"
+        body="为这段画布讨论保留一个容易识别的标题。"
+        defaultValue={renameTarget?.title ?? ''}
+        placeholder="例如：镜头节奏分析"
+        confirmLabel="保存名称"
+        busy={sessionDialogBusy}
+        onConfirm={(value) => { void submitRenameSession(value); }}
+        onCancel={() => { if (!sessionDialogBusy) setRenameTarget(null); }}
+      />
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="删除会话"
+        body={`删除「${deleteTarget?.title ?? ''}」？其中的消息也会一并删除。`}
+        confirmLabel="确认删除"
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => { void confirmDeleteSession(); }}
+      />
     </div>
   );
 }

@@ -201,15 +201,17 @@ describe('AgentPanel 流式对话', () => {
   it('重命名/删除会话（确认后）', async () => {
     SESSIONS = [{ id: 's1', title: '旧名', createdAt: 1, updatedAt: 2 }];
     ACTIVE = 's1';
-    vi.spyOn(window, 'prompt').mockReturnValue('新名字');
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<AgentPanel chips={[]} onChipsChange={() => {}} onSend={() => []} />);
     await waitFor(() => expect(screen.getByTestId('agent-session-current')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('agent-session-current'));
     fireEvent.click(screen.getByTestId('agent-session-rename-s1'));
+    const renameInput = await screen.findByTestId('text-dialog-input');
+    fireEvent.change(renameInput, { target: { value: '新名字' } });
+    fireEvent.click(screen.getByTestId('text-dialog-confirm'));
     await waitFor(() => expect(screen.getByText('新名字')).toBeInTheDocument());
-    fireEvent.click(screen.getByTestId('agent-session-current'));
     fireEvent.click(screen.getByTestId('agent-session-del-s1'));
+    await waitFor(() => expect(screen.getByText('确认删除')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('确认删除'));
     await waitFor(() => expect(screen.queryByText('新名字')).not.toBeInTheDocument());
     vi.restoreAllMocks();
   });
@@ -275,11 +277,12 @@ describe('AgentPanel 流式对话', () => {
   it('删除最后一个会话后自动新建：列表恢复新会话并加载空历史', async () => {
     SESSIONS = [{ id: 's1', title: '唯一会话', createdAt: 1, updatedAt: 2 }];
     ACTIVE = 's1';
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<AgentPanel chips={[]} onChipsChange={() => {}} onSend={() => []} />);
     await waitFor(() => expect(screen.getByTestId('agent-session-current')).toHaveTextContent('唯一会话'));
     fireEvent.click(screen.getByTestId('agent-session-current'));
     fireEvent.click(screen.getByTestId('agent-session-del-s1'));
+    await waitFor(() => expect(screen.getByText('确认删除')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('确认删除'));
     // 自动新建（POST create）已发出
     const posts = () => (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => String(c[0]).includes('/api/agent/sessions') && (c[1] as RequestInit)?.method === 'POST',

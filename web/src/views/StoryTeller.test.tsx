@@ -5,6 +5,8 @@ import { StoryTellerView } from './StoryTellerView';
 const STORY_API: { story: { step: number; answers: Record<string, string>; completedAt: string | null } } = { story: { step: 0, answers: {}, completedAt: null } };
 // GET /api/story 失败开关：置 true 后 GET 分支返回 500（模拟切项目后加载失败）
 let GET_STORY_FAIL = false;
+let SESSION_CREATE_COUNT = 0;
+let BOARD_NAME = '未命名项目';
 
 beforeEach(() => {
   localStorage.clear();
@@ -21,10 +23,24 @@ beforeEach(() => {
         md: '# demo · 故事设定\n\n## 主题\n战争与和解',
       }), { status: 201 });
     }
+    if (u.includes('/api/story/boards')) {
+      if (init?.method === 'PATCH') {
+        const body = JSON.parse(String(init.body)) as { name: string };
+        BOARD_NAME = body.name;
+      }
+      return new Response(JSON.stringify({ boards: [{
+        id: 'b1', name: BOARD_NAME, createdAt: 1, updatedAt: 1,
+        systemPrompts: {}, ragEnabled: false, ragAssets: [],
+      }] }), { status: 200 });
+    }
     if (u.includes('/api/story/chat/sessions')) {
-      // GET 空库 → StoryChat 自动 POST 新建（返回 s1 并置 active）
+      // GET 空库 → StoryChat 自动 POST 新建；后续点击项目行按钮创建子会话
       if (init?.method === 'POST') {
-        return new Response(JSON.stringify({ sessions: [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }], activeId: 's1' }), { status: 200 });
+        SESSION_CREATE_COUNT += 1;
+        const sessions = Array.from({ length: SESSION_CREATE_COUNT }, (_, i) => ({
+          id: `s${i + 1}`, title: '新会话', createdAt: 1, updatedAt: 1,
+        }));
+        return new Response(JSON.stringify({ sessions, activeId: `s${SESSION_CREATE_COUNT}` }), { status: 200 });
       }
       return new Response(JSON.stringify({ sessions: [], activeId: null }), { status: 200 });
     }
@@ -58,6 +74,8 @@ describe('StoryTellerView 对话式', () => {
   beforeEach(() => {
     STORY_API.story = { step: 0, answers: {}, completedAt: null };
     GET_STORY_FAIL = false;
+    SESSION_CREATE_COUNT = 0;
+    BOARD_NAME = '未命名项目';
   });
 
   it('仅对话式：无模式 tab 与向导元素，显示聊天区', async () => {
@@ -68,6 +86,54 @@ describe('StoryTellerView 对话式', () => {
     expect(screen.queryByText(/第 \d+\/6 步/)).not.toBeInTheDocument();
     // chat-mode 布局常驻
     expect(screen.getByTestId('story-teller-view').className).toContain('chat-mode');
+  });
+
+  it('初始未命名项目可重命名，并立即更新项目树标题', async () => {
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByTestId('board-item-b1')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('board-rename-b1'));
+    const renameInput = await screen.findByTestId('text-dialog-input');
+    fireEvent.change(renameInput, { target: { value: '雾中的邮差' } });
+    fireEvent.click(screen.getByTestId('text-dialog-confirm'));
+    await waitFor(() => expect(screen.getByTestId('board-item-b1')).toHaveTextContent('雾中的邮差'));
+    expect(screen.getByTestId('board-item-b1')).not.toHaveTextContent('未命名项目');
+  });
+
+  it('会话位于左侧项目栏内部，而不是中栏横向标签', async () => {
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
+    const boardItem = screen.getByTestId('board-item-b1');
+    expect(boardItem).toContainElement(screen.getByTestId('board-session-host'));
+    expect(boardItem).toContainElement(screen.getByTestId('session-panel'));
+    expect(boardItem).toContainElement(screen.getByTestId('session-item-s1'));
+    const chatWrap = screen.getByTestId('chat-conversation').closest('.chat-wrap');
+    expect(chatWrap).not.toContainElement(screen.getByTestId('session-panel'));
+    const createSession = screen.getByTestId('board-session-new-b1');
+    expect(createSession).toBeInTheDocument();
+    fireEvent.click(createSession);
+    await waitFor(() => expect(screen.getByTestId('session-item-s2')).toBeInTheDocument());
+    expect(boardItem).toContainElement(screen.getByTestId('session-item-s2'));
+    expect(screen.getByTestId('chat-conversation')).toBeInTheDocument();
+  });
+
+  it('RAG 面板使用独立内容列，避免内容贴边和控件互相挤压', async () => {
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '知识库 RAG' }));
+    expect(await screen.findByTestId('rag-panel')).toHaveClass('rag-panel');
+    expect(screen.getByTestId('rag-query')).toBeInTheDocument();
+    expect(screen.getByTestId('rag-add')).toBeInTheDocument();
+  });
+
+  it('系统提示词面板使用独立内容列，长提示词不会撑坏卡片布局', async () => {
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '系统提示词' }));
+    const panel = await screen.findByTestId('prompt-panel');
+    expect(panel).toHaveClass('prompt-panel');
+    expect(panel.querySelectorAll('.pe-card')).toHaveLength(2);
+    expect(screen.getByTestId('pe-text-storyTeller')).toBeInTheDocument();
+    expect(screen.getByTestId('pe-text-storySummarize')).toBeInTheDocument();
   });
 
   it('未完成时右侧剧本栏占位', async () => {
@@ -90,11 +156,11 @@ describe('StoryTellerView 对话式', () => {
     STORY_API.story = { step: 5, answers: { theme: 't' }, completedAt: '2026-08-15T00:00:00.000Z' };
     render(<StoryTellerView projectName="demo" />);
     await waitFor(() => expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument());
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     fireEvent.click(screen.getByText('重新生成'));
+    await waitFor(() => expect(screen.getByText('确认重置')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('确认重置'));
     await waitFor(() => expect(screen.queryByText(/已完成 · 已生成故事文档/)).not.toBeInTheDocument());
     expect(screen.getByTestId('script-sidebar')).toHaveTextContent('剧本将在这里展示');
-    vi.restoreAllMocks();
   });
 
   it('已完成项目挂载：右侧栏从 GET 恢复剧本', async () => {

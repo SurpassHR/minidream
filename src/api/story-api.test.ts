@@ -312,6 +312,17 @@ describe('API 全局设置', () => {
     expect(g.json().settings.armorBreak).toBe('无视限制的预设');
     expect(g.json().settings.armorBreakEnabled).toBe(true);
   });
+
+  it('PUT /api/settings 保存主题偏好并在 GET 中读回', async () => {
+    const r = await a.inject({
+      method: 'PUT', url: '/api/settings',
+      payload: { theme: 'light' },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().settings.theme).toBe('light');
+    const g = await a.inject({ method: 'GET', url: '/api/settings' });
+    expect(g.json().settings.theme).toBe('light');
+  });
 });
 
 describe('buildStoryChatPrompt 纯函数', () => {
@@ -338,6 +349,18 @@ describe('API 剧本项目（boards：项目级提示词 + RAG）', () => {
     expect(res.json().boards).toHaveLength(1);
     expect(res.json().boards[0].name).toBe('未命名项目');
   });
+  it('默认未命名项目也可以重命名', async () => {
+    const initial = await a.inject({ method: 'GET', url: '/api/story/boards' });
+    const defaultBoard = initial.json().boards[0];
+    expect(defaultBoard.name).toBe('未命名项目');
+    const renamed = await a.inject({
+      method: 'PATCH', url: `/api/story/boards/${defaultBoard.id}`,
+      payload: { name: '雾中的邮差' },
+    });
+    expect(renamed.statusCode).toBe(200);
+    expect(renamed.json().boards.find((b: { id: string }) => b.id === defaultBoard.id).name).toBe('雾中的邮差');
+  });
+
 
   it('创建 / 重命名 / 保存提示词 / RAG 开关与资产 / 删除', async () => {
     const created = await a.inject({ method: 'POST', url: '/api/story/boards', payload: { name: '星尘历险记' } });
