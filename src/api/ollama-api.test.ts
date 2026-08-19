@@ -15,7 +15,7 @@ let home: string;
 let dir: string;
 let a: Awaited<ReturnType<typeof buildApp>>;
 // 记录最近一次 /api/chat 请求体（断言 base64 图像/模型/指令透传）
-let lastChatBody: { model: string; messages: Array<{ content: string; images?: string[] }>; stream: boolean } | null = null;
+let lastChatBody: { model: string; messages: Array<{ content: string; images?: string[] }>; stream: boolean; options?: { num_ctx?: number } } | null = null;
 
 beforeEach(async () => {
   // 隔离 HOME：settings.json 与素材库不污染真实 ~/.director
@@ -267,6 +267,7 @@ describe('API 素材图像 captioning', () => {
     expect(lastChatBody?.model).toBe('llava:13b');
     expect(lastChatBody?.messages[0]?.images).toHaveLength(1);
     expect(lastChatBody?.messages[0]?.content).toContain('caption');
+    expect(lastChatBody?.options?.num_ctx).toBeGreaterThanOrEqual(4096);
     // 同名 txt 素材入库：ref.png → ref.txt
     const after = (await a.inject({ method: 'GET', url: '/api/assets' })).json().assets as Array<{ id: string; kind: string; name: string; caption?: string }>;
     const txt = after.find((x) => x.kind === 'txt' && x.name === 'ref.txt');

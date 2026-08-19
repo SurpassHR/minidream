@@ -326,6 +326,34 @@ describe('SettingsModal', () => {
     expect(opts).toEqual(['', 'llava:13b', 'qwen2.5vl:7b']);
   });
 
+  it('素材库设置显示当前目录并允许恢复默认目录', () => {
+    render(<SettingsModal
+      open
+      settings={{ ...DEFAULT_SETTINGS, assetsDir: '/media/assets' }} models={[]}
+      onClose={() => {}} onSaved={() => {}} onError={() => {}}
+    />);
+    fireEvent.click(screen.getByTestId('nav-assets'));
+    expect(screen.getByTestId('sec-assets')).toHaveClass('active');
+    expect(screen.getByTestId('assets-dir')).toHaveValue('/media/assets');
+    expect(screen.getByText(/目标目录必须不存在或为空/)).toBeInTheDocument();
+  });
+
+  it('保存携带 assetsDir，留空时请求恢复默认目录', async () => {
+    render(<SettingsModal
+      open
+      settings={{ ...DEFAULT_SETTINGS, assetsDir: '/media/assets' }} models={[]}
+      onClose={() => {}} onSaved={() => {}} onError={() => {}}
+    />);
+    fireEvent.change(screen.getByTestId('assets-dir'), { target: { value: '' } });
+    fireEvent.click(screen.getByText('保存'));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/settings',
+      expect.objectContaining({ method: 'PUT' }),
+    ));
+    const body = JSON.parse(String((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1]?.body));
+    expect(body.assetsDir).toBe('');
+  });
+
   it('Ollama 不可达时「获取模型」显示失败提示且下拉为空', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (String(url).includes('/api/ollama/models')) {

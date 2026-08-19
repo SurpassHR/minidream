@@ -283,6 +283,7 @@
 .addproj-browse { flex: none; white-space: nowrap; }
 .assets { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
 .asset-tools { display: flex; gap: 6px; padding: 8px 8px 6px; }
+.asset-open-directory { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; padding: 4px 8px; font-size: 11px; }
 .asset-search { flex: 1; background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 5px; color: var(--text); padding: 4px 8px; font-size: 11px; outline: none; min-width: 0; }
 .asset-search:focus { border-color: var(--amber); }
 .import-btn { background: var(--amber); border: none; border-radius: 5px; color: #171310; font-weight: 600; padding: 4px 10px; cursor: pointer; font-size: 11px; }
@@ -302,9 +303,9 @@
 .asset-preview-name { color: var(--text-dim); font-family: var(--mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .asset-preview-image,
 .asset-preview-video { display: block; width: 100%; max-height: 62vh; object-fit: contain; border: 1px solid var(--border); border-radius: 7px; background: #080b11; }
-.asset-preview-caption { padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; background: #080b11; color: var(--text); font-size: 12px; line-height: 1.7; max-height: 20vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
-.asset-preview-text { flex: 1; min-height: 120px; max-height: 62vh; overflow: auto; margin: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 7px; background: #080b11; color: var(--text); font-family: var(--mono); font-size: 12px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
-.asset-preview-loading { min-height: 120px; display: flex; align-items: center; justify-content: center; color: var(--text-faint); border: 1px solid var(--border); border-radius: 7px; background: #080b11; }
+.asset-preview-caption { padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-3); color: var(--text); font-size: 12px; line-height: 1.7; max-height: 20vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.asset-preview-text { flex: 1; min-height: 120px; max-height: 62vh; overflow: auto; margin: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-3); color: var(--text); font-family: var(--mono); font-size: 12px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.asset-preview-loading { min-height: 120px; display: flex; align-items: center; justify-content: center; color: var(--text-faint); border: 1px solid var(--border); border-radius: 7px; background: var(--panel-3); }
 .asset-preview-error { margin: 0; }
 .asset-preview-dialog .dialog-actions { margin-top: auto; }
 .asset-card-actions button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 20px; padding: 0; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--text-faint); cursor: pointer; }

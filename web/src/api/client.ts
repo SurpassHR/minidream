@@ -247,6 +247,10 @@ export const client = {
     return r.assets;
   },
 
+  async openAssetDirectory(): Promise<void> {
+    await req('/api/assets/open-directory', { method: 'POST' });
+  },
+
   async updateAsset(id: string, patch: { name?: string; content?: string }): Promise<AssetRecord> {
     const r = await req<{ asset: AssetRecord }>(`/api/assets/${encodeURIComponent(id)}`, {
       method: 'PATCH', body: JSON.stringify(patch),

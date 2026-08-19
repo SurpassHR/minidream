@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { ProjectSwitcher } from './ProjectSwitcher';
 import { AssetLibrary } from './AssetLibrary';
+import '../theme.css';
+import '../App.css';
 import type { AssetItem } from './AssetLibrary';
 import { AddProjectDialog } from './AddProjectDialog';
 
@@ -289,6 +291,25 @@ describe('AssetLibrary CRUD', () => {
     fireEvent.click(screen.getByText('preview.md'));
     expect(await screen.findByTestId('asset-preview-text')).toHaveTextContent('# 预览内容');
     expect(screen.getByTestId('asset-preview-text')).toHaveTextContent('第二行');
+  });
+
+  it('文本预览在浅色主题下使用可读的前景与背景颜色', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/content')) {
+        return new Response(JSON.stringify({ content: '可见文本' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    });
+    render(<AssetLibrary items={[{ id: 'txt-1', kind: 'txt', name: 'preview.md' }]} onDropToCanvas={() => {}} />);
+    fireEvent.click(screen.getByText('preview.md'));
+    const preview = await screen.findByTestId('asset-preview-text');
+    expect(preview).toHaveStyle({ color: 'var(--text)', backgroundColor: 'var(--panel-3)' });
+  });
+
+  it('打开素材库所在目录调用后端接口', async () => {
+    render(<AssetLibrary items={[]} onDropToCanvas={() => {}} />);
+    fireEvent.click(screen.getByTestId('asset-open-directory'));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/assets/open-directory', expect.objectContaining({ method: 'POST' })));
   });
 
   it('素材删除需要确认并调用 DELETE', async () => {

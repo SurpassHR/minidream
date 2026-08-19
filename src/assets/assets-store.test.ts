@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
-import { deleteAsset, importAssetFile, importAssetText, listAssets, readAssetText, replaceAssetFile, updateAsset } from './assets-store.js';
+import { saveSettings } from '../settings/settings-store.js';
+import { assetDirectoryPath, deleteAsset, importAssetFile, importAssetText, listAssets, migrateAssetDirectory, readAssetText, replaceAssetFile, updateAsset } from './assets-store.js';
 
 let realHome: string;
 let fakeHome: string;
@@ -79,6 +80,32 @@ describe('assets-store', () => {
     expect(() => replaceAssetFile(rec.id, text)).toThrowError(
       expect.objectContaining({ code: 'FILE_CONFLICT' }),
     );
+  });
+
+  it('迁移素材目录时复制索引与素材文件，目标非空则拒绝', () => {
+    const rec = importAssetText('note.md', '内容');
+    const target = join(fakeHome, 'custom-assets');
+
+    migrateAssetDirectory(target);
+    expect(readFileSync(join(target, 'index.json'), 'utf8')).toContain(rec.id);
+    expect(readFileSync(join(target, `${rec.id}.txt`), 'utf8')).toBe('内容');
+    expect(existsSync(join(fakeHome, '.director', 'assets', `${rec.id}.txt`))).toBe(false);
+
+    saveSettings({ assetsDir: target });
+    expect(assetDirectoryPath()).toBe(target);
+    expect(readAssetText(rec.id)).toBe('内容');
+
+    const occupied = join(fakeHome, 'occupied-assets');
+    mkdirSync(occupied, { recursive: true });
+    writeFileSync(join(occupied, 'keep.txt'), 'keep');
+    expect(() => migrateAssetDirectory(occupied)).toThrowError(
+      expect.objectContaining({ code: 'FILE_CONFLICT' }),
+    );
+
+    migrateAssetDirectory('');
+    saveSettings({ assetsDir: '' });
+    expect(assetDirectoryPath()).toBe(join(fakeHome, '.director', 'assets'));
+    expect(readAssetText(rec.id)).toBe('内容');
   });
 
   it('deleteAsset 删除文件与索引', () => {

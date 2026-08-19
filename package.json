@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently -k -n server,web -c blue,green \"pnpm run dev:server\" \"pnpm run dev:web\"",
     "dev:server": "tsx watch src/index.ts",
-    "dev:web": "pnpm --filter director-workbench-web run dev",
+    "dev:web": "node scripts/wait-for-server.mjs http://127.0.0.1:4777/health && pnpm --filter director-workbench-web run dev",
     "start": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest"

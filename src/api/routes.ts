@@ -8,7 +8,7 @@ import { syncNodeToFile } from '../sync/dual-writer.js';
 import { listSnapshots, graphAtSnapshot, headSeq, futureSnapshotCount, approveOverwrite } from '../snapshots/snapshot-store.js';
 import { listWorkspace, readWorkspaceFile, searchWorkspace } from '../workspace/accessor.js';
 import { readFileSync, existsSync, mkdtempSync, createWriteStream, rmSync, writeFileSync, readdirSync } from 'node:fs';
-import { basename, extname, join } from 'node:path';
+import { basename, extname, isAbsolute, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
@@ -17,7 +17,7 @@ import { graphToPromptYaml } from '../prompt/export.js';
 import { GenerationQueue } from '../generation/queue.js';
 import { ComfyUIClient } from '../comfy/client.js';
 import {
-  listAssets, importAssetFile, importAssetText, upsertAssetText, setAssetCaption, deleteAsset, readAssetText, assetFilePath,
+  assetDirectoryPath, listAssets, importAssetFile, importAssetText, migrateAssetDirectory, upsertAssetText, setAssetCaption, deleteAsset, readAssetText, assetFilePath,
   updateAsset, replaceAssetFile,
 } from '../assets/assets-store.js';
 import { OllamaClient } from '../ollama/client.js';
@@ -42,9 +42,9 @@ import { listDesigns, createDesign, updateDesign, deleteDesign } from '../design
 import { readSettings, saveSettings } from '../settings/settings-store.js';
 import type { DesignKind, DesignObject } from '../design/store.js';
 import {
-  addProject, deleteProject, listProjects, removeProject, renameProject, resolveSwitchTarget, resolveComfyUrl,
+  addProject, deleteProject, listProjects, rememberLastProject, removeProject, renameProject, resolveSwitchTarget, resolveComfyUrl,
 } from '../projects/projects-store.js';
-import { pickProjectDirectory } from '../projects/directory-picker.js';
+import { openDirectory, pickProjectDirectory } from '../projects/directory-picker.js';
 import type { WsHandle } from './ws.js';
 
 // 项目上下文：单一可变事实来源，/api/project/switch 热切换时整体替换
@@ -391,6 +391,7 @@ export function mountRoutes(
     // comfy 按新项目 project 节点地址重建；queue 随之重建；watcher 切换监视目录
     ctx.projectDir = target;
     ctx.projectOpen = true;
+    rememberLastProject(target);
     ctx.comfy = new ComfyUIClient(resolveComfyUrl(target));
     ctx.queue = new GenerationQueue(target, ctx.comfy);
     await ws.switchDir(target);
@@ -610,14 +611,28 @@ export function mountRoutes(
   // ComfyUI 地址 / agent 默认模型 / 思考强度；前端设置 modal 读写
   app.get('/api/settings', async () => ({ settings: readSettings() }));
 
-  app.put('/api/settings', async (req) => {
+  app.put('/api/settings', async (req, reply) => {
     const body = req.body as {
       comfyUrl?: string; agentModel?: string; agentThinking?: string;
       prompts?: Record<string, string>;
       armorBreak?: string; armorBreakEnabled?: boolean;
-      ollamaUrl?: string; ollamaModel?: string; ollamaEmbedModel?: string;
+      ollamaUrl?: string; ollamaModel?: string; ollamaEmbedModel?: string; assetsDir?: string;
       theme?: 'dark' | 'light';
     };
+    const requestedAssetsDir = typeof body.assetsDir === 'string' ? body.assetsDir.trim() : undefined;
+    if (requestedAssetsDir !== undefined) {
+      if (requestedAssetsDir && !isAbsolute(requestedAssetsDir)) {
+        return reply.code(400).send({ code: 'INVALID_PATCH', message: '素材库目录必须是绝对路径' });
+      }
+      try {
+        migrateAssetDirectory(requestedAssetsDir);
+      } catch (err) {
+        if (err instanceof DirectorError) {
+          return reply.code(400).send({ code: err.code, message: err.message });
+        }
+        throw err;
+      }
+    }
     const settings = saveSettings({
       comfyUrl: typeof body.comfyUrl === 'string' ? body.comfyUrl : undefined,
       agentModel: typeof body.agentModel === 'string' ? body.agentModel : undefined,
@@ -628,6 +643,7 @@ export function mountRoutes(
       ollamaUrl: typeof body.ollamaUrl === 'string' ? body.ollamaUrl : undefined,
       ollamaModel: typeof body.ollamaModel === 'string' ? body.ollamaModel : undefined,
       ollamaEmbedModel: typeof body.ollamaEmbedModel === 'string' ? body.ollamaEmbedModel : undefined,
+      assetsDir: requestedAssetsDir,
       theme: body.theme === 'dark' || body.theme === 'light' ? body.theme : undefined,
     });
     // ComfyUI 地址变化 → 写回当前项目节点 + 热切换（复用 comfy/config 行为）
@@ -682,6 +698,18 @@ export function mountRoutes(
   });
 
   // —— 素材库：全局素材（~/.director/assets） ——
+  app.post('/api/assets/open-directory', async (_, reply) => {
+    try {
+      openDirectory(assetDirectoryPath());
+      return { ok: true };
+    } catch (err) {
+      if (err instanceof DirectorError) {
+        return reply.code(400).send({ code: err.code, message: err.message });
+      }
+      throw err;
+    }
+  });
+
   app.get('/api/assets', async () => ({ assets: listAssets() }));
 
   app.post('/api/assets/import', async (req, reply) => {

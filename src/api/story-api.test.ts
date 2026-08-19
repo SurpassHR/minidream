@@ -334,7 +334,7 @@ describe('API 全局设置', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().settings).toEqual({
       comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false,
-      ollamaUrl: '', ollamaModel: '', ollamaEmbedModel: '',
+      ollamaUrl: '', ollamaModel: '', ollamaEmbedModel: '', assetsDir: '',
     });
   });
 

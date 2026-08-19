@@ -13,6 +13,10 @@ function registryPath(): string {
   return join(homedir(), '.director', 'projects.json');
 }
 
+function lastProjectPath(): string {
+  return join(homedir(), '.director', 'last-project.json');
+}
+
 interface RegistryEntry {
   path: string;
   // 显示名称与磁盘目录名解耦；旧注册表没有 name 时回退 basename(path)
@@ -32,6 +36,25 @@ function readRegistry(): RegistryEntry[] {
 function writeRegistry(entries: RegistryEntry[]): void {
   mkdirSync(dirname(registryPath()), { recursive: true });
   writeFileSync(registryPath(), JSON.stringify(entries, null, 2), 'utf8');
+}
+
+// 记录最近一次打开的项目，独立于项目注册表，允许显式启动未加入项目栏的目录。
+export function rememberLastProject(path: string): void {
+  const abs = resolve(path);
+  mkdirSync(dirname(lastProjectPath()), { recursive: true });
+  writeFileSync(lastProjectPath(), JSON.stringify({ path: abs }, null, 2), 'utf8');
+}
+
+// 读取最近项目；目录已被删除/移动时自动忽略，避免无参数启动进入失效项目。
+export function readLastProject(): string | null {
+  if (!existsSync(lastProjectPath())) return null;
+  try {
+    const data = JSON.parse(readFileSync(lastProjectPath(), 'utf8')) as { path?: unknown };
+    if (typeof data.path !== 'string' || !statSync(data.path).isDirectory()) return null;
+    return resolve(data.path);
+  } catch {
+    return null;
+  }
 }
 
 export interface ProjectInfo {

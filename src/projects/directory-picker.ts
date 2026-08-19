@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
+import { DirectorError } from '../types.js';
 
 export interface ProjectDirectoryPickerResult {
   path: string | null;
@@ -17,6 +18,12 @@ type PickerRunner = (
   args: string[],
   options: { encoding: 'utf8'; stdio: ['ignore', 'pipe', 'ignore'] },
 ) => PickerRunResult;
+
+type DirectoryOpenRunner = (
+  command: string,
+  args: string[],
+  options: { encoding: 'utf8'; stdio: 'ignore' },
+) => { status: number | null; error?: Error };
 
 interface PickerCommand {
   command: string;
@@ -47,6 +54,24 @@ function commandsFor(platform: string, home: string): PickerCommand[] {
 
 // 使用系统原生文件浏览器选择真实目录；取消选择不是错误。
 // run 参数仅供测试注入，生产环境使用 node:child_process.spawnSync。
+export function openDirectory(path: string, options: {
+  platform?: string;
+  run?: DirectoryOpenRunner;
+} = {}): void {
+  const platform = options.platform ?? process.platform;
+  const command = platform === 'darwin' ? 'open' : platform === 'win32' ? 'explorer.exe' : 'xdg-open';
+  const run = options.run ?? ((cmd, args, runOptions) => spawnSync(cmd, args, runOptions));
+  let result: { status: number | null; error?: Error };
+  try {
+    result = run(command, [path], { encoding: 'utf8', stdio: 'ignore' });
+  } catch (err) {
+    throw new DirectorError('INVALID_PATCH', `无法打开目录：${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (result.error || result.status !== 0) {
+    throw new DirectorError('INVALID_PATCH', `无法打开目录：${result.error?.message ?? `${command} 退出码 ${String(result.status)}`}`);
+  }
+}
+
 export function pickProjectDirectory(options: {
   platform?: string;
   home?: string;

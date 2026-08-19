@@ -1,12 +1,12 @@
 import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
 import type http from 'node:http';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { mountRoutes, type ProjectContext } from './api/routes.js';
 import { registerWs } from './api/ws.js';
 import { ComfyUIClient } from './comfy/client.js';
 import { GenerationQueue } from './generation/queue.js';
-import { resolveComfyUrl } from './projects/projects-store.js';
+import { readLastProject, rememberLastProject, resolveComfyUrl } from './projects/projects-store.js';
 import { startMcpServer } from './mcp/server.js';
 
 export interface BuildOptions {
@@ -39,18 +39,38 @@ export function buildApp(opts: BuildOptions) {
   const wsHandle = registerWs(server, () => ctx.projectDir);
   mountRoutes(app, ctx, wsHandle);
   app.addHook('onClose', async () => { await wsHandle.close(); });
-  // 显式传入 mcpPort 才启动 MCP server（CLI 入口传；测试不传避免固定端口冲突）
+  // 显式传入 mcpPort 才启用 MCP（CLI 入口传；测试不传避免固定端口冲突）。
+  // 只注册延迟启动函数，不在 buildApp 阶段启动：Director HTTP API 必须先监听，
+  // 否则 Vite 会在后端初始化 MCP 时连续请求并收到 ECONNREFUSED。
   if (opts.mcpPort !== undefined) {
-    const mcpPromise = startMcpServer({
-      ctx,
-      port: opts.mcpPort,
-      // agent 活动回传：MCP 工具调用 → WS 广播（kanban hooks 语义，best-effort 由 ws 层保证）
-      onActivity: (text) => wsHandle.broadcastActivity(text),
+    let mcpPromise: Promise<Awaited<ReturnType<typeof startMcpServer>>> | null = null;
+    let mcpStarted = false;
+    const startMcp = (): Promise<Awaited<ReturnType<typeof startMcpServer>>> => {
+      if (!mcpPromise) {
+        mcpStarted = true;
+        mcpPromise = startMcpServer({
+          ctx,
+          port: opts.mcpPort!,
+          // agent 活动回传：MCP 工具调用 → WS 广播（kanban hooks 语义，best-effort 由 ws 层保证）
+          onActivity: (text) => wsHandle.broadcastActivity(text),
+        });
+      }
+      return mcpPromise;
+    };
+    app.addHook('onClose', async () => {
+      if (!mcpPromise) return;
+      const handle = await mcpPromise.catch(() => null);
+      await handle?.close();
     });
-    mcpPromise.then((h) => console.log(`MCP Server: ${h.url}`));
-    app.addHook('onClose', async () => { (await mcpPromise).close(); });
-    // 暴露给调用方（测试/CLI 可查）
-    (app as unknown as { __mcpReady: Promise<Awaited<ReturnType<typeof startMcpServer>>> }).__mcpReady = mcpPromise;
+    // 暴露给 CLI 在 HTTP listen 成功后启动；测试用它验证启动顺序。
+    (app as unknown as {
+      startMcp: typeof startMcp;
+      mcpStarted: boolean;
+    }).startMcp = startMcp;
+    Object.defineProperty(app, 'mcpStarted', {
+      get: () => mcpStarted,
+      configurable: true,
+    });
   }
   // 暴露文件监听就绪 Promise（测试等 watcher 初始化完成后再改文件，避免变更丢失）
   (app as unknown as { __wsReady: Promise<void> }).__wsReady = wsHandle.ready;
@@ -59,10 +79,16 @@ export function buildApp(opts: BuildOptions) {
 
 // 直接运行时启动监听
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const projectDir = process.argv[2];
+  const explicitProjectDir = process.argv[2];
+  const projectDir = explicitProjectDir ? resolve(explicitProjectDir) : readLastProject() ?? undefined;
   const mcpPort = Number(process.env.DIRECTOR_MCP_PORT ?? 4778);
+  if (projectDir) rememberLastProject(projectDir);
   const app = buildApp({ projectDir, mcpPort });
   app.listen({ port: 4777, host: '127.0.0.1' }).then(() => {
-    console.log(`Director Server 已启动: http://127.0.0.1:4777 (项目: ${projectDir})`);
+    console.log(`Director Server 已启动: http://127.0.0.1:4777 (项目: ${projectDir ?? '未打开'})`);
+    const startMcp = (app as unknown as { startMcp: () => Promise<{ url: string }> }).startMcp;
+    void startMcp()
+      .then((h) => console.log(`MCP Server: ${h.url}`))
+      .catch((err) => console.error(`MCP Server 启动失败: ${err instanceof Error ? err.message : String(err)}`));
   });
 }

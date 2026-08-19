@@ -69,6 +69,8 @@ export function AssetLibrary(props: {
   // captioning：正在处理的图像 id（防并发）；失败提示
   const [captioningId, setCaptioningId] = useState<string | null>(null);
   const [captionError, setCaptionError] = useState('');
+  const [directoryBusy, setDirectoryBusy] = useState(false);
+  const [directoryError, setDirectoryError] = useState('');
 
   const filtered = items.filter((i) => i.name.includes(query));
 
@@ -164,6 +166,18 @@ export function AssetLibrary(props: {
     }
   };
 
+  const openAssetDirectory = async () => {
+    setDirectoryBusy(true);
+    setDirectoryError('');
+    try {
+      await client.openAssetDirectory();
+    } catch (err) {
+      setDirectoryError(err instanceof Error ? err.message : '无法打开素材库目录');
+    } finally {
+      setDirectoryBusy(false);
+    }
+  };
+
   const pickFile = (kind: 'txt' | 'img' | 'vid') => {
     setPendingKind(kind);
     setMenuOpen(false);
@@ -239,6 +253,14 @@ export function AssetLibrary(props: {
           className="asset-search" placeholder="搜索素材…" value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        <button
+          type="button"
+          className="btn-ghost asset-open-directory"
+          data-testid="asset-open-directory"
+          title="在文件管理器中打开素材库目录"
+          disabled={directoryBusy}
+          onClick={() => { void openAssetDirectory(); }}
+        ><Icon name="file" />{directoryBusy ? '打开中…' : '打开目录'}</button>
         <button className="import-btn" onClick={() => setMenuOpen((v) => !v)}>＋ 导入</button>
       </div>
       <div className="import-hint">Ctrl+V 粘贴或拖入图片 / .txt 文件，自动入库</div>
@@ -258,6 +280,7 @@ export function AssetLibrary(props: {
         onChange={(e) => void onFileChosen(e)}
       />
       {importError && <div className="ne-error import-error">导入失败：{importError}</div>}
+      {directoryError && <div className="ne-error import-error">打开目录失败：{directoryError}</div>}
       {captionError && <div className="ne-error import-error">Captioning 失败：{captionError}</div>}
       {dragging && <div className="drop-mask">松开以导入素材</div>}
       <div className="asset-grid">
@@ -383,7 +406,11 @@ export function AssetLibrary(props: {
               ) : previewContent === null ? (
                 <div className="asset-preview-loading">读取中…</div>
               ) : (
-                <pre data-testid="asset-preview-text" className="asset-preview-text">{previewContent}</pre>
+                <pre
+                  data-testid="asset-preview-text"
+                  className="asset-preview-text"
+                  style={{ color: 'var(--text)', backgroundColor: 'var(--panel-3)' }}
+                >{previewContent}</pre>
               )
             )}
             <div className="dialog-actions">

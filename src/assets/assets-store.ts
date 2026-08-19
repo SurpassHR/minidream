@@ -1,13 +1,50 @@
 import { randomUUID } from 'node:crypto';
-import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, extname, join } from 'node:path';
+import { basename, extname, join, resolve, sep } from 'node:path';
+import { readSettings } from '../settings/settings-store.js';
 import { DirectorError, type AssetKind, type AssetRecord } from '../types.js';
 
 // 素材库目录用函数式求值（每次操作读取当前 HOME）：
 // 模块级常量会在加载时定死路径，导致 vi.stubEnv('HOME') 测试隔离失效并污染真实 ~/.director
-function assetDir(): string {
+function defaultAssetDir(): string {
   return join(homedir(), '.director', 'assets');
+}
+
+function assetDir(): string {
+  const configured = readSettings().assetsDir.trim();
+  return configured ? resolve(configured) : defaultAssetDir();
+}
+
+// 素材库的真实目录，供后端调用系统文件管理器；路径不直接返回给浏览器。
+export function assetDirectoryPath(): string {
+  return assetDir();
+}
+
+// 将当前素材库完整迁移到新目录；目标必须不存在或为空，避免静默覆盖用户文件。
+export function migrateAssetDirectory(targetPath: string): void {
+  const source = assetDir();
+  const target = targetPath.trim() ? resolve(targetPath) : defaultAssetDir();
+  if (source === target) return;
+  if (target.startsWith(`${source}${sep}`)) {
+    throw new DirectorError('FILE_CONFLICT', '素材库目标目录不能位于当前素材库目录内部');
+  }
+  if (existsSync(target) && readdirSync(target).length > 0) {
+    throw new DirectorError('FILE_CONFLICT', `素材库目标目录必须为空：${target}`);
+  }
+  mkdirSync(target, { recursive: true });
+  if (!existsSync(source)) return;
+  const entries = readdirSync(source);
+  for (const name of entries) {
+    if (!statSync(join(source, name)).isFile()) {
+      throw new DirectorError('FILE_CONFLICT', `素材库包含不支持迁移的目录：${name}`);
+    }
+  }
+  for (const name of entries) {
+    copyFileSync(join(source, name), join(target, name));
+  }
+  // 复制完整素材库后清理旧目录，避免旧默认目录继续占位导致无法迁回。
+  rmSync(source, { recursive: true, force: true });
 }
 
 function indexPath(): string {

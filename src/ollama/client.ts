@@ -17,8 +17,67 @@ interface OllamaEmbedResponse {
   embeddings?: number[][];
 }
 
+const MIN_CONTEXT_TOKENS = 4096;
+const MAX_CONTEXT_TOKENS = 32_768;
+const OUTPUT_TOKEN_RESERVE = 1024;
+const ESTIMATED_IMAGE_TOKEN_BYTES = 768;
+// 临时诊断：仅将部分视觉模型层卸载到 GPU，其余层留在 CPU，验证显存压力是否缓解。
+const DIAGNOSTIC_NUM_GPU = 8;
+const DEFAULT_VISION_TIMEOUT_MS = 300_000;
+
 interface OllamaEmbeddingsLegacyResponse {
   embedding?: number[];
+}
+
+function roundContextSize(tokens: number): number {
+  const target = Math.max(MIN_CONTEXT_TOKENS, Math.ceil(tokens));
+  let size = MIN_CONTEXT_TOKENS;
+  while (size < target && size < MAX_CONTEXT_TOKENS) size *= 2;
+  return Math.min(size, MAX_CONTEXT_TOKENS);
+}
+
+// Ollama 没有在 /api/chat 前提供 tokenizer；图片 token 又取决于视觉模型的切图策略。
+// 因此首请求使用文件大小做保守估算，服务端若返回精确 n_prompt_tokens，再按该值重试一次。
+export function estimateImageContext(imageBytes: number, instruction: string): number {
+  const instructionTokens = Math.ceil(Buffer.byteLength(instruction, 'utf8') / 3);
+  const imageTokens = Math.max(512, Math.ceil(imageBytes / ESTIMATED_IMAGE_TOKEN_BYTES));
+  return roundContextSize(instructionTokens + imageTokens + OUTPUT_TOKEN_RESERVE);
+}
+
+function isTimeoutError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const record = err as { name?: unknown; message?: unknown };
+  const name = typeof record.name === 'string' ? record.name.toLowerCase() : '';
+  const message = typeof record.message === 'string' ? record.message.toLowerCase() : '';
+  return name === 'timeouterror' || name === 'aborterror' || message.includes('timeout') || message.includes('timed out');
+}
+
+function requestErrorDetail(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const cause = 'cause' in err ? err.cause : undefined;
+  const causeText = cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : '';
+  return causeText && causeText !== err.message ? `${err.message}: ${causeText}` : err.message;
+}
+
+function contextTokensFromError(body: string): number | null {
+  let value: unknown = body;
+  for (let i = 0; i < 3; i += 1) {
+    if (typeof value === 'string') {
+      try {
+        value = JSON.parse(value) as unknown;
+      } catch {
+        return null;
+      }
+    }
+    if (!value || typeof value !== 'object') return null;
+    const record = value as Record<string, unknown>;
+    if (record.type === 'exceed_context_size_error' && typeof record.n_prompt_tokens === 'number') {
+      return record.n_prompt_tokens;
+    }
+    if (!('error' in record)) return null;
+    value = record.error;
+  }
+  return null;
 }
 
 export class OllamaClient {
@@ -27,7 +86,7 @@ export class OllamaClient {
 
   constructor(baseUrl: string, opts: { timeoutMs?: number } = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
-    this.defaultTimeoutMs = opts.timeoutMs ?? 120_000; // 本地视觉模型推理通常较慢，给 2 分钟
+    this.defaultTimeoutMs = opts.timeoutMs ?? DEFAULT_VISION_TIMEOUT_MS; // 本地视觉模型含图像编码，默认给 5 分钟
   }
 
   // 列出已安装模型（设置面板视觉模型下拉数据源）
@@ -100,31 +159,46 @@ export class OllamaClient {
     instruction: string,
     opts: { timeoutMs?: number } = {},
   ): Promise<string> {
-    const b64 = readFileSync(imagePath).toString('base64');
-    let res: Response;
-    try {
-      res = await fetch(`${this.baseUrl}/api/chat`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: instruction, images: [b64] }],
-          stream: false,
-        }),
-        signal: AbortSignal.timeout(opts.timeoutMs ?? this.defaultTimeoutMs),
-      });
-    } catch {
-      throw new DirectorError('INVALID_PATCH', `无法连接 Ollama: ${this.baseUrl}`);
-    }
-    if (!res.ok) {
+    const image = readFileSync(imagePath);
+    const b64 = image.toString('base64');
+    let numCtx = estimateImageContext(image.length, instruction);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let res: Response;
+      try {
+        res = await fetch(`${this.baseUrl}/api/chat`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: 'user', content: instruction, images: [b64] }],
+            stream: false,
+            options: { num_ctx: numCtx, num_gpu: DIAGNOSTIC_NUM_GPU },
+          }),
+          signal: AbortSignal.timeout(opts.timeoutMs ?? this.defaultTimeoutMs),
+        });
+      } catch (err) {
+        if (isTimeoutError(err)) {
+          throw new DirectorError('INVALID_PATCH', `视觉模型推理超时（已等待 ${Math.round((opts.timeoutMs ?? this.defaultTimeoutMs) / 1000)} 秒）：${this.baseUrl}`);
+        }
+        throw new DirectorError('INVALID_PATCH', `无法连接 Ollama: ${this.baseUrl}（${requestErrorDetail(err)}）`);
+      }
+      if (res.ok) {
+        const data = (await res.json()) as OllamaChatResponse;
+        const content = data.message?.content?.trim() ?? '';
+        if (!content) {
+          throw new DirectorError('INVALID_PATCH', `Ollama 返回空结果（模型 ${model} 是否支持图像输入？）`);
+        }
+        return content;
+      }
+
       const text = await res.text();
+      const promptTokens = attempt === 0 ? contextTokensFromError(text) : null;
+      if (promptTokens !== null) {
+        numCtx = roundContextSize(promptTokens + OUTPUT_TOKEN_RESERVE);
+        continue;
+      }
       throw new DirectorError('INVALID_PATCH', `Ollama 调用失败(${res.status}): ${text.slice(0, 500)}`);
     }
-    const data = (await res.json()) as OllamaChatResponse;
-    const content = data.message?.content?.trim() ?? '';
-    if (!content) {
-      throw new DirectorError('INVALID_PATCH', `Ollama 返回空结果（模型 ${model} 是否支持图像输入？）`);
-    }
-    return content;
+    throw new DirectorError('INVALID_PATCH', `Ollama 调用失败：上下文空间不足（模型 ${model}）`);
   }
 }

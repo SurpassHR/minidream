@@ -21,7 +21,7 @@ afterEach(() => {
 
 const DEFAULT_SETTINGS = {
   comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false,
-  ollamaUrl: '', ollamaModel: '', ollamaEmbedModel: '',
+  ollamaUrl: '', ollamaModel: '', ollamaEmbedModel: '', assetsDir: '',
 };
 
 describe('readSettings', () => {
@@ -126,6 +126,17 @@ describe('主题偏好', () => {
     expect(readSettings().theme).toBe('light');
     const s = saveSettings({ theme: 'sepia' } as never);
     expect(s.theme).toBe('light');
+  });
+});
+
+describe('素材库目录', () => {
+  it("缺失字段返回默认空路径（继续使用 ~/.director/assets）", () => {
+    expect(readSettings().assetsDir).toBe('');
+  });
+
+  it('保存并读回素材库目录', () => {
+    saveSettings({ assetsDir: '/tmp/director-assets' });
+    expect(readSettings().assetsDir).toBe('/tmp/director-assets');
   });
 });
 
