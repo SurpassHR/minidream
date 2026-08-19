@@ -59,6 +59,18 @@ describe('API Ollama 图像转提示词', () => {
     expect(res.json().models).toEqual(['llava:13b', 'qwen2.5vl:7b']);
   });
 
+  it('GET /api/ollama/models?url= 用查询参数地址拉取（未保存地址也能预览）', async () => {
+    // 清空已保存地址：不带 url 参数时返回空列表
+    saveSettings({ ollamaUrl: '' });
+    const empty = await a.inject({ method: 'GET', url: '/api/ollama/models' });
+    expect(empty.statusCode).toBe(200);
+    expect(empty.json().models).toEqual([]);
+    // 带 url 查询参数 → 从该地址拉取（设置面板「获取模型」未保存前即可预览）
+    const res = await a.inject({ method: 'GET', url: `/api/ollama/models?url=${encodeURIComponent(ollamaUrl)}` });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().models).toEqual(['llava:13b', 'qwen2.5vl:7b']);
+  });
+
   it('POST /api/ollama/image-to-prompt 读取素材图片调用 Ollama 并返回描述', async () => {
     const assets = (await a.inject({ method: 'GET', url: '/api/assets' })).json().assets as Array<{ id: string; kind: string }>;
     const img = assets.find((x) => x.kind === 'img');

@@ -901,8 +901,10 @@ app.post('/api/designs/:id/generate', async (req, reply) => {
 
 // —— Ollama 本地视觉模型：图像 → 提示词（物体设计器「图像转描述」）——
 // 配置（地址 + 视觉模型）在全局设置 settings.json；模型列表供设置面板下拉
-app.get('/api/ollama/models', async () => {
-  const { ollamaUrl } = readSettings();
+// url 查询参数：设置面板「获取模型」用当前输入框地址拉取（未保存前即可预览）；缺省回退已保存地址
+app.get('/api/ollama/models', async (req) => {
+  const { url } = req.query as { url?: string };
+  const ollamaUrl = (url ?? '').trim() || readSettings().ollamaUrl;
   if (!ollamaUrl) return { models: [] };
   try {
     return { models: await new OllamaClient(ollamaUrl).listModels() };

@@ -275,9 +275,11 @@ export const client = {
   },
 
   // —— Ollama 本地视觉模型（图像转提示词）——
-  // 已安装模型列表（设置面板视觉模型下拉数据源；Ollama 未配置/不可达返回空列表）
-  async listOllamaModels(): Promise<string[]> {
-    const r = await req<{ models: string[] }>('/api/ollama/models');
+  // 已安装模型列表（设置面板视觉模型下拉数据源；Ollama 未配置/不可达返回空列表）。
+  // url 可选：传设置面板当前输入框地址（未保存前即可拉取）；缺省用已保存的 ollamaUrl
+  async listOllamaModels(url?: string): Promise<string[]> {
+    const q = url && url.trim() ? `?url=${encodeURIComponent(url.trim())}` : '';
+    const r = await req<{ models: string[] }>(`/api/ollama/models${q}`);
     return r.models ?? [];
   },
 

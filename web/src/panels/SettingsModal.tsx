@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { client } from '../api/client';
 import { Icon, type IconName } from '../icons';
 import type { AppSettings } from '../types';
@@ -17,7 +17,8 @@ const ROLE_PROMPT_LABELS: Record<RolePromptKey, string> = {
 const GLOBAL_PROMPT_KEYS: RolePromptKey[] = ['objectDesigner'];
 
 // 全局设置弹窗：左侧标题导航 + 右侧配置项（master-detail）。
-// 分组：服务连接（ComfyUI / Ollama）、AI 对话（模型与思考）、内容（提示词库）。
+// 分组：服务连接（ComfyUI / 模型与 API）、内容（提示词库）。
+// 「模型与 API」合并对话 Provider 与 Ollama 本地（同为模型+API 地址配置），区内子导航切换。
 // 持久化到后端 ~/.director/settings.json（用户级，跨项目）；模型/思考强度是「默认值」，
 // AgentPanel 内的临时切换不回写这里。
 const THINKING_LEVELS = [
@@ -31,20 +32,16 @@ const THINKING_LEVELS = [
   { value: 'max', label: '思考：最大' },
 ];
 
-// 左侧导航定义：分组 + 条目（id 对应右侧 section，点击切换）
-type SectionId = 'comfy' | 'ollama' | 'model' | 'prompts';
+// 左侧导航定义：分组 + 条目（id 对应右侧 section，点击切换）。
+// 对话 Provider 与 Ollama 本地同属「模型 + API 地址」配置，合并为一个入口（参考 LLM 配置面板），
+// 区内再用子导航 master-detail 切换两个模型源。
+type SectionId = 'comfy' | 'llm' | 'prompts';
 const NAV_GROUPS: Array<{ title: string; items: Array<{ id: SectionId; icon: IconName; label: string; desc: string }> }> = [
   {
     title: '服务连接',
     items: [
       { id: 'comfy', icon: 'monitor', label: 'ComfyUI 生成', desc: '文生图 / 视频服务' },
-      { id: 'ollama', icon: 'brain', label: 'Ollama 视觉模型', desc: '图像转提示词' },
-    ],
-  },
-  {
-    title: 'AI 对话',
-    items: [
-      { id: 'model', icon: 'bot', label: '模型与思考', desc: '默认模型 / 思考强度' },
+      { id: 'llm', icon: 'bot', label: '模型与 API', desc: '对话模型 / Ollama 本地' },
     ],
   },
   {
@@ -65,6 +62,8 @@ export function SettingsModal(props: {
   onError: (msg: string) => void;
 }) {
   const [activeSec, setActiveSec] = useState<SectionId>('comfy');
+  // 模型与 API 区内子导航（master-detail）：对话 Provider / Ollama 本地
+  const [activeLlm, setActiveLlm] = useState<'provider' | 'ollama'>('provider');
   const [comfyUrl, setComfyUrl] = useState(props.settings.comfyUrl);
   const [agentModel, setAgentModel] = useState(props.settings.agentModel);
   const [agentThinking, setAgentThinking] = useState(props.settings.agentThinking);
@@ -73,19 +72,51 @@ export function SettingsModal(props: {
   const [promptEntries, setPromptEntries] = useState<Array<{ key: RolePromptKey; value: string }>>([]);
   const [armorBreak, setArmorBreak] = useState(props.settings.armorBreak ?? '');
   const [armorBreakEnabled, setArmorBreakEnabled] = useState(props.settings.armorBreakEnabled ?? false);
-  // Ollama 本地视觉模型（图像转提示词）：地址 + 视觉模型名；模型列表用于下拉（datalist）
+  // Ollama 本地视觉模型（图像转提示词）：地址 + 视觉模型名；模型列表来自「获取模型」拉取的已安装模型
   const [ollamaUrl, setOllamaUrl] = useState(props.settings.ollamaUrl ?? '');
   const [ollamaModel, setOllamaModel] = useState(props.settings.ollamaModel ?? '');
   // Ollama embedding 模型（项目 RAG 向量检索用）
   const [ollamaEmbedModel, setOllamaEmbedModel] = useState(props.settings.ollamaEmbedModel ?? '');
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [ollamaLoading, setOllamaLoading] = useState(false);
+  const [ollamaStatus, setOllamaStatus] = useState('');
+  // 上次成功拉取模型的地址（同地址去重；失败/空结果时重置允许重试）
+  const lastFetchedUrl = useRef('');
   const [saving, setSaving] = useState(false);
+
+  // 拉取已安装 Ollama 模型：优先用传入地址（当前输入框未保存前即可预览）；
+  // 同地址去重避免重复请求（失焦 + 按钮双击）；失败/空结果重置以便重试
+  const loadOllamaModels = (url: string) => {
+    const target = url.trim();
+    if (!target) {
+      setOllamaModels([]);
+      setOllamaStatus('');
+      return;
+    }
+    if (target === lastFetchedUrl.current) return;
+    lastFetchedUrl.current = target;
+    setOllamaLoading(true);
+    setOllamaStatus('正在获取模型…');
+    void client.listOllamaModels(target)
+      .then((models) => {
+        setOllamaModels(models);
+        setOllamaStatus(models.length > 0 ? `已获取 ${models.length} 个模型` : '未获取到模型：请确认 Ollama 服务已启动且地址正确');
+        if (models.length === 0) lastFetchedUrl.current = '';
+      })
+      .catch((err) => {
+        lastFetchedUrl.current = '';
+        setOllamaModels([]);
+        setOllamaStatus(`获取失败：${err instanceof Error ? err.message : '无法连接 Ollama'}`);
+      })
+      .finally(() => setOllamaLoading(false));
+  };
 
   // 打开时同步外部 settings（切换项目/外部变更后重新打开取最新）；
   // 始终显示 3 角色条目：值 = 存储的 prompts 对应键 ?? 内置默认
   useEffect(() => {
     if (props.open) {
       setActiveSec('comfy');
+      setActiveLlm('provider');
       setComfyUrl(props.settings.comfyUrl);
       setAgentModel(props.settings.agentModel);
       setAgentThinking(props.settings.agentThinking);
@@ -100,9 +131,12 @@ export function SettingsModal(props: {
       setOllamaUrl(props.settings.ollamaUrl ?? '');
       setOllamaModel(props.settings.ollamaModel ?? '');
       setOllamaEmbedModel(props.settings.ollamaEmbedModel ?? '');
-      // 打开时拉取已安装模型（datalist 数据源）；失败静默（输入框仍可手填）
+      // 打开时自动拉取已安装模型（下拉数据源；地址为空则跳过）
       setOllamaModels([]);
-      void client.listOllamaModels().then(setOllamaModels).catch(() => setOllamaModels([]));
+      setOllamaStatus('');
+      setOllamaLoading(false);
+      lastFetchedUrl.current = '';
+      loadOllamaModels(props.settings.ollamaUrl ?? '');
     }
   }, [props.open, props.settings]);
 
@@ -195,82 +229,127 @@ export function SettingsModal(props: {
               </label>
             </section>
 
-            {/* —— Ollama 本地视觉模型 —— */}
-            <section className={`settings-sec${activeSec === 'ollama' ? ' active' : ''}`} data-testid="sec-ollama">
+            {/* —— 模型与 API：对话 Provider + Ollama 本地（区内 master-detail） —— */}
+            <section className={`settings-sec${activeSec === 'llm' ? ' active' : ''}`} data-testid="sec-llm">
               <div className="settings-sec-head">
-                <div className="sec-eyebrow">Local Vision · 02</div>
-                <div className="sec-title">Ollama 视觉模型</div>
-                <div className="sec-desc">用本地视觉模型把参考图转成外观描述（物体设计器「图像转描述」）。</div>
+                <div className="sec-eyebrow">Models & API · 02</div>
+                <div className="sec-title">模型与 API 配置</div>
+                <div className="sec-desc">对话 Provider 与本地 Ollama 同属「模型 + API 地址」配置，统一在此管理。</div>
               </div>
-              <label className="role-field">
-                <span className="role-field-label">OLLAMA 地址</span>
-                <input
-                  className="ne-input" data-testid="ollama-url"
-                  placeholder="http://127.0.0.1:11434"
-                  value={ollamaUrl}
-                  onChange={(e) => setOllamaUrl(e.target.value)}
-                />
-                <span className="role-field-hint">本地 Ollama 服务地址；未配置时物体设计器的图像转描述不可用</span>
-              </label>
-              <label className="role-field">
-                <span className="role-field-label">视觉模型</span>
-                <input
-                  className="ne-input" data-testid="ollama-model"
-                  list="ollama-models" placeholder="llava / qwen2.5vl…"
-                  value={ollamaModel}
-                  onChange={(e) => setOllamaModel(e.target.value)}
-                />
-                <datalist id="ollama-models">
-                  {ollamaModels.map((m) => <option key={m} value={m} />)}
-                </datalist>
-                <span className="role-field-hint">支持图像的本地视觉模型（可从已安装模型下拉选择，或手动填写）</span>
-              </label>
-              <label className="role-field">
-                <span className="role-field-label">Embedding 模型（RAG 知识库检索）</span>
-                <input
-                  className="ne-input" data-testid="ollama-embed-model"
-                  list="ollama-models" placeholder="nomic-embed-text / bge-m3…"
-                  value={ollamaEmbedModel}
-                  onChange={(e) => setOllamaEmbedModel(e.target.value)}
-                />
-                <span className="role-field-hint">剧本项目的 RAG 向量检索用；未配置时知识库检索自动降级（对话不受影响）</span>
-              </label>
-            </section>
-
-            {/* —— 模型与思考 —— */}
-            <section className={`settings-sec${activeSec === 'model' ? ' active' : ''}`} data-testid="sec-model">
-              <div className="settings-sec-head">
-                <div className="sec-eyebrow">Agent · 03</div>
-                <div className="sec-title">模型与推理</div>
-                <div className="sec-desc">AGENT 面板与对话式的默认模型与推理深度；面板内可临时切换，不回写这里。</div>
+              <div className="llm-layout">
+                {/* 子导航：两个模型源（参考 LLM 配置面板的 provider 列表） */}
+                <div className="llm-tabs">
+                  <button
+                    type="button" className={`llm-tab${activeLlm === 'provider' ? ' active' : ''}`}
+                    data-testid="llm-tab-provider"
+                    onClick={() => setActiveLlm('provider')}
+                  >
+                    <span className="llm-tab-ico"><Icon name="bot" /></span>
+                    <span className="llm-tab-text">
+                      <span className="llm-tab-label">对话 Provider</span>
+                      <span className="llm-tab-desc">默认模型 / 思考</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button" className={`llm-tab${activeLlm === 'ollama' ? ' active' : ''}`}
+                    data-testid="llm-tab-ollama"
+                    onClick={() => setActiveLlm('ollama')}
+                  >
+                    <span className="llm-tab-ico"><Icon name="brain" /></span>
+                    <span className="llm-tab-text">
+                      <span className="llm-tab-label">Ollama 本地</span>
+                      <span className="llm-tab-desc">地址 / 视觉 / Embedding</span>
+                    </span>
+                  </button>
+                </div>
+                {/* 对话 Provider 配置（默认模型 + 思考强度） */}
+                <div className={`llm-pane${activeLlm === 'provider' ? ' active' : ''}`} data-testid="llm-pane-provider">
+                  <label className="role-field">
+                    <span className="role-field-label">默认模型</span>
+                    <select
+                      className="ne-input"
+                      value={agentModel}
+                      onChange={(e) => setAgentModel(e.target.value)}
+                    >
+                      <option value="">默认模型（pi 配置）</option>
+                      {props.models.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.provider}/{m.id.split('/').slice(1).join('/')}{m.thinking ? ' · 思考' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="role-field-hint">AGENT 面板与对话式的默认模型（面板内可临时切换）</span>
+                  </label>
+                  <label className="role-field">
+                    <span className="role-field-label">思考强度</span>
+                    <select
+                      className="ne-input"
+                      value={agentThinking}
+                      onChange={(e) => setAgentThinking(e.target.value)}
+                    >
+                      {THINKING_LEVELS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </select>
+                    <span className="role-field-hint">pi --thinking：控制模型推理深度（越高思考越充分，响应越慢）</span>
+                  </label>
+                </div>
+                {/* Ollama 本地配置（地址 + 模型拉取 + 视觉/Embedding 下拉） */}
+                <div className={`llm-pane${activeLlm === 'ollama' ? ' active' : ''}`} data-testid="llm-pane-ollama">
+                  <label className="role-field">
+                    <span className="role-field-label">OLLAMA 地址</span>
+                    <div className="ollama-url-row">
+                      <input
+                        className="ne-input" data-testid="ollama-url"
+                        placeholder="http://127.0.0.1:11434"
+                        value={ollamaUrl}
+                        onChange={(e) => setOllamaUrl(e.target.value)}
+                        onBlur={() => loadOllamaModels(ollamaUrl)}
+                      />
+                      <button
+                        type="button" className="btn-ghost ollama-fetch-btn" data-testid="ollama-refresh"
+                        disabled={ollamaLoading || !ollamaUrl.trim()}
+                        onClick={() => loadOllamaModels(ollamaUrl)}
+                      >{ollamaLoading ? '获取中…' : '获取模型'}</button>
+                    </div>
+                    <span className="role-field-hint">本地 Ollama 服务地址；未配置时物体设计器的图像转描述不可用。修改地址后失焦自动获取，或点「获取模型」手动刷新</span>
+                  </label>
+                  {ollamaStatus && (
+                    <span
+                      className={`role-field-hint ollama-status${/^(获取失败|未获取到)/.test(ollamaStatus) ? ' err' : ''}`}
+                      data-testid="ollama-models-status"
+                    >{ollamaStatus}</span>
+                  )}
+                  <label className="role-field">
+                    <span className="role-field-label">视觉模型</span>
+                    <select
+                      className="ne-input" data-testid="ollama-model"
+                      value={ollamaModel}
+                      onChange={(e) => setOllamaModel(e.target.value)}
+                    >
+                      <option value="">— 请选择视觉模型 —</option>
+                      {ollamaModel && !ollamaModels.includes(ollamaModel) && (
+                        <option value={ollamaModel}>{ollamaModel}（当前值）</option>
+                      )}
+                      {ollamaModels.map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <span className="role-field-hint">支持图像的本地视觉模型（来自「获取模型」拉取的已安装列表）</span>
+                  </label>
+                  <label className="role-field">
+                    <span className="role-field-label">Embedding 模型（RAG 知识库检索）</span>
+                    <select
+                      className="ne-input" data-testid="ollama-embed-model"
+                      value={ollamaEmbedModel}
+                      onChange={(e) => setOllamaEmbedModel(e.target.value)}
+                    >
+                      <option value="">— 请选择 Embedding 模型 —</option>
+                      {ollamaEmbedModel && !ollamaModels.includes(ollamaEmbedModel) && (
+                        <option value={ollamaEmbedModel}>{ollamaEmbedModel}（当前值）</option>
+                      )}
+                      {ollamaModels.map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <span className="role-field-hint">剧本项目的 RAG 向量检索用；未配置时知识库检索自动降级（对话不受影响）</span>
+                  </label>
+                </div>
               </div>
-              <label className="role-field">
-                <span className="role-field-label">默认模型</span>
-                <select
-                  className="ne-input"
-                  value={agentModel}
-                  onChange={(e) => setAgentModel(e.target.value)}
-                >
-                  <option value="">默认模型（pi 配置）</option>
-                  {props.models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.provider}/{m.id.split('/').slice(1).join('/')}{m.thinking ? ' · 思考' : ''}
-                    </option>
-                  ))}
-                </select>
-                <span className="role-field-hint">AGENT 面板与对话式的默认模型（面板内可临时切换）</span>
-              </label>
-              <label className="role-field">
-                <span className="role-field-label">思考强度</span>
-                <select
-                  className="ne-input"
-                  value={agentThinking}
-                  onChange={(e) => setAgentThinking(e.target.value)}
-                >
-                  {THINKING_LEVELS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
-                <span className="role-field-hint">pi --thinking：控制模型推理深度（越高思考越充分，响应越慢）</span>
-              </label>
             </section>
 
             {/* —— 提示词库 —— */}
