@@ -171,6 +171,37 @@ describe('App 布局骨架', () => {
     expect(drawer?.querySelector('.drawer-content')).toHaveClass('drawer-content-enter');
   });
 
+  it('关闭任务队列时保留任务内容直到抽屉收起', () => {
+    render(<App />);
+    const toggle = screen.getByTestId('task-queue-toggle');
+    fireEvent.click(toggle);
+    const drawer = screen.getByTestId('task-drawer');
+    expect(drawer).toHaveClass('open', 'workspace-drawer-tasks');
+
+    fireEvent.click(toggle);
+
+    expect(drawer).not.toHaveClass('open');
+    expect(drawer).toHaveClass('workspace-drawer-tasks');
+    expect(drawer.querySelector('.drawer-content-tasks')).toBeInTheDocument();
+    expect(drawer.querySelector('.drawer-content-assets')).not.toBeInTheDocument();
+  });
+
+  it('故事向导关闭任务队列时也保留任务内容', async () => {
+    window.location.hash = '#/story-teller';
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('story-teller-view')).toBeInTheDocument());
+
+    const toggle = screen.getByTestId('task-queue-toggle');
+    fireEvent.click(toggle);
+    const drawer = screen.getByTestId('task-drawer');
+    fireEvent.click(toggle);
+
+    expect(drawer).not.toHaveClass('open');
+    expect(drawer).toHaveClass('workspace-drawer-tasks');
+    expect(drawer.querySelector('.drawer-content-assets')).not.toBeInTheDocument();
+    window.location.hash = '';
+  });
+
   it('顶栏设置按钮打开设置弹窗', async () => {
     render(<App />);
     fireEvent.click(screen.getByTestId('settings-open'));

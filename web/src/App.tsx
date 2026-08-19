@@ -58,6 +58,8 @@ export default function App() {
   // 全局素材抽屉：非模态侧栏，打开时不遮挡画布/对话
   const [assetDrawerOpen, setAssetDrawerOpen] = useState(false);
   const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
+  // 抽屉关闭动画期间保留最后显示的面板，避免内容先切回素材库再收起
+  const [drawerMode, setDrawerMode] = useState<'assets' | 'tasks'>('assets');
   // agent 活动回传（MCP 工具调用 → WS agent-activity）：显示在 AGENT 面板顶部
   const [agentActivity, setAgentActivity] = useState<{ text: string; at: number } | null>(null);
 
@@ -432,14 +434,14 @@ export default function App() {
           data-testid="asset-library-toggle"
           aria-expanded={assetDrawerOpen}
           title="打开全局素材库（可拖到画布或对话）"
-          onClick={() => { setAssetDrawerOpen((open) => !open); setTaskDrawerOpen(false); }}
+          onClick={() => { setDrawerMode('assets'); setAssetDrawerOpen((open) => !open); setTaskDrawerOpen(false); }}
         ><Icon name="image" />素材库</button>
         <button
           className={`btn-ghost task-queue-toggle${taskDrawerOpen ? ' active' : ''}`}
           data-testid="task-queue-toggle"
           aria-expanded={taskDrawerOpen}
           title="查看全部后台任务"
-          onClick={() => { setTaskDrawerOpen((open) => !open); setAssetDrawerOpen(false); }}
+          onClick={() => { setDrawerMode('tasks'); setTaskDrawerOpen((open) => !open); setAssetDrawerOpen(false); }}
         ><Icon name="text-lines" />任务队列{taskRecords.size > 0 && <span className="task-queue-count" data-testid="task-queue-count">{[...taskRecords.values()].filter((task) => task.status === 'queued' || task.status === 'running').length}</span>}</button>
         <button
           className="btn-ghost theme-toggle"
@@ -485,7 +487,7 @@ export default function App() {
             ) : <ProjectEmptyState />}
             <WorkspaceDrawer
               open={assetDrawerOpen || taskDrawerOpen}
-              mode={taskDrawerOpen ? 'tasks' : 'assets'}
+              mode={drawerMode}
               onClose={() => { setAssetDrawerOpen(false); setTaskDrawerOpen(false); }}
               items={assets ?? []}
               tasks={[...taskRecords.values()]}
@@ -524,7 +526,7 @@ export default function App() {
           ) : <ProjectEmptyState />}
           <WorkspaceDrawer
             open={assetDrawerOpen || taskDrawerOpen}
-            mode={taskDrawerOpen ? 'tasks' : 'assets'}
+            mode={drawerMode}
             onClose={() => { setAssetDrawerOpen(false); setTaskDrawerOpen(false); }}
             items={assets ?? []}
             tasks={[...taskRecords.values()]}
@@ -546,7 +548,7 @@ export default function App() {
           ) : <ProjectEmptyState />}
           <WorkspaceDrawer
             open={assetDrawerOpen || taskDrawerOpen}
-            mode={taskDrawerOpen ? 'tasks' : 'assets'}
+            mode={drawerMode}
             onClose={() => { setAssetDrawerOpen(false); setTaskDrawerOpen(false); }}
             items={assets ?? []}
             tasks={[...taskRecords.values()]}
