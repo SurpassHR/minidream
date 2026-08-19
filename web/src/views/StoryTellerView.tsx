@@ -14,9 +14,9 @@ import { ROLE_PROMPT_KEYS } from './roles';
 // 每项目一套完全自定义上下文，替代全局提示词库的 storyTeller/storySummarize（设置弹窗已瘦身）。
 // story 状态只需 completedAt（完成横幅/剧本栏）；answers 由总结成稿写入后端。
 
-// 剧本项目加载失败/空库时的兜底板（后端正常会自动落「未命名项目」，此处仅防御）
+// 剧本项目加载失败/空库时的兜底板（后端正常会自动落默认项目，此处仅防御）
 const VIRTUAL_BOARD: StoryBoard = {
-  id: 'default', name: '未命名项目', createdAt: 0, updatedAt: 0,
+  id: 'default', name: 'Minimax-H3 Prompt Writer', createdAt: 0, updatedAt: 0,
   systemPrompts: {}, ragEnabled: false, ragAssets: [],
 };
 

@@ -2,7 +2,7 @@
 // 每个项目一套完全自定义的提示词（storyTeller / storySummarize；未定义键回退内置默认），
 // 以及一组知识库素材（引用全局素材库的 txt 资产 id，RAG 向量检索用）。
 // 持久化到 <projectDir>/.director/story-boards.json；缺失/损坏视为空库（防御式），
-// 空库在 listBoards 时自动落一个「未命名项目」默认板（保证会话有归组目标、旧体验不退化）。
+// 空库在 listBoards 时自动落一个 Minimax-H3 Prompt Writer 默认板（保证会话有归组目标）。
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -23,7 +23,8 @@ export interface StoryBoard {
   ragAssets: string[];       // 素材库 asset id（txt 文本知识文件）
 }
 
-export const DEFAULT_BOARD_NAME = '未命名项目';
+export const DEFAULT_BOARD_NAME = 'Minimax-H3 Prompt Writer';
+const LEGACY_DEFAULT_BOARD_NAME = '未命名项目';
 
 function boardsFile(projectDir: string): string {
   return join(projectDir, '.director', 'story-boards.json');
@@ -87,10 +88,19 @@ function writeBoards(projectDir: string, boards: StoryBoard[]): StoryBoard[] {
   return boards;
 }
 
-// 列表：空库自动落一个「未命名项目」默认板并返回（写盘保证下次读稳定）
+// 列表：空库自动落默认板；兼容迁移未自定义的旧默认板名称。
 export function listBoards(projectDir: string): StoryBoard[] {
   const boards = readBoards(projectDir);
   if (boards.length === 0) return writeBoards(projectDir, [defaultBoard()]);
+  const migrated = boards.map((board) => {
+    const isUntouchedLegacyDefault =
+      board.name === LEGACY_DEFAULT_BOARD_NAME &&
+      Object.keys(board.systemPrompts).length === 0 &&
+      !board.ragEnabled &&
+      board.ragAssets.length === 0;
+    return isUntouchedLegacyDefault ? { ...board, name: DEFAULT_BOARD_NAME, updatedAt: Date.now() } : board;
+  });
+  if (migrated.some((board, i) => board.name !== boards[i]!.name)) return writeBoards(projectDir, migrated);
   return boards;
 }
 

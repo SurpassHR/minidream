@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe('boards-store 剧本项目', () => {
-  it('空库列表自动落「未命名项目」默认板', () => {
+  it('空库列表自动落 Minimax-H3 Prompt Writer 默认板', () => {
     const boards = listBoards(dir);
     expect(boards).toHaveLength(1);
     expect(boards[0]!.name).toBe(DEFAULT_BOARD_NAME);
@@ -27,6 +27,26 @@ describe('boards-store 剧本项目', () => {
     expect(boards[0]!.ragEnabled).toBe(false);
     // 再次读取稳定（已落盘）
     expect(listBoards(dir)[0]!.id).toBe(boards[0]!.id);
+  });
+
+  it('读取旧的未命名默认板时自动迁移名称', () => {
+    mkdirSync(join(dir, '.director'), { recursive: true });
+    writeFileSync(join(dir, '.director', 'story-boards.json'), JSON.stringify([{
+      id: 'legacy-default', name: '未命名项目', createdAt: 1, updatedAt: 1,
+      systemPrompts: {}, ragEnabled: false, ragAssets: [],
+    }]));
+
+    const boards = listBoards(dir);
+    expect(boards[0]!.name).toBe('Minimax-H3 Prompt Writer');
+    expect(listBoards(dir)[0]!.name).toBe('Minimax-H3 Prompt Writer');
+  });
+
+  it('已有自定义内容的未命名项目不自动迁移', () => {
+    const boards = createBoard(dir, '未命名项目');
+    const board = boards[0]!;
+    saveBoardPrompts(dir, board.id, { storyTeller: '自定义编剧' });
+
+    expect(listBoards(dir)[0]!.name).toBe('未命名项目');
   });
 
   it('创建 / 重命名 / 查找 / 删除', () => {

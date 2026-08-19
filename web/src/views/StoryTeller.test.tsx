@@ -6,7 +6,8 @@ const STORY_API: { story: { step: number; answers: Record<string, string>; compl
 // GET /api/story 失败开关：置 true 后 GET 分支返回 500（模拟切项目后加载失败）
 let GET_STORY_FAIL = false;
 let SESSION_CREATE_COUNT = 0;
-let BOARD_NAME = '未命名项目';
+let BOARD_NAME = 'Minimax-H3 Prompt Writer';
+let RETURN_EMPTY_BOARDS = false;
 
 beforeEach(() => {
   localStorage.clear();
@@ -24,6 +25,9 @@ beforeEach(() => {
       }), { status: 201 });
     }
     if (u.includes('/api/story/boards')) {
+      if (RETURN_EMPTY_BOARDS) {
+        return new Response(JSON.stringify({ boards: [] }), { status: 200 });
+      }
       if (init?.method === 'PATCH') {
         const body = JSON.parse(String(init.body)) as { name: string };
         BOARD_NAME = body.name;
@@ -75,7 +79,8 @@ describe('StoryTellerView 对话式', () => {
     STORY_API.story = { step: 0, answers: {}, completedAt: null };
     GET_STORY_FAIL = false;
     SESSION_CREATE_COUNT = 0;
-    BOARD_NAME = '未命名项目';
+    BOARD_NAME = 'Minimax-H3 Prompt Writer';
+    RETURN_EMPTY_BOARDS = false;
   });
 
   it('仅对话式：无模式 tab 与向导元素，显示聊天区', async () => {
@@ -88,7 +93,15 @@ describe('StoryTellerView 对话式', () => {
     expect(screen.getByTestId('story-teller-view').className).toContain('chat-mode');
   });
 
-  it('初始未命名项目可重命名，并立即更新项目树标题', async () => {
+  it('剧本项目列表为空时使用 Minimax-H3 Prompt Writer 兜底项目', async () => {
+    RETURN_EMPTY_BOARDS = true;
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '上下文' }));
+    expect(screen.getByText('剧本项目 · Minimax-H3 Prompt Writer')).toBeInTheDocument();
+  });
+
+  it('初始默认项目可重命名，并立即更新项目树标题', async () => {
     render(<StoryTellerView projectName="demo" />);
     await waitFor(() => expect(screen.getByTestId('board-item-b1')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('board-rename-b1'));
