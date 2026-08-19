@@ -182,7 +182,11 @@ export function SettingsModal(props: {
 
   return (
     <div className="dialog-mask" onClick={props.onClose}>
-      <div className="dialog dialog-wide dialog-settings" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="dialog dialog-wide dialog-settings"
+        style={{ width: '760px', height: 'min(680px, 84vh)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="dialog-title"><Icon name="gear" />设置</div>
         <div className="settings-layout">
           {/* 左侧标题导航：分组列表，点击切换右侧配置项 */}

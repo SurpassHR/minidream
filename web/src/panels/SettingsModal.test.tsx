@@ -52,6 +52,20 @@ describe('SettingsModal', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it('设置面板固定宽高，切换内容时外框尺寸规则不变', () => {
+    const { container } = render(<SettingsModal
+      open settings={DEFAULT_SETTINGS} models={[]}
+      onClose={() => {}} onSaved={() => {}} onError={() => {}}
+    />);
+    const dialog = container.querySelector('.dialog-settings') as HTMLElement;
+    expect(dialog).toHaveStyle({ width: '760px', height: 'min(680px, 84vh)' });
+    expect(container.querySelector('.settings-layout')).toBeInTheDocument();
+    expect(container.querySelector('.dialog-actions')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('nav-prompts'));
+    expect(dialog).toHaveStyle({ width: '760px', height: 'min(680px, 84vh)' });
+  });
+
   it('关闭时点击遮罩触发 onClose', () => {
     const onClose = vi.fn();
     const { container } = render(<SettingsModal
