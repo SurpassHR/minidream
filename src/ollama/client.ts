@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { DirectorError } from '../types.js';
+import sharp from 'sharp';
 
 // Ollama 本地视觉模型客户端：图像 → 提示词（物体设计器「图像转描述」用）。
 // 兼容 Ollama REST API（/api/tags 列表、/api/chat 多模态对话，images 传 base64）。
@@ -21,8 +22,10 @@ const MIN_CONTEXT_TOKENS = 4096;
 const MAX_CONTEXT_TOKENS = 32_768;
 const OUTPUT_TOKEN_RESERVE = 1024;
 const ESTIMATED_IMAGE_TOKEN_BYTES = 768;
-// 临时诊断：仅将部分视觉模型层卸载到 GPU，其余层留在 CPU，验证显存压力是否缓解。
-const DIAGNOSTIC_NUM_GPU = 8;
+// 可选诊断参数：仅在显式设置时传给 Ollama；未设置时交给 Ollama 自动决定卸载策略。
+// 注意：num_gpu 表示卸载到 GPU 的层数，不是 GPU 编号或 GPU 数量。
+const OLLAMA_NUM_GPU_ENV = 'DIRECTOR_OLLAMA_NUM_GPU';
+const MAX_VISION_IMAGE_EDGE = 1536;
 const DEFAULT_VISION_TIMEOUT_MS = 300_000;
 
 interface OllamaEmbeddingsLegacyResponse {
@@ -57,6 +60,34 @@ function requestErrorDetail(err: unknown): string {
   const cause = 'cause' in err ? err.cause : undefined;
   const causeText = cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : '';
   return causeText && causeText !== err.message ? `${err.message}: ${causeText}` : err.message;
+}
+
+function configuredNumGpu(): number | undefined {
+  const raw = process.env[OLLAMA_NUM_GPU_ENV]?.trim();
+  if (!raw) return undefined;
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+async function resizeVisionImage(image: Buffer): Promise<Buffer> {
+  try {
+    const transformer = sharp(image);
+    const metadata = await transformer.metadata();
+    const width = metadata.width ?? 0;
+    const height = metadata.height ?? 0;
+    if (!width || !height || Math.max(width, height) <= MAX_VISION_IMAGE_EDGE) return image;
+    return transformer
+      .resize({
+        width: MAX_VISION_IMAGE_EDGE,
+        height: MAX_VISION_IMAGE_EDGE,
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .toBuffer();
+  } catch {
+    // 无法解析时保留原始字节，让 Ollama 返回原有的图像格式错误。
+    return image;
+  }
 }
 
 function contextTokensFromError(body: string): number | null {
@@ -152,6 +183,23 @@ export class OllamaClient {
     return embeddings;
   }
 
+  // 显式卸载当前模型 runner。keep_alive=0 只保证当前请求结束后卸载；
+  // 请求前再执行一次，可清理来自旧请求/其他客户端残留的视觉模型显存。
+  private async unloadModel(model: string): Promise<void> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model, stream: false, keep_alive: 0 }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      // 消费响应体，避免保持连接；卸载失败不遮蔽后续真正的视觉请求错误。
+      await res.text();
+    } catch {
+      // 某些旧版/代理可能不支持该探针；后续 /api/chat 仍会给出实际错误。
+    }
+  }
+
   // 图像 → 提示词：读取本地图片 → base64 → /api/chat（stream:false）→ 返回模型描述文本
   async imageToPrompt(
     model: string,
@@ -159,10 +207,13 @@ export class OllamaClient {
     instruction: string,
     opts: { timeoutMs?: number } = {},
   ): Promise<string> {
-    const image = readFileSync(imagePath);
+    await this.unloadModel(model);
+    const sourceImage = readFileSync(imagePath);
+    const image = await resizeVisionImage(sourceImage);
     const b64 = image.toString('base64');
     let numCtx = estimateImageContext(image.length, instruction);
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      const numGpu = configuredNumGpu();
       let res: Response;
       try {
         res = await fetch(`${this.baseUrl}/api/chat`, {
@@ -172,7 +223,13 @@ export class OllamaClient {
             model,
             messages: [{ role: 'user', content: instruction, images: [b64] }],
             stream: false,
-            options: { num_ctx: numCtx, num_gpu: DIAGNOSTIC_NUM_GPU },
+            // 视觉请求完成后立即卸载模型，避免下一张大图继续复用已占用的显存。
+            // 代价是后续请求需要重新加载模型，但可避免连续 captioning 的显存累积/碎片问题。
+            keep_alive: 0,
+            options: {
+              num_ctx: numCtx,
+              ...(numGpu === undefined ? {} : { num_gpu: numGpu }),
+            },
           }),
           signal: AbortSignal.timeout(opts.timeoutMs ?? this.defaultTimeoutMs),
         });

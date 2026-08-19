@@ -19,6 +19,7 @@
     "fast-glob": "^3.3.2",
     "fast-json-patch": "^3.1.1",
     "fastify": "^4.28.0",
+    "sharp": "^0.35.3",
     "ws": "^8.18.0"
   },
   "devDependencies": {
