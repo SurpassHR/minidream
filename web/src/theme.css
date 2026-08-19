@@ -18,8 +18,9 @@
   --blue-dim: #E6ECF4;
   --shadow: rgba(47, 40, 34, .08);
   --focus: #B85E48;
-  --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
-  --mono: "SF Mono", "Cascadia Mono", Consolas, "Noto Sans Mono", monospace;
+  /* 使用 CSS 泛型字体族，让浏览器采用用户配置的无衬线/等宽字体。 */
+  --sans: sans-serif;
+  --mono: monospace;
   --serif: Georgia, "Songti SC", "Noto Serif SC", serif;
 }
 

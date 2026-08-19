@@ -6,7 +6,7 @@ import { StoryChat, parseStoryAnswers } from './StoryChat';
 let SESSIONS: Array<{ id: string; title: string; createdAt: number; updatedAt: number }> = [];
 let ACTIVE: string | null = null;
 let HISTORY: Array<{ who: string; text: string; at: number }> = [];
-let CHAT_BODIES: Array<{ message: string; sessionId?: string; persistAs?: string; images?: unknown[]; assetRefs?: Array<{ id: string; name: string; kind: string }> }> = [];
+let CHAT_BODIES: Array<{ message: string; sessionId?: string; persistAs?: string; systemPrompt?: string; images?: unknown[]; assetRefs?: Array<{ id: string; name: string; kind: string }> }> = [];
 
 // 既有用例预置：会话列表 + 激活会话 + 历史。
 // 注：仅预置 HISTORY 不够——「无会话自动新建」分支（POST sessions）会把 HISTORY 清空，
@@ -112,6 +112,30 @@ describe('StoryChat', () => {
     const inputRow = screen.getByTestId('chat-composer').querySelector('.chat-input-row');
     expect(inputRow).toContainElement(screen.getByTestId('chat-attach-btn'));
     expect(inputRow).toContainElement(screen.getByRole('button', { name: '发送' }));
+  });
+
+  it('代码块显示复制按钮并只复制代码正文', async () => {
+    SESSIONS = [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }];
+    ACTIVE = 's1';
+    HISTORY = [{
+      who: 'agent',
+      text: '这是示例：`inline`\n\n```ts\nconst answer = 42;\n```',
+      at: 2,
+    }];
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const previousClipboard = navigator.clipboard;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    try {
+      render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+      await waitFor(() => expect(screen.getByRole('button', { name: '复制代码' })).toBeInTheDocument());
+      expect(screen.getByText('ts')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '复制行内代码' })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: '复制代码' }));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith('const answer = 42;'));
+      expect(screen.getByRole('button', { name: '已复制' })).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: previousClipboard });
+    }
   });
 
   it('点击 choice 发送 label，且不带其他输入区的附件或素材引用', async () => {
@@ -293,6 +317,28 @@ describe('StoryChat', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     // 新 mock 单帧 chunk（精灵骑士）+ DONE：断言随 mock 调整
     await waitFor(() => expect(screen.getByText(/精灵骑士/)).toBeInTheDocument());
+  });
+
+  it('LLM 流式回复时自动滚动到底部', async () => {
+    presetLegacySession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    const conversation = screen.getByTestId('chat-conversation');
+    let scrollTop = 460;
+    Object.defineProperties(conversation, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 600 },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => { scrollTop = value; },
+      },
+    });
+    const input = screen.getByTestId('chat-input');
+    fireEvent.change(input, { target: { value: '继续写' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(screen.getByText(/精灵骑士/)).toBeInTheDocument());
+    expect(scrollTop).toBe(600);
   });
 
   // —— 图像附件：Ctrl+V 粘贴 → 预览 → 发送携带 images；纯文本粘贴不拦截 ——
@@ -483,10 +529,10 @@ describe('StoryChat', () => {
     const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => String(c[0]).includes('/api/story/chat') && (c[1] as RequestInit)?.method === 'POST',
     );
-    const body = JSON.parse(String(calls.at(-1)![1]?.body)) as { message: string };
-    expect(body.message).toContain('定制编剧');
+    const body = JSON.parse(String(calls.at(-1)![1]?.body)) as { message: string; systemPrompt?: string };
+    expect(body.systemPrompt).toContain('定制编剧');
     expect(body.message).toContain('定制总结');
-    expect(body.message).not.toContain('你是导演工作台的故事编剧');
+    expect(body.message).not.toContain('定制编剧');
   });
 
   // —— Task 4 新增：左侧会话列表面板 ——
@@ -534,12 +580,30 @@ describe('StoryChat', () => {
     await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(0));
     expect(CHAT_BODIES[0]!.sessionId).toBe('s9');
     // send 透传 systemPrompt=storyTeller（对话式统一角色提示词，经后端 systemPrompt 字段）
-    expect(
-      (CHAT_BODIES.at(-1) as { message: string; sessionId?: string; systemPrompt?: string }).systemPrompt,
-    ).toContain('你是导演工作台的故事编剧');
+    expect(CHAT_BODIES.at(-1)!.systemPrompt).toContain('你是导演工作台的故事编剧');
     fireEvent.click(screen.getByText('总结成稿'));
     await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(1));
     expect(CHAT_BODIES.at(-1)!.sessionId).toBe('s9');
+  });
+
+  it('剧本项目发送时使用项目级 storyTeller 作为 systemPrompt', async () => {
+    presetLegacySession();
+    render(
+      <StoryChat
+        projectName="demo"
+        onSummarized={() => {}}
+        board={{
+          id: 'b1', name: '项目', createdAt: 0, updatedAt: 0,
+          systemPrompts: { storyTeller: '项目专属故事编剧' }, ragEnabled: false, ragAssets: [],
+        }}
+        prompts={{ storyTeller: '全局故事编剧' }}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: '继续创作' } });
+    fireEvent.click(screen.getByText('发送'));
+    await waitFor(() => expect(CHAT_BODIES.at(-1)?.message).toBe('继续创作'));
+    expect(CHAT_BODIES.at(-1)?.systemPrompt).toBe('项目专属故事编剧');
   });
 
   it('发送与总结成稿携带设置的模型与思考强度（agentModel/thinkingLevel 透传）', async () => {
@@ -740,6 +804,7 @@ describe('StoryChat', () => {
     await waitFor(() => expect(screen.getByTestId('session-item-s1')).toBeInTheDocument());
     fireEvent.click(screen.getByText('总结成稿'));
     await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(0));
-    expect(CHAT_BODIES.at(-1)!.message).toMatch(/^破甲预设文本\n\n/);
+    expect(CHAT_BODIES.at(-1)!.systemPrompt).toMatch(/^破甲预设文本\n\n/);
+    expect(CHAT_BODIES.at(-1)!.message).toContain('theme: 一句话主题');
   });
 });

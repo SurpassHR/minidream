@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
@@ -29,6 +29,15 @@ afterEach(async () => {
 });
 
 describe('API 故事向导', () => {
+  it('MCP 配置可为空，供故事聊天隔离画布工具', async () => {
+    const { writeAgentMcpConfig } = await import('./routes.js');
+    const file = writeAgentMcpConfig(4778, false);
+    expect(file).toBeTruthy();
+    expect(JSON.parse(readFileSync(file!, 'utf8'))).toEqual({ mcpServers: {} });
+    rmSync(file!, { force: true });
+  });
+
+
   it('GET /api/story 返回空进度', async () => {
     const res = await a.inject({ method: 'GET', url: '/api/story' });
     expect(res.statusCode).toBe(200);
@@ -182,7 +191,7 @@ describe('API 故事对话', () => {
 
   it('POST /api/story/chat kickoff 使用 chat choice 契约并落盘系统标记', async () => {
     vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
-    vi.stubEnv('MOCK_ECHO_STDIN', '1');
+    vi.stubEnv('MOCK_ECHO_INPUT', '1');
     const res = await a.inject({
       method: 'POST', url: '/api/story/chat',
       payload: {
@@ -193,13 +202,14 @@ describe('API 故事对话', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('options');
     expect(res.body).toContain('围栏语言标记为 choice');
+    expect(res.body).toContain('--system-prompt');
     const hist = await a.inject({ method: 'GET', url: '/api/story/chat/history' });
     expect(hist.json().messages[0].text).toBe('（开始访谈）');
   });
 
   it('POST /api/story/chat 总结成稿使用 system 要求而不注入 choice 契约', async () => {
     vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
-    vi.stubEnv('MOCK_ECHO_STDIN', '1');
+    vi.stubEnv('MOCK_ECHO_INPUT', '1');
     const res = await a.inject({
       method: 'POST', url: '/api/story/chat',
       payload: { message: '请总结成稿', persistAs: '（请总结成稿）' },
@@ -207,6 +217,7 @@ describe('API 故事对话', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('每次回答 100-200 字，聚焦推进故事');
     expect(res.body).not.toContain('```choice');
+    expect(res.body).toContain('--system-prompt');
   });
 
   it('POST /api/story/chat 带 persistAs：落盘用标记而非长指令原文', async () => {
@@ -426,33 +437,59 @@ describe('API 全局设置', () => {
 });
 
 describe('buildStoryChatPrompt 纯函数', () => {
+  it('即使使用项目自定义角色提示词，也追加故事与画布的隔离边界', async () => {
+    const { buildStoryChatPrompt } = await import('./routes.js');
+    const parts = buildStoryChatPrompt('p', {}, [], '你好', '你是项目自定义编剧');
+    expect(parts.systemPrompt).toContain('故事编剧不得访问、检查、描述、创建、修改、连接、删除或操作画布');
+    expect(parts.systemPrompt).toContain('不得声称已经执行任何画布或节点操作');
+  });
+
+
+  it('将角色与协议放入 system prompt，用户上下文单独放入 user prompt', async () => {
+    const { buildStoryChatPrompt } = await import('./routes.js');
+    const parts = buildStoryChatPrompt(
+      'p',
+      {},
+      [],
+      '用户问题',
+      '你是严格的故事编剧',
+    ) as unknown as { systemPrompt: string; userPrompt: string };
+    expect(parts.systemPrompt).toContain('你是严格的故事编剧');
+    expect(parts.systemPrompt).toContain('故事编剧不得访问、检查、描述、创建、修改、连接、删除或操作画布');
+    expect(parts.systemPrompt).toContain('不得声称已经执行任何画布或节点操作');
+    expect(parts.systemPrompt).toContain('文末必须追加且仅追加一个 choice 代码块');
+    expect(parts.userPrompt).toContain('用户问题');
+    expect(parts.userPrompt).not.toContain('你是严格的故事编剧');
+  });
+
   it('chat 模式注入 choice 契约，system 模式保持总结成稿旧要求', async () => {
     const { buildStoryChatPrompt } = await import('./routes.js');
     const chat = buildStoryChatPrompt('p', {}, [], '你好', undefined, undefined, 'chat');
-    expect(chat).toContain('文末必须追加且仅追加一个 choice 代码块');
-    expect(chat).toContain('不要把「其他 / 自定义 / 我自己说」放进 options');
-    expect(chat).toContain('choice 块必须是合法 JSON');
+    expect(chat.systemPrompt).toContain('文末必须追加且仅追加一个 choice 代码块');
+    expect(chat.systemPrompt).toContain('不要把「其他 / 自定义 / 我自己说」放进 options');
+    expect(chat.systemPrompt).toContain('choice 块必须是合法 JSON');
 
     const system = buildStoryChatPrompt('p', {}, [], '你好', undefined, undefined, 'system');
-    expect(system).toContain('每次回答 100-200 字，聚焦推进故事');
-    expect(system).toContain('用中文回答');
-    expect(system).not.toContain('```choice');
-    expect(system).not.toContain('choice 代码块');
+    expect(system.systemPrompt).toContain('每次回答 100-200 字，聚焦推进故事');
+    expect(system.systemPrompt).toContain('用中文回答');
+    expect(system.systemPrompt).not.toContain('```choice');
+    expect(system.systemPrompt).not.toContain('choice 代码块');
   });
 
   it('buildStoryChatPrompt：systemPrompt 替换写死文本；缺省兜底', async () => {
     const { buildStoryChatPrompt, isVisionUnsupportedError } = await import('./routes.js');
     const base = buildStoryChatPrompt('p', {}, [], '你好');
-    expect(base).toContain('你是导演工作台的故事编剧');
+    expect(base.systemPrompt).toContain('你是导演工作台的故事编剧');
     const custom = buildStoryChatPrompt('p', {}, [], '你好', '你是定制系统提示词');
-    expect(custom).toContain('你是定制系统提示词');
-    expect(custom).not.toContain('你是导演工作台的故事编剧');
+    expect(custom.systemPrompt).toContain('你是定制系统提示词');
+    expect(custom.systemPrompt).not.toContain('你是导演工作台的故事编剧');
     // 空白 systemPrompt 视为缺省
     const blank = buildStoryChatPrompt('p', {}, [], '你好', '   ');
-    expect(blank).toContain('你是导演工作台的故事编剧');
-    // ragContext 注入：紧跟系统提示词
+    expect(blank.systemPrompt).toContain('你是导演工作台的故事编剧');
+    // RAG 注入用户上下文，不混入 system prompt
     const withRag = buildStoryChatPrompt('p', {}, [], '你好', undefined, '知识库检索（RAG）命中：- [设定.md] xxx');
-    expect(withRag).toContain('知识库检索（RAG）命中');
+    expect(withRag.userPrompt).toContain('知识库检索（RAG）命中');
+    expect(withRag.systemPrompt).not.toContain('知识库检索（RAG）命中');
     expect(isVisionUnsupportedError('model does not support image inputs')).toBe(true);
     expect(isVisionUnsupportedError('403 Your request was blocked.')).toBe(false);
   });

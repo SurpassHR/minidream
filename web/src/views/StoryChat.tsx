@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { isValidElement, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -6,7 +6,7 @@ import { client } from '../api/client';
 import { Icon } from '../icons';
 import { ConfirmDialog } from '../panels/ConfirmDialog';
 import { TextInputDialog } from '../panels/TextInputDialog';
-import { resolveBoardPrompt, resolvePrompt, withArmorBreak } from './roles';
+import { resolveBoardPrompt, withArmorBreak } from './roles';
 import { AiButton, EmptyState, ErrorBanner } from './role-ui';
 import type { SessionMeta, StoryBoard } from '../types';
 import type { AssetItem } from '../panels/AssetLibrary';
@@ -52,6 +52,70 @@ function fmtSessionDate(at: number): string {
   return sameDay
     ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
     : `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function codeText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(codeText).join('');
+  if (isValidElement<{ children?: ReactNode }>(node)) return codeText(node.props.children);
+  return '';
+}
+
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('复制失败');
+}
+
+function CopyableCodeBlock(props: { children?: ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const codeChild = Array.isArray(props.children)
+    ? props.children.find((child) => isValidElement(child))
+    : props.children;
+  const codeElement = isValidElement<{ className?: string; children?: ReactNode }>(codeChild)
+    ? codeChild
+    : null;
+  const className = codeElement?.props.className ?? '';
+  const language = className.match(/language-([\w-]+)/)?.[1];
+  const source = codeText(codeElement?.props.children ?? props.children).replace(/\n$/, '');
+
+  const copy = async () => {
+    try {
+      await copyText(source);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="chat-code-block">
+      <div className="chat-code-toolbar">
+        <span className="chat-code-language">{language ?? '代码'}</span>
+        <button
+          type="button"
+          className="chat-code-copy"
+          aria-label={copied ? '已复制' : '复制代码'}
+          onClick={() => { void copy(); }}
+        >
+          {copied ? <><Icon name="check" />已复制</> : '复制'}
+        </button>
+      </div>
+      <pre className="chat-code-pre">{props.children}</pre>
+    </div>
+  );
 }
 
 export function StoryChat(props: {
@@ -101,6 +165,8 @@ export function StoryChat(props: {
   const busyRef = useRef(false);
   const choiceRef = useRef<ParsedChoice | null>(null);
   const mentionOpenRef = useRef(false);
+  const conversationRef = useRef<HTMLDivElement>(null);
+  const shouldFollowConversationRef = useRef(true);
   // 当前剧本项目 id（归组会话 + 后端解析项目级提示词/RAG）
   const boardId = props.board?.id ?? null;
   const assetMention = useAssetMentions(input);
@@ -115,6 +181,24 @@ export function StoryChat(props: {
   const refreshSessions = () => {
     void client.listStorySessions(boardId).then((r) => setSessions(r.sessions)).catch(() => {});
   };
+
+  useEffect(() => {
+    const conversation = conversationRef.current;
+    if (!conversation) return;
+    const handleScroll = () => {
+      const distanceFromBottom = conversation.scrollHeight - conversation.clientHeight - conversation.scrollTop;
+      shouldFollowConversationRef.current = distanceFromBottom <= 48;
+    };
+    conversation.addEventListener('scroll', handleScroll, { passive: true });
+    return () => conversation.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  useLayoutEffect(() => {
+    const conversation = conversationRef.current;
+    if (conversation && shouldFollowConversationRef.current) {
+      conversation.scrollTop = conversation.scrollHeight;
+    }
+  }, [msgs, busy]);
 
   // 项目/剧本项目切换或挂载时：加载会话列表 → 无会话自动新建 → 加载当前会话历史
   useEffect(() => {
@@ -199,6 +283,7 @@ export function StoryChat(props: {
   const beginRequest = (sessionId: string | null, kind: 'kickoff' | 'chat' | 'summarize') => {
     const request = { id: ++requestSeqRef.current, sessionId, kind };
     requestRef.current = request;
+    shouldFollowConversationRef.current = true;
     rawAgentTextRef.current = '';
     busyRef.current = true;
     setBusy(true);
@@ -211,7 +296,7 @@ export function StoryChat(props: {
     kickoffAttemptedRef.current.add(sessionId);
     setHasKickoffMarker(true);
     const request = beginRequest(sessionId, 'kickoff');
-    const sysPrompt = boardId ? undefined : resolvePrompt(props.prompts, 'storyTeller');
+    const sysPrompt = resolveBoardPrompt(props.board, props.prompts, 'storyTeller');
     try {
       await client.storyChat(
         STORY_KICKOFF_MESSAGE,
@@ -462,7 +547,7 @@ export function StoryChat(props: {
       images: msgImages.length > 0 ? msgImages : undefined,
       assetRefs: refs.length > 0 ? refs : undefined,
     }]);
-    const sysPrompt = boardId ? undefined : resolvePrompt(props.prompts, 'storyTeller');
+    const sysPrompt = resolveBoardPrompt(props.board, props.prompts, 'storyTeller');
     void client.storyChat(
       text,
       (chunk) => appendStream(chunk, request),
@@ -519,12 +604,14 @@ export function StoryChat(props: {
   // 避免与「未识别到答案格式」同时出现两条矛盾提示）。
   const runAction = async () => {
     if (busyRef.current) return;
-    // 剧本项目存在：消息只带项目 storySummarize 指令（后端注入项目 storyTeller 人格 + 跳过 RAG）；
-    // 无项目（旧路径）：消息带完整 storyTeller + storySummarize，systemPrompt 由前端解析全局/内置
-    const summarizePrompt = boardId
-      ? resolveBoardPrompt(props.board, props.prompts, 'storySummarize')
-      : `${resolvePrompt(props.prompts, 'storyTeller')}\n\n${resolvePrompt(props.prompts, 'storySummarize')}`;
-    const prompt = withArmorBreak(summarizePrompt, props.armorBreak, props.armorBreakEnabled);
+    // 总结请求：storyTeller 作为真正的 systemPrompt，storySummarize 作为本次用户上下文指令；
+    // 破甲预设只插入 systemPrompt，避免角色提示词与总结指令重复发送。
+    const storyTellerPrompt = withArmorBreak(
+      resolveBoardPrompt(props.board, props.prompts, 'storyTeller'),
+      props.armorBreak,
+      props.armorBreakEnabled,
+    );
+    const prompt = resolveBoardPrompt(props.board, props.prompts, 'storySummarize');
     const sessionId = activeIdRef.current;
     const request = beginRequest(sessionId, 'summarize');
     setAction('summarize');
@@ -535,7 +622,7 @@ export function StoryChat(props: {
         if (!isCurrentRequest(request)) return;
         acc += chunk;
         appendStream(chunk, request);
-      }, props.agentModel || undefined, props.thinkingLevel || undefined, '（请总结成稿）', sessionId, undefined, boardId);
+      }, props.agentModel || undefined, props.thinkingLevel || undefined, '（请总结成稿）', sessionId, storyTellerPrompt, boardId);
       finalizeStream(request);
       if (isCurrentRequest(request)) {
         const answers = parseStoryAnswers(acc);
@@ -598,6 +685,7 @@ export function StoryChat(props: {
       {!props.sessionHost ? sessionPanel : createPortal(sessionPanel, props.sessionHost)}
       <div className="chat-main">
         <div
+          ref={conversationRef}
           className="chat-msgs chat-conversation"
           data-testid="chat-conversation"
           data-layout="reading-column"
@@ -629,7 +717,10 @@ export function StoryChat(props: {
                     </div>
                   )}
                   {m.who === 'agent' ? (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{parseChoiceBlock(m.text)?.prompt ?? m.text}</ReactMarkdown>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{ pre: CopyableCodeBlock }}
+                    >{parseChoiceBlock(m.text)?.prompt ?? m.text}</ReactMarkdown>
                   ) : (
                     <p>{m.text}</p>
                   )}

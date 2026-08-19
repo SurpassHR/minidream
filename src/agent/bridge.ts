@@ -40,15 +40,25 @@ export function runAgentCollect(cmd: string[]): Promise<{ stdout: string; exitCo
 // 空闲超时保护：流式输出停止 idleTimeoutMs 后 kill 子进程并正常结束（pi --print 在部分环境下
 // 输出完整后不退出，若不兜底会导致 SSE 永不 [DONE]、调用方永远等待）。
 // env：可注入项目上下文（如 DIRECTOR_PROJECT_DIR，kanban KANBAN_TASK_ID 语义）。
+// systemPrompt：通过 pi 原生 --system-prompt 参数传入；prompt 仅作为 stdin 用户上下文。
 export function runAgentStream(
   cmd: string[],
   prompt: string,
   onChunk: (text: string) => boolean | void,
-  opts: { idleTimeoutMs?: number; env?: Record<string, string> } = {},
+  opts: { idleTimeoutMs?: number; env?: Record<string, string>; systemPrompt?: string } = {},
 ): Promise<{ exitCode: number | null; stderr: string; idleKilled: boolean }> {
   const idleTimeoutMs = opts.idleTimeoutMs ?? 30_000;
+  const command = opts.systemPrompt?.trim()
+    ? (() => {
+      const systemArgs = ['--system-prompt', opts.systemPrompt.trim()];
+      const firstFileArg = cmd.findIndex((arg) => arg.startsWith('@'));
+      return firstFileArg < 0
+        ? [...cmd, ...systemArgs]
+        : [...cmd.slice(0, firstFileArg), ...systemArgs, ...cmd.slice(firstFileArg)];
+    })()
+    : cmd;
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd[0]!, cmd.slice(1), {
+    const child = spawn(command[0]!, command.slice(1), {
       env: { ...process.env, ...opts.env },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

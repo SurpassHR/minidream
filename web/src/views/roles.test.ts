@@ -23,6 +23,11 @@ describe('resolvePrompt', () => {
       expect(v.trim().length).toBeGreaterThan(0);
     }
   });
+
+  it('storyTeller 明确与画布和节点能力隔离', () => {
+    expect(ROLE_PROMPT_KEYS.storyTeller).toContain('must not access, inspect, describe, create, modify, connect, delete, or operate any canvas');
+    expect(ROLE_PROMPT_KEYS.storyTeller).toContain('must not claim that any canvas or node action was performed');
+  });
 });
 
 describe('withArmorBreak', () => {

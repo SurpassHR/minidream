@@ -28,9 +28,20 @@ function mentionParts(value: string, assets: MentionAsset[]): Array<{ text: stri
   return parts;
 }
 
+function editorText(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
+  if (node.nodeType === Node.ELEMENT_NODE && (node as Element).tagName === 'BR') return '\n';
+  return Array.from(node.childNodes).map(editorText).join('');
+}
+
+function editorTextLength(node: Node): number {
+  return editorText(node).length;
+}
+
 function readEditorValue(target: HTMLElement): string {
   const syntheticValue = (target as HTMLElement & { value?: unknown }).value;
-  return typeof syntheticValue === 'string' ? syntheticValue : target.textContent ?? '';
+  if (target.querySelector('br')) return editorText(target);
+  return typeof syntheticValue === 'string' ? syntheticValue : editorText(target);
 }
 
 function escapeHtml(value: string): string {
@@ -45,6 +56,70 @@ function mentionMarkup(value: string, assets: MentionAsset[], testIdPrefix: 'cha
     const asset = part.asset;
     return `<span class="asset-mention-token" data-testid="${testIdPrefix}-asset-token-${escapeHtml(asset.id)}" data-asset-token="true" data-asset-id="${escapeHtml(asset.id)}" contenteditable="false" role="button" tabindex="-1" title="点击查看素材详情">${escapeHtml(part.text)}</span>`;
   }).join('');
+}
+
+interface EditorSelection {
+  start: number;
+  end: number;
+}
+
+function textOffset(root: HTMLElement, target: Node, offset: number): number {
+  let total = 0;
+  let found = false;
+  const visit = (node: Node) => {
+    if (found) return;
+    if (node === target) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        total += Math.min(offset, node.textContent?.length ?? 0);
+      } else {
+        for (let i = 0; i < Math.min(offset, node.childNodes.length); i++) {
+          total += editorTextLength(node.childNodes[i]!);
+        }
+      }
+      found = true;
+      return;
+    }
+    for (const child of Array.from(node.childNodes)) visit(child);
+    if (!found && node.nodeType === Node.TEXT_NODE) total += node.textContent?.length ?? 0;
+    if (!found && node.nodeType === Node.ELEMENT_NODE && (node as Element).tagName === 'BR') total += 1;
+  };
+  visit(root);
+  return total;
+}
+
+function captureEditorSelection(editor: HTMLElement): EditorSelection | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !editor.contains(selection.anchorNode) || !editor.contains(selection.focusNode)) return null;
+  const anchor = textOffset(editor, selection.anchorNode!, selection.anchorOffset);
+  const focus = textOffset(editor, selection.focusNode!, selection.focusOffset);
+  return { start: Math.min(anchor, focus), end: Math.max(anchor, focus) };
+}
+
+function restoreEditorSelection(editor: HTMLElement, saved: EditorSelection): void {
+  const length = editorTextLength(editor);
+  const start = Math.max(0, Math.min(saved.start, length));
+  const end = Math.max(start, Math.min(saved.end, length));
+  const locate = (target: number): { node: Node; offset: number } => {
+    let remaining = target;
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    let last: Node | null = null;
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      last = node;
+      const nodeLength = node.textContent?.length ?? 0;
+      if (remaining <= nodeLength) return { node, offset: remaining };
+      remaining -= nodeLength;
+    }
+    return last ? { node: last, offset: last.textContent?.length ?? 0 } : { node: editor, offset: 0 };
+  };
+  const from = locate(start);
+  const to = locate(end);
+  const range = document.createRange();
+  range.setStart(from.node, from.offset);
+  range.setEnd(to.node, to.offset);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
 }
 
 export function MentionComposer(props: {
@@ -67,6 +142,9 @@ export function MentionComposer(props: {
   const onChangeRef = useRef(props.onChange);
   const syntheticValueRef = useRef<string | null>(null);
   const previousValue = useRef(props.value);
+  const composingRef = useRef(false);
+  const skipNextInputRef = useRef(false);
+  const pendingSelectionRef = useRef<EditorSelection | null>(null);
   const [detailAsset, setDetailAsset] = useState<MentionAsset | null>(null);
   onChangeRef.current = props.onChange;
 
@@ -94,13 +172,19 @@ export function MentionComposer(props: {
   useLayoutEffect(() => {
     const editor = editorRef.current;
     if (editor && document.activeElement === editor && previousValue.current !== props.value) {
-      const selection = window.getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(editor);
-      range.collapse(false);
-      selection?.removeAllRanges();
-      selection?.addRange(range);
+      const saved = pendingSelectionRef.current;
+      if (saved) {
+        restoreEditorSelection(editor, saved);
+      } else {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(editor);
+        range.collapse(false);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      }
     }
+    pendingSelectionRef.current = null;
     syntheticValueRef.current = null;
     previousValue.current = props.value;
   }, [props.value]);
@@ -117,8 +201,26 @@ export function MentionComposer(props: {
         suppressContentEditableWarning
         role="textbox"
         aria-multiline="true"
+        onCompositionStart={() => {
+          composingRef.current = true;
+          skipNextInputRef.current = false;
+        }}
+        onCompositionEnd={(event) => {
+          composingRef.current = false;
+          skipNextInputRef.current = true;
+          if (props.disabled) return;
+          pendingSelectionRef.current = captureEditorSelection(event.currentTarget);
+          syntheticValueRef.current = null;
+          props.onChange(readEditorValue(event.currentTarget));
+        }}
         onInput={(event) => {
           if (props.disabled) return;
+          if (composingRef.current || (event.nativeEvent as InputEvent).isComposing) return;
+          if (skipNextInputRef.current) {
+            skipNextInputRef.current = false;
+            return;
+          }
+          pendingSelectionRef.current = captureEditorSelection(event.currentTarget);
           syntheticValueRef.current = null;
           props.onChange(readEditorValue(event.currentTarget));
         }}

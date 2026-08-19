@@ -28,6 +28,12 @@ if (process.env.MOCK_ECHO_ENV) {
   process.stdout.write((process.env.DIRECTOR_PROJECT_NAME ?? 'no-env') + '\n');
   process.exit(0);
 }
+if (process.env.MOCK_ECHO_INPUT) {
+  let input = '';
+  for await (const chunk of process.stdin) input += chunk;
+  process.stdout.write('ECHO_INPUT ' + JSON.stringify({ args: process.argv.slice(2), stdin: input }) + '\n');
+  process.exit(0);
+}
 if (process.env.MOCK_ECHO_STDIN) {
   let input = '';
   for await (const chunk of process.stdin) input += chunk;

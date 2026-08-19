@@ -43,4 +43,21 @@ describe('runAgentStream', () => {
     expect(chunks.join('')).toBe('hello world from mock');
     expect(chunks.length).toBeGreaterThan(1); // 分段流式
   });
+
+  it('将 system prompt 作为 pi 参数传入，stdin 只保留用户上下文', async () => {
+    vi.stubEnv('MOCK_ECHO_INPUT', '1');
+    const mockScript = resolve('src/agent/mock-agent.mjs');
+    const chunks: string[] = [];
+    const r = await runAgentStream(
+      ['node', mockScript],
+      '当前用户消息与历史',
+      (c) => { chunks.push(c); },
+      { systemPrompt: '你是严格的故事编剧' },
+    );
+    expect(r.exitCode).toBe(0);
+    const echoed = JSON.parse(chunks.join('').trim().replace(/^ECHO_INPUT /, '')) as { args: string[]; stdin: string };
+    expect(echoed.args).toEqual(expect.arrayContaining(['--system-prompt', '你是严格的故事编剧']));
+    expect(echoed.stdin).toBe('当前用户消息与历史');
+    expect(echoed.stdin).not.toContain('你是严格的故事编剧');
+  });
 });

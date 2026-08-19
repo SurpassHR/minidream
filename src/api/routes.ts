@@ -85,22 +85,20 @@ function confirmOf(query: unknown): boolean {
 // pi --thinking 合法级别（侧栏思考强度下拉的数据源）
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
-// 生成 chat 专用 MCP 配置：只含 director-workbench 自身（type: http）。
-// 目的：pi 默认会加载用户 ~/.pi/agent/mcp.json 的全部 MCP server（如 openreel-studio）——
-// ① 初始化慢（等待外部 API 起来）导致 45s 空闲超时前零输出；
-// ② agent 会用 openreel 工具误操作 OpenReel 画布而非本工作台画布。
-// 替换配置后 pi 只认工作台自己的画布工具。失败返回 null（不传 --mcp-config，保持原行为）。
-export function writeAgentMcpConfig(mcpPort: number): string | null {
+// 生成 agent 专用 MCP 配置。
+// AGENT 面板默认启用 director-workbench 画布工具；故事聊天传 false，使用空配置，
+// 避免故事编剧看到或调用画布/节点能力。显式配置文件也能阻止 pi 回退加载用户全局 MCP。
+export function writeAgentMcpConfig(mcpPort: number, includeWorkbench = true): string | null {
   try {
     const file = join(tmpdir(), `director-agent-mcp-${mcpPort}.json`);
     writeFileSync(file, JSON.stringify({
-      mcpServers: {
+      mcpServers: includeWorkbench ? {
         'director-workbench': {
           type: 'http',
           url: `http://127.0.0.1:${mcpPort}/mcp`,
           directTools: true,
         },
-      },
+      } : {},
     }, null, 2), 'utf8');
     return file;
   } catch {
@@ -109,52 +107,65 @@ export function writeAgentMcpConfig(mcpPort: number): string | null {
 }
 
 // —— 故事向导对话式（story-chat）prompt 构造 ——
-// 对话式 prompt 携带：项目名 + 向导答案摘要 + 最近 20 条历史 + 用户消息（纯函数，便于测试）
+// 对话式 prompt 拆成 pi system prompt 与 stdin 用户上下文（纯函数，便于测试）。
 const STORY_CHAT_HISTORY_WINDOW = 20;
+
+export interface StoryChatPrompt {
+  systemPrompt: string;
+  userPrompt: string;
+}
+
+const STORY_CHAT_FALLBACK_SYSTEM = '你是导演工作台的故事编剧（story-teller 对话模式）。你正在帮用户自由构思一个视频故事的创意。';
+
+const STORY_CHAT_ISOLATION_RULES = [
+  '故事编剧不得访问、检查、描述、创建、修改、连接、删除或操作画布、画布节点、图、编辑器或工作台 UI；这些能力对本角色不可用。',
+  '不得声称已经执行任何画布或节点操作，也不得询问是否要创建、连接、修改或删除节点。',
+  '只处理故事创作、MiniMax H3 提示词访谈、用户明确提供的素材和故事对话历史；不要把普通项目上下文解释成画布状态。',
+  '如果用户询问画布或节点操作，简短说明本角色不支持该操作，然后回到故事创作。',
+];
 
 export function buildStoryChatPrompt(
   projectName: string,
   answers: Record<string, string>,
   history: ChatMessage[],
   message: string,
-  systemPrompt?: string,
+  rolePrompt?: string,
   ragContext?: string,
   mode: 'chat' | 'system' = 'chat',
-): string {
-  const parts: string[] = [];
-  parts.push(systemPrompt?.trim() || '你是导演工作台的故事编剧（story-teller 对话模式）。你正在帮用户自由构思一个视频故事的创意。');
-  // 项目 RAG 命中片段：紧跟系统提示词注入，让模型优先依据知识库作答
-  if (ragContext?.trim()) parts.push('\n' + ragContext.trim());
-  parts.push('要求：');
+): StoryChatPrompt {
+  const systemParts: string[] = [rolePrompt?.trim() || STORY_CHAT_FALLBACK_SYSTEM, '角色隔离边界：', ...STORY_CHAT_ISOLATION_RULES, '要求：'];
   if (mode === 'chat') {
-    parts.push('1. 用访谈语言写一句短问或确认，像资深编剧推进访谈，不要重复用户已确认的内容；');
-    parts.push('2. 每次只问一件事；正文不要罗列选项，不要解释机器格式；');
-    parts.push('3. 文末必须追加且仅追加一个 choice 代码块，围栏语言标记为 choice；');
-    parts.push('4. choice 块必须是合法 JSON：{"question":"短问句","options":[{"id":"stable-id","label":"可发送的选项原文"}]}；');
-    parts.push('5. options 2–4 项，互斥；label 用访谈语言，点击后会原样作为用户回答发回；');
-    parts.push('6. 不要把「其他 / 自定义 / 我自己说」放进 options，前端会单独提供输入框；');
-    parts.push('7. 用户说「你决定 / 随便 / I don\'t know」时自己选定并继续，不要停住追问；');
-    parts.push('8. 用中文还是其它语言，以用户已选的访谈语言为准；尚未选择时先问语言。');
+    systemParts.push('1. 用访谈语言写一句短问或确认，像资深编剧推进访谈，不要重复用户已确认的内容；');
+    systemParts.push('2. 每次只问一件事；正文不要罗列选项，不要解释机器格式；');
+    systemParts.push('3. 文末必须追加且仅追加一个 choice 代码块，围栏语言标记为 choice；');
+    systemParts.push('4. choice 块必须是合法 JSON：{"question":"短问句","options":[{"id":"stable-id","label":"可发送的选项原文"}]}；');
+    systemParts.push('5. options 2–4 项，互斥；label 用访谈语言，点击后会原样作为用户回答发回；');
+    systemParts.push('6. 不要把「其他 / 自定义 / 我自己说」放进 options，前端会单独提供输入框；');
+    systemParts.push('7. 用户说「你决定 / 随便 / I don\'t know」时自己选定并继续，不要停住追问；');
+    systemParts.push('8. 用中文还是其它语言，以用户已选的访谈语言为准；尚未选择时先问语言。');
   } else {
-    parts.push('1. 直接给出创作建议、扩展点子或追问，像资深编剧与导演讨论剧本一样自然；');
-    parts.push('2. 结合项目设定与已有向导进度，不要重复用户已写的内容；');
-    parts.push('3. 每次回答 100-200 字，聚焦推进故事；');
-    parts.push('4. 用中文回答。');
+    systemParts.push('1. 直接给出创作建议、扩展点子或追问，像资深编剧与导演讨论剧本一样自然；');
+    systemParts.push('2. 结合项目设定与已有向导进度，不要重复用户已写的内容；');
+    systemParts.push('3. 每次回答 100-200 字，聚焦推进故事；');
+    systemParts.push('4. 用中文回答。');
   }
-  parts.push(`\n当前项目：${projectName}`);
+
+  const userParts: string[] = [];
+  if (ragContext?.trim()) userParts.push('知识库检索（RAG）命中：\n' + ragContext.trim());
+  userParts.push(`当前项目：${projectName}`);
   const filled = Object.entries(answers).filter(([, v]) => v && v.trim());
   if (filled.length > 0) {
-    parts.push('向导进度（已完成部分）：');
-    for (const [id, v] of filled) parts.push(`  ${id}: ${v}`);
+    userParts.push('向导进度（已完成部分）：');
+    for (const [id, v] of filled) userParts.push(`  ${id}: ${v}`);
   }
   if (history.length > 0) {
-    parts.push('\n对话历史：');
+    userParts.push('\n对话历史：');
     for (const h of history.slice(-STORY_CHAT_HISTORY_WINDOW)) {
-      parts.push(`  ${h.who === 'user' ? '用户' : '编剧'}：${h.text}`);
+      userParts.push(`  ${h.who === 'user' ? '用户' : '编剧'}：${h.text}`);
     }
   }
-  parts.push(`\n用户消息：\n${message}`);
-  return parts.join('\n');
+  userParts.push(`\n用户消息：\n${message}`);
+  return { systemPrompt: systemParts.join('\n'), userPrompt: userParts.join('\n') };
 }
 
 // —— story chat 图像附件：base64 → 临时文件，pi 通过 @file 参数接收 ——
@@ -1108,7 +1119,7 @@ app.post('/api/story/chat', async (req, reply) => {
   const baseCmd = (process.env.DIRECTOR_PI_CMD ?? 'pi --mode json').split(' ').filter(Boolean);
   if (!process.env.DIRECTOR_PI_CMD) {
     const mcpPort = Number(process.env.DIRECTOR_MCP_PORT ?? 4778);
-    const mcpFile = writeAgentMcpConfig(mcpPort);
+    const mcpFile = writeAgentMcpConfig(mcpPort, false);
     if (mcpFile) baseCmd.push('--mcp-config', mcpFile);
   }
   if (body.model) baseCmd.push('--model', body.model);
@@ -1182,8 +1193,9 @@ app.post('/api/story/chat', async (req, reply) => {
       if (imgAttach && imgAttach.files.length > 0) contexts.push(await describeStoryImages(imgAttach.files, ctx.taskQueue));
       return contexts.filter((context) => context.trim()).join('\\n\\n');
     };
-    let runPrompt = prompt;
+    let runPrompt = prompt.userPrompt;
     let runCmd = imageCmd;
+    let runSystemPrompt = prompt.systemPrompt;
     let idleKilled = false;
     let failureMessage = '';
 
@@ -1191,7 +1203,9 @@ app.post('/api/story/chat', async (req, reply) => {
     if (imageFiles.length > 0 && body.modelSupportsImages === false) {
       try {
         const visionContext = await describeFallbackImages();
-        runPrompt = buildPrompt(visionContext);
+        const visionPrompt = buildPrompt(visionContext);
+        runPrompt = visionPrompt.userPrompt;
+        runSystemPrompt = visionPrompt.systemPrompt;
         runCmd = baseCmd;
       } catch (err) {
         failureMessage = err instanceof Error ? err.message : String(err);
@@ -1199,14 +1213,11 @@ app.post('/api/story/chat', async (req, reply) => {
     }
 
     if (!failureMessage) {
-      // 注入项目上下文（kanban KANBAN_TASK_ID 语义）：agent 进程内可感知当前项目
+      // 故事聊天不注入项目目录/名称环境变量：保持故事角色与画布和工作台完全隔离
       const first = await runAgentStream(runCmd, runPrompt, sendCollect, {
         idleTimeoutMs: idleMs,
-      env: {
-        DIRECTOR_PROJECT_DIR: ctx.projectDir,
-        DIRECTOR_PROJECT_NAME: graph.projectName,
-      },
-    });
+        systemPrompt: runSystemPrompt,
+      });
       idleKilled = first.idleKilled;
       flushPending();
 
@@ -1217,12 +1228,10 @@ app.post('/api/story/chat', async (req, reply) => {
         try {
           const visionContext = await describeFallbackImages();
           modelError = '';
-          const retry = await runAgentStream(baseCmd, buildPrompt(visionContext), sendCollect, {
+          const retryPrompt = buildPrompt(visionContext);
+          const retry = await runAgentStream(baseCmd, retryPrompt.userPrompt, sendCollect, {
             idleTimeoutMs: idleMs,
-            env: {
-              DIRECTOR_PROJECT_DIR: ctx.projectDir,
-              DIRECTOR_PROJECT_NAME: graph.projectName,
-            },
+            systemPrompt: retryPrompt.systemPrompt,
           });
           idleKilled = retry.idleKilled;
           flushPending();
