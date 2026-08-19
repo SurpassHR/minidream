@@ -6,7 +6,7 @@ import { StoryChat, parseStoryAnswers } from './StoryChat';
 let SESSIONS: Array<{ id: string; title: string; createdAt: number; updatedAt: number }> = [];
 let ACTIVE: string | null = null;
 let HISTORY: Array<{ who: string; text: string; at: number }> = [];
-let CHAT_BODIES: Array<{ message: string; sessionId?: string; assetRefs?: Array<{ id: string; name: string; kind: string }> }> = [];
+let CHAT_BODIES: Array<{ message: string; sessionId?: string; persistAs?: string; images?: unknown[]; assetRefs?: Array<{ id: string; name: string; kind: string }> }> = [];
 
 // 既有用例预置：会话列表 + 激活会话 + 历史。
 // 注：仅预置 HISTORY 不够——「无会话自动新建」分支（POST sessions）会把 HISTORY 清空，
@@ -19,6 +19,15 @@ function presetLegacySession() {
   SESSIONS = [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }];
   ACTIVE = 's1';
   HISTORY = LEGACY_HISTORY;
+}
+function presetChoiceSession() {
+  SESSIONS = [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }];
+  ACTIVE = 's1';
+  HISTORY = [{
+    who: 'agent',
+    text: '请选择故事方向。\n\n```choice\n{"question":"选一个方向？","options":[{"id":"a","label":"冒险"},{"id":"b","label":"悬疑"}]}\n```',
+    at: 2,
+  }];
 }
 
 beforeEach(() => {
@@ -93,6 +102,119 @@ describe('parseStoryAnswers', () => {
 });
 
 describe('StoryChat', () => {
+  it('历史中的合法 choice 渲染选项并隐藏机器块', async () => {
+    presetChoiceSession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /冒险/ })).toBeInTheDocument());
+    expect(screen.getByText('请选择故事方向。')).toBeInTheDocument();
+    expect(screen.getByText('选一个方向？')).toBeInTheDocument();
+    expect(screen.queryByText(/```choice/)).not.toBeInTheDocument();
+    const inputRow = screen.getByTestId('chat-composer').querySelector('.chat-input-row');
+    expect(inputRow).toContainElement(screen.getByTestId('chat-attach-btn'));
+    expect(inputRow).toContainElement(screen.getByRole('button', { name: '发送' }));
+  });
+
+  it('点击 choice 发送 label，且不带其他输入区的附件或素材引用', async () => {
+    presetChoiceSession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /冒险/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /冒险/ }));
+    await waitFor(() => expect(CHAT_BODIES.at(-1)?.message).toBe('冒险'));
+    expect(CHAT_BODIES.at(-1)?.images).toBeUndefined();
+    expect(CHAT_BODIES.at(-1)?.assetRefs).toBeUndefined();
+  });
+
+  it('流式结束后从完整 agent 原文派生下一轮 choice', async () => {
+    SESSIONS = [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }];
+    ACTIVE = 's1';
+    HISTORY = LEGACY_HISTORY;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? 'GET';
+      if (u.includes('/api/story/chat/sessions')) {
+        return new Response(JSON.stringify({ sessions: SESSIONS, activeId: ACTIVE }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat/history')) {
+        return new Response(JSON.stringify({ messages: HISTORY }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat') && method === 'POST') {
+        const reply = ['下一步？', '', '```choice', '{"question":"继续吗？","options":[{"label":"继续"},{"label":"停下"}]}', '```'].join('\n');
+        return new Response(`data: ${JSON.stringify({ chunk: reply })}\n\ndata: [DONE]\n\n`, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    }));
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: '继续推进' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /继续/ })).toBeInTheDocument());
+    expect(screen.getByText('下一步？')).toBeInTheDocument();
+    expect(screen.queryByText(/```choice/)).not.toBeInTheDocument();
+  });
+
+  it('没有合法 choice 时保持自由输入，不渲染选项按钮', async () => {
+    presetLegacySession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /冒险/ })).not.toBeInTheDocument();
+  });
+
+  it('choice 支持数字快捷键', async () => {
+    presetChoiceSession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /冒险/ })).toBeInTheDocument());
+    fireEvent.keyDown(window, { key: '2' });
+    await waitFor(() => expect(CHAT_BODIES.at(-1)?.message).toBe('悬疑'));
+  });
+
+  it('其他输入框内的数字不触发选项快捷键', async () => {
+    presetChoiceSession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /冒险/ })).toBeInTheDocument());
+    const input = screen.getByTestId('chat-input');
+    input.focus();
+    fireEvent.keyDown(input, { key: '1' });
+    expect(CHAT_BODIES.at(-1)?.message).not.toBe('冒险');
+  });
+
+  it('choice 的“其他”仍可发送自定义文本', async () => {
+    presetChoiceSession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /冒险/ })).toBeInTheDocument());
+    const input = screen.getByTestId('chat-input');
+    fireEvent.change(input, { target: { value: '我想自己描述' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(CHAT_BODIES.at(-1)?.message).toBe('我想自己描述'));
+  });
+
+  it('点击预设选项不带走待发送附件，附件仍留在“其他”输入区', async () => {
+    presetChoiceSession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /冒险/ })).toBeInTheDocument());
+    const input = screen.getByTestId('chat-input');
+    const file = new File([new Uint8Array([1, 2, 3])], 'pending.png', { type: 'image/png' });
+    fireEvent.paste(input, {
+      clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }], types: ['Files'] },
+    } as unknown as ClipboardEvent);
+    await waitFor(() => expect(screen.getByText('pending.png')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /冒险/ }));
+    await waitFor(() => expect(CHAT_BODIES.at(-1)?.message).toBe('冒险'));
+    expect(CHAT_BODIES.at(-1)?.images).toBeUndefined();
+    expect(screen.getByText('pending.png')).toBeInTheDocument();
+  });
+
+  it('空会话自动 kickoff，系统标记不显示为用户气泡', async () => {
+    SESSIONS = [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }];
+    ACTIVE = 's1';
+    HISTORY = [];
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(CHAT_BODIES.some((body) => body.persistAs === '（开始访谈）')).toBe(true));
+    expect(screen.queryByText('（开始访谈）')).not.toBeInTheDocument();
+  });
+
   it('加载历史并渲染消息', async () => {
     presetLegacySession();
     render(<StoryChat projectName="demo" onSummarized={() => {}} />);
@@ -121,6 +243,7 @@ describe('StoryChat', () => {
     expect(composer).toContainElement(screen.getByTestId('chat-input'));
     expect(composer.querySelector('.chat-input-row')).toHaveAttribute('data-layout', 'centered-controls');
     expect(composer).toContainElement(screen.getByTestId('chat-attach-btn'));
+    expect(composer.querySelector('.chat-input-row')).toContainElement(screen.getByTestId('chat-attach-btn'));
     expect(composer).toContainElement(screen.getByRole('button', { name: '发送' }));
     expect(composer).toContainElement(screen.getByText('总结成稿'));
   });

@@ -15,6 +15,7 @@ export interface SessionFile { sessions: ChatSession[]; activeId: string | null 
 export interface SessionMeta { id: string; title: string; createdAt: number; updatedAt: number }
 
 const TITLE_LIMIT = 20;
+const STORY_SYSTEM_TITLE_SKIP = new Set(['（开始访谈）', '（请总结成稿）']);
 let seq = 0;
 
 function newId(): string {
@@ -129,6 +130,7 @@ export function appendMessage(
 ): SessionFile {
   const trimmed = text.trim();
   if (!trimmed) return readSessions(file);
+  const isSystemTitleMarker = who === 'user' && STORY_SYSTEM_TITLE_SKIP.has(trimmed);
   const f = readSessions(file);
   let s = f.sessions.find((x) => x.id === sessionId);
   if (!s && sessionId !== null) {
@@ -139,14 +141,18 @@ export function appendMessage(
   if (!s) {
     // 无会话自动创建：标题 = 首条用户消息截断 20 字；归组到 boardId（无则未归组）
     const now = Date.now();
-    s = { id: newId(), title: who === 'user' ? trimTitle(trimmed) : '新会话', createdAt: now, updatedAt: now, messages: [], boardId: boardId ?? undefined };
+    s = { id: newId(), title: who === 'user' && !isSystemTitleMarker ? trimTitle(trimmed) : '新会话', createdAt: now, updatedAt: now, messages: [], boardId: boardId ?? undefined };
     f.sessions.push(s);
     f.activeId = s.id;
   }
-  // 自动标题：会话尚无用户消息且标题仍为默认「新会话」时，用首条用户消息（截断 20 字）命名
-  const isFirstUserMsg = who === 'user' && !s.messages.some((m) => m.who === 'user');
+  // 自动标题：跳过 kickoff/总结标记，寻找第一条真实用户消息（截断 20 字）命名。
+  const hasRealUserMessage = s.messages.some(
+    (m) => m.who === 'user' && !STORY_SYSTEM_TITLE_SKIP.has(m.text.trim()),
+  );
   s.messages.push({ who, text: trimmed, at: Date.now() });
-  if (isFirstUserMsg && s.title === '新会话') s.title = trimTitle(trimmed);
+  if (who === 'user' && !isSystemTitleMarker && !hasRealUserMessage && s.title === '新会话') {
+    s.title = trimTitle(trimmed);
+  }
   if (s.messages.length > maxMessages) {
     s.messages = s.messages.slice(s.messages.length - maxMessages);
   }

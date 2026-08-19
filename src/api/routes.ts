@@ -119,16 +119,28 @@ export function buildStoryChatPrompt(
   message: string,
   systemPrompt?: string,
   ragContext?: string,
+  mode: 'chat' | 'system' = 'chat',
 ): string {
   const parts: string[] = [];
   parts.push(systemPrompt?.trim() || '你是导演工作台的故事编剧（story-teller 对话模式）。你正在帮用户自由构思一个视频故事的创意。');
   // 项目 RAG 命中片段：紧跟系统提示词注入，让模型优先依据知识库作答
   if (ragContext?.trim()) parts.push('\n' + ragContext.trim());
   parts.push('要求：');
-  parts.push('1. 直接给出创作建议、扩展点子或追问，像资深编剧与导演讨论剧本一样自然；');
-  parts.push('2. 结合项目设定与已有向导进度，不要重复用户已写的内容；');
-  parts.push('3. 每次回答 100-200 字，聚焦推进故事；');
-  parts.push('4. 用中文回答。');
+  if (mode === 'chat') {
+    parts.push('1. 用访谈语言写一句短问或确认，像资深编剧推进访谈，不要重复用户已确认的内容；');
+    parts.push('2. 每次只问一件事；正文不要罗列选项，不要解释机器格式；');
+    parts.push('3. 文末必须追加且仅追加一个 choice 代码块，围栏语言标记为 choice；');
+    parts.push('4. choice 块必须是合法 JSON：{"question":"短问句","options":[{"id":"stable-id","label":"可发送的选项原文"}]}；');
+    parts.push('5. options 2–4 项，互斥；label 用访谈语言，点击后会原样作为用户回答发回；');
+    parts.push('6. 不要把「其他 / 自定义 / 我自己说」放进 options，前端会单独提供输入框；');
+    parts.push('7. 用户说「你决定 / 随便 / I don\'t know」时自己选定并继续，不要停住追问；');
+    parts.push('8. 用中文还是其它语言，以用户已选的访谈语言为准；尚未选择时先问语言。');
+  } else {
+    parts.push('1. 直接给出创作建议、扩展点子或追问，像资深编剧与导演讨论剧本一样自然；');
+    parts.push('2. 结合项目设定与已有向导进度，不要重复用户已写的内容；');
+    parts.push('3. 每次回答 100-200 字，聚焦推进故事；');
+    parts.push('4. 用中文回答。');
+  }
   parts.push(`\n当前项目：${projectName}`);
   const filled = Object.entries(answers).filter(([, v]) => v && v.trim());
   if (filled.length > 0) {
@@ -1078,6 +1090,7 @@ app.post('/api/story/chat', async (req, reply) => {
   }
   const assetContext = buildStoryAssetContext(assetRefs);
   const assetImageInput = buildStoryAssetImageFiles(assetRefs);
+  const mode = body.persistAs === '（请总结成稿）' ? 'system' : 'chat';
   const buildPrompt = (visionContext = '') => {
     const context = [assetContext, visionContext].filter((part) => part.trim()).join('\n\n');
     return buildStoryChatPrompt(
@@ -1087,6 +1100,7 @@ app.post('/api/story/chat', async (req, reply) => {
       context ? `${message}\n\n${context}` : message,
       effectiveSystem,
       ragContext,
+      mode,
     );
   };
   const prompt = buildPrompt();

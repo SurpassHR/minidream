@@ -180,6 +180,35 @@ describe('API 故事对话', () => {
     expect(res.json().code).toBe('INVALID_PATCH');
   });
 
+  it('POST /api/story/chat kickoff 使用 chat choice 契约并落盘系统标记', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_ECHO_STDIN', '1');
+    const res = await a.inject({
+      method: 'POST', url: '/api/story/chat',
+      payload: {
+        message: '这是新会话。按系统提示词开始访谈：先问用户希望使用哪种访谈语言，然后在文末给出 choice 代码块。',
+        persistAs: '（开始访谈）',
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('options');
+    expect(res.body).toContain('围栏语言标记为 choice');
+    const hist = await a.inject({ method: 'GET', url: '/api/story/chat/history' });
+    expect(hist.json().messages[0].text).toBe('（开始访谈）');
+  });
+
+  it('POST /api/story/chat 总结成稿使用 system 要求而不注入 choice 契约', async () => {
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_ECHO_STDIN', '1');
+    const res = await a.inject({
+      method: 'POST', url: '/api/story/chat',
+      payload: { message: '请总结成稿', persistAs: '（请总结成稿）' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('每次回答 100-200 字，聚焦推进故事');
+    expect(res.body).not.toContain('```choice');
+  });
+
   it('POST /api/story/chat 带 persistAs：落盘用标记而非长指令原文', async () => {
     vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
     vi.stubEnv('MOCK_REPLY', 'mock');
@@ -397,6 +426,20 @@ describe('API 全局设置', () => {
 });
 
 describe('buildStoryChatPrompt 纯函数', () => {
+  it('chat 模式注入 choice 契约，system 模式保持总结成稿旧要求', async () => {
+    const { buildStoryChatPrompt } = await import('./routes.js');
+    const chat = buildStoryChatPrompt('p', {}, [], '你好', undefined, undefined, 'chat');
+    expect(chat).toContain('文末必须追加且仅追加一个 choice 代码块');
+    expect(chat).toContain('不要把「其他 / 自定义 / 我自己说」放进 options');
+    expect(chat).toContain('choice 块必须是合法 JSON');
+
+    const system = buildStoryChatPrompt('p', {}, [], '你好', undefined, undefined, 'system');
+    expect(system).toContain('每次回答 100-200 字，聚焦推进故事');
+    expect(system).toContain('用中文回答');
+    expect(system).not.toContain('```choice');
+    expect(system).not.toContain('choice 代码块');
+  });
+
   it('buildStoryChatPrompt：systemPrompt 替换写死文本；缺省兜底', async () => {
     const { buildStoryChatPrompt, isVisionUnsupportedError } = await import('./routes.js');
     const base = buildStoryChatPrompt('p', {}, [], '你好');

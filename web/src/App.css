@@ -1423,6 +1423,54 @@ button > .dw-icon, a > .dw-icon, .mid-tab > .dw-icon, .ctx-tab > .dw-icon { marg
   .chat-composer .chat-actions { justify-content: flex-start; }
 }
 
+/* Story choice composer：选项是访谈主路径，“其他”仍复用原输入能力 */
+.chat-choice { min-width: 0; }
+.chat-choice-q {
+  margin: 1px 0 10px;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.chat-choice-options { display: flex; flex-direction: column; gap: 7px; }
+.chat-choice-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--border-2);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background .14s, border-color .14s, color .14s;
+}
+.chat-choice-opt:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--amber) 65%, var(--border-2));
+  background: var(--amber-dim);
+  color: var(--amber-soft);
+}
+.chat-choice-opt:disabled { opacity: .45; cursor: wait; }
+.chat-choice-key {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border: 1px solid var(--border-2);
+  border-radius: 5px;
+  color: var(--amber-soft);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.chat-choice-divider { margin-top: 12px; border-top: 1px solid var(--border); }
+.chat-composer .chat-attach-btn:disabled { opacity: .4; cursor: wait; }
+
 /* Story editor layout pass · quiet reading column */
 .chat-wrap { flex-direction: column; gap: 12px; }
 .session-panel {
@@ -1897,15 +1945,18 @@ button > .dw-icon, a > .dw-icon, .mid-tab > .dw-icon, .ctx-tab > .dw-icon { marg
   line-height: 1.2;
 }
 
-/* Composer controls use an explicit grid so the attachment button cannot drift with textarea baselines. */
+/* Composer controls use an explicit grid so the attachment and send buttons stay aligned. */
 .chat-composer[data-layout="inset-composer"] .chat-input-row[data-layout="centered-controls"] {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) auto;
   align-items: center;
-  padding-bottom: 10px;
 }
 .chat-composer[data-layout="inset-composer"] .chat-attach-btn {
   place-self: center;
+}
+.chat-composer[data-layout="inset-composer"] .chat-actions .chat-attach-btn {
+  place-self: center;
+  margin: 0;
 }
 
 /* 系统提示词面板：与 RAG 共用独立阅读列，长 prompt 只在编辑框内部滚动 */
@@ -2114,7 +2165,15 @@ button > .dw-icon, a > .dw-icon, .mid-tab > .dw-icon, .ctx-tab > .dw-icon { marg
   min-height: 52px; max-height: 180px; overflow: auto; outline: none;
   white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
 }
-.mention-editor:empty::before { content: attr(data-placeholder); color: var(--text-faint); pointer-events: none; }
+.mention-editor:empty {
+  display: flex;
+  align-items: center;
+}
+.mention-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-faint);
+  pointer-events: none;
+}
 .asset-mention-token {
   display: inline; padding: 1px 5px; border-radius: 4px;
   background: color-mix(in srgb, var(--amber) 18%, var(--panel-3));

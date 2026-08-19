@@ -53,6 +53,7 @@ export function MentionComposer(props: {
   placeholder: string;
   testId: string;
   className?: string;
+  disabled?: boolean;
   mentionOpen: boolean;
   mentionItems: MentionAsset[];
   mentionActiveIndex: number;
@@ -111,16 +112,18 @@ export function MentionComposer(props: {
         className="mention-editor"
         data-testid={props.testId}
         data-placeholder={props.placeholder}
-        contentEditable
+        contentEditable={!props.disabled}
+        aria-disabled={props.disabled || undefined}
         suppressContentEditableWarning
         role="textbox"
         aria-multiline="true"
         onInput={(event) => {
+          if (props.disabled) return;
           syntheticValueRef.current = null;
           props.onChange(readEditorValue(event.currentTarget));
         }}
-        onPaste={props.onPaste}
-        onKeyDown={props.onKeyDown}
+        onPaste={props.disabled ? undefined : props.onPaste}
+        onKeyDown={props.disabled ? undefined : props.onKeyDown}
         onClick={(event) => {
           const token = (event.target as HTMLElement).closest<HTMLElement>('[data-asset-token]');
           if (!token) return;

@@ -109,6 +109,20 @@ describe('appendMessage', () => {
     expect(f2.sessions.find((s) => s.id === f2.activeId)!.title).toBe('新会话');
   });
 
+  it('系统标记不命名会话，随后首条真实用户消息才命名', () => {
+    const f = createSession(file);
+    const id = f.activeId!;
+    appendMessage(file, id, 'user', '（开始访谈）', 300);
+    appendMessage(file, id, 'agent', '第一问', 300);
+    appendMessage(file, id, 'user', '中文', 300);
+    expect(readSessions(file).sessions[0]!.title).toBe('中文');
+
+    const second = createSession(file);
+    appendMessage(file, second.activeId, 'user', '（请总结成稿）', 300);
+    appendMessage(file, second.activeId, 'user', '另一个故事', 300);
+    expect(readSessions(file).sessions.find((s) => s.id === second.activeId)!.title).toBe('另一个故事');
+  });
+
   it('空文本忽略不追加', () => {
     createSession(file);
     const before = activeMessages(file);
