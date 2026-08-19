@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { client } from '../api/client';
 import { Icon } from '../icons';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -39,6 +40,11 @@ async function importFiles(
   }
 }
 
+function modalHost(): HTMLElement {
+  // 挂到 .app 而不是 body，既脱离抽屉的 transform，又能继承 data-theme 变量。
+  return document.querySelector<HTMLElement>('.app') ?? document.body;
+}
+
 export function AssetLibrary(props: {
   items: AssetItem[];
   onDropToCanvas: (item: AssetItem, position: { x: number; y: number }) => void;
@@ -72,7 +78,20 @@ export function AssetLibrary(props: {
   const [directoryBusy, setDirectoryBusy] = useState(false);
   const [directoryError, setDirectoryError] = useState('');
 
-  const filtered = items.filter((i) => i.name.includes(query));
+  // 图像 caption 生成的同名 .txt 仍保留在素材库，只在侧边栏隐藏，避免重复展示。
+  const captionTextNames = new Set(
+    items
+      .filter((item) => item.kind === 'img' && Boolean(item.caption))
+      .map((item) => {
+        const dot = item.name.lastIndexOf('.');
+        const stem = dot > 0 ? item.name.slice(0, dot) : item.name;
+        return `${stem}.txt`.toLowerCase();
+      }),
+  );
+  const visibleItems = items.filter((item) => (
+    item.kind !== 'txt' || !captionTextNames.has(item.name.toLowerCase())
+  ));
+  const filtered = visibleItems.filter((i) => i.name.includes(query));
 
   const openPreview = async (item: AssetItem) => {
     if (!item.id) return;
@@ -95,6 +114,17 @@ export function AssetLibrary(props: {
     setPreviewContent(null);
     setPreviewError('');
   };
+
+  // 抽屉内容带有 transform 入场动画，普通 fixed 子元素会被限制在抽屉内；
+  // 预览弹窗通过 portal 挂到 body，并支持 Esc 关闭。
+  useEffect(() => {
+    if (!previewTarget) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closePreview();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [previewTarget]);
 
   const openEdit = async (item: AssetItem) => {
     if (!item.id) return;
@@ -368,7 +398,7 @@ export function AssetLibrary(props: {
           </div>
         ))}
       </div>
-      {previewTarget && (
+      {previewTarget && createPortal(
         <div className="dialog-mask asset-preview-mask" role="dialog" aria-label={`预览素材：${previewTarget.name}`} onClick={closePreview}>
           <div className="dialog dialog-wide asset-preview-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="dialog-title">预览素材</div>
@@ -417,9 +447,10 @@ export function AssetLibrary(props: {
               <button type="button" className="btn-ghost" onClick={closePreview}>关闭</button>
             </div>
           </div>
-        </div>
+        </div>,
+        modalHost(),
       )}
-      {editTarget && (
+      {editTarget && createPortal(
         <div className="dialog-mask asset-edit-mask" role="dialog" aria-label="编辑素材">
           <div className="dialog dialog-wide asset-edit-dialog">
             <div className="dialog-title">编辑素材</div>
@@ -443,16 +474,17 @@ export function AssetLibrary(props: {
               <button type="button" className="btn-primary" data-testid="asset-edit-save" onClick={() => { void saveEdit(); }} disabled={editBusy || !editName.trim()}>{editBusy ? '保存中…' : '保存素材'}</button>
             </div>
           </div>
-        </div>
+        </div>,
+        modalHost(),
       )}
-      <ConfirmDialog
+      {createPortal(<ConfirmDialog
         open={deleteTarget !== null}
         title="删除素材"
         body={`删除「${deleteTarget?.name ?? ''}」？该操作会移除素材文件，且无法撤销。`}
         confirmLabel="确认删除"
         onCancel={() => setDeleteTarget(null)}
         onConfirm={() => { void confirmDelete(); }}
-      />
+      />, modalHost())}
     </div>
   );
 }

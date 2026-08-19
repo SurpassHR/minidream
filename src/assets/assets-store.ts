@@ -138,21 +138,46 @@ function findAsset(id: string): AssetRecord {
   return rec;
 }
 
+function captionTextName(imageName: string): string {
+  return `${basename(imageName, extname(imageName))}.txt`;
+}
+
 export function updateAsset(id: string, patch: { name?: string; content?: string }): AssetRecord {
   const rec = findAsset(id);
+  const records = readIndex();
   const next = { ...rec };
+  let linkedCaption: AssetRecord | undefined;
+  let linkedCaptionName = '';
   if (patch.name !== undefined) {
     const name = patch.name.trim();
     if (!name) throw new DirectorError('INVALID_PATCH', '素材名称不能为空');
     next.name = name;
+    // caption 文本由图像基名生成：图像改名时同步更新其同名 txt，避免侧边栏隐藏规则失效。
+    if (rec.kind === 'img' && rec.caption && name !== rec.name) {
+      const oldCaptionName = captionTextName(rec.name).toLowerCase();
+      linkedCaption = records.find((item) => item.kind === 'txt' && item.name.toLowerCase() === oldCaptionName);
+      if (linkedCaption) {
+        linkedCaptionName = captionTextName(name);
+        const conflict = records.find((item) => (
+          item.kind === 'txt'
+          && item.id !== linkedCaption!.id
+          && item.name.toLowerCase() === linkedCaptionName.toLowerCase()
+        ));
+        if (conflict) throw new DirectorError('FILE_CONFLICT', `caption 文本名称已存在：${linkedCaptionName}`);
+      }
+    }
   }
   if (patch.content !== undefined) {
     if (rec.kind !== 'txt') throw new DirectorError('FILE_CONFLICT', '只有文本素材可以编辑内容');
     writeFileSync(join(assetDir(), `${rec.id}${rec.ext}`), patch.content, 'utf8');
     next.size = Buffer.byteLength(patch.content, 'utf8');
   }
-  const records = readIndex().map((item) => item.id === id ? next : item);
-  writeIndex(records);
+  const updated = records.map((item) => {
+    if (item.id === id) return next;
+    if (linkedCaption && item.id === linkedCaption.id) return { ...item, name: linkedCaptionName };
+    return item;
+  });
+  writeIndex(updated);
   return next;
 }
 

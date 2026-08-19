@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { saveSettings } from '../settings/settings-store.js';
-import { assetDirectoryPath, deleteAsset, importAssetFile, importAssetText, listAssets, migrateAssetDirectory, readAssetText, replaceAssetFile, updateAsset } from './assets-store.js';
+import { assetDirectoryPath, deleteAsset, importAssetFile, importAssetText, listAssets, migrateAssetDirectory, readAssetText, replaceAssetFile, setAssetCaption, updateAsset } from './assets-store.js';
 
 let realHome: string;
 let fakeHome: string;
@@ -54,6 +54,36 @@ describe('assets-store', () => {
     expect(updated.name).toBe('新名称.md');
     expect(updated.size).toBe(Buffer.byteLength('新内容', 'utf8'));
     expect(readAssetText(rec.id)).toBe('新内容');
+  });
+
+  it('有 caption 的图像改名时同步同名 caption txt', () => {
+    const image = join(srcDir, 'preview.png');
+    writeFileSync(image, Buffer.from([1]));
+    const imageRec = importAssetFile(image);
+    setAssetCaption(imageRec.id, '墨绿斗篷的精灵骑士');
+    const captionRec = importAssetText('preview.txt', '墨绿斗篷的精灵骑士');
+
+    const updated = updateAsset(imageRec.id, { name: 'hero.png' });
+    const caption = listAssets().find((item) => item.id === captionRec.id)!;
+
+    expect(updated.name).toBe('hero.png');
+    expect(caption.name).toBe('hero.txt');
+    expect(caption.id).toBe(captionRec.id);
+    expect(readAssetText(caption.id)).toBe('墨绿斗篷的精灵骑士');
+  });
+
+  it('caption txt 目标名称冲突时拒绝图像改名', () => {
+    const image = join(srcDir, 'preview.png');
+    writeFileSync(image, Buffer.from([1]));
+    const imageRec = importAssetFile(image);
+    setAssetCaption(imageRec.id, 'caption');
+    importAssetText('hero.txt', '其他文本');
+    importAssetText('preview.txt', 'caption');
+
+    expect(() => updateAsset(imageRec.id, { name: 'hero.png' })).toThrowError(
+      expect.objectContaining({ code: 'FILE_CONFLICT' }),
+    );
+    expect(listAssets().find((item) => item.id === imageRec.id)?.name).toBe('preview.png');
   });
 
   it('replaceAssetFile 替换同类型文件并更新大小与扩展名', () => {

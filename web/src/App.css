@@ -2081,6 +2081,16 @@ button > .dw-icon, a > .dw-icon, .mid-tab > .dw-icon, .ctx-tab > .dw-icon { marg
 .asset-edit-label .ne-textarea { min-height: 180px; resize: vertical; }
 .asset-edit-file { padding: 9px; background: var(--panel); border: 1px solid var(--border); border-radius: 5px; color: var(--text-dim); font-size: 11px; }
 .asset-edit-dialog input[type='file'] { color: var(--text-dim); font-size: 11px; }
+/* 素材预览/编辑弹窗通过 portal 挂到 body，避免抽屉入场 transform 限制 fixed 定位。
+   使用稳定的深色半透明遮罩，避免浅色主题出现白色覆盖层。 */
+.asset-preview-mask,
+.asset-edit-mask {
+  z-index: 120;
+  background: rgba(10, 14, 20, .58) !important;
+  backdrop-filter: blur(5px);
+}
+.asset-preview-dialog,
+.asset-edit-dialog { background: var(--panel-2); }
 @media (max-width: 900px) {
   .asset-drawer.open, .workspace-drawer.open { flex-basis: min(400px, 45vw); width: min(400px, 45vw); min-width: 280px; }
   .asset-drawer-head, .asset-drawer-sub, .asset-drawer > .assets, .workspace-drawer > .drawer-content, .task-drawer > .task-queue { min-width: 280px; }

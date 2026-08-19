@@ -376,6 +376,24 @@ describe('AssetLibrary 图像 captioning', () => {
     expect(onChanged).toHaveBeenCalled();
     // 预览打开并直接显示 caption 文本（无需再拉取内容）
     expect(await screen.findByTestId('asset-preview-text')).toHaveTextContent('墨绿斗篷的精灵骑士');
+    const dialog = screen.getByRole('dialog', { name: '预览素材：preview.txt' });
+    expect(dialog.parentElement).toBe(document.body);
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '预览素材：preview.txt' })).not.toBeInTheDocument();
+  });
+
+  it('深色主题下预览弹窗挂在 app 容器内以继承主题变量', async () => {
+    const app = document.createElement('div');
+    app.className = 'app';
+    app.dataset.theme = 'dark';
+    document.body.appendChild(app);
+    const { unmount } = render(<AssetLibrary items={[{ id: 'img-1', kind: 'img', name: 'preview.png' }]} onDropToCanvas={() => {}} />, { container: app });
+    fireEvent.click(screen.getByTestId('asset-caption-img-1'));
+    const dialog = await screen.findByRole('dialog', { name: '预览素材：preview.txt' });
+    expect(dialog.parentElement).toBe(app);
+    unmount();
+    app.remove();
   });
 
   it('captioning 失败时显示错误且不打开预览', async () => {
@@ -399,6 +417,16 @@ describe('AssetLibrary 图像 captioning', () => {
   it('图像卡片在缩略图下方显示 caption 文本', () => {
     render(<AssetLibrary items={[{ id: 'img-1', kind: 'img', name: 'preview.png', caption: '墨绿斗篷的精灵骑士' }]} onDropToCanvas={() => {}} />);
     expect(screen.getByText('墨绿斗篷的精灵骑士')).toBeInTheDocument();
+  });
+
+  it('图像已有 caption 时隐藏对应的同名 txt，但保留其他文本素材', () => {
+    render(<AssetLibrary items={[
+      { id: 'img-1', kind: 'img', name: 'preview.png', caption: '墨绿斗篷的精灵骑士' },
+      { id: 'txt-1', kind: 'txt', name: 'preview.txt' },
+      { id: 'txt-2', kind: 'txt', name: 'world.md' },
+    ]} onDropToCanvas={() => {}} />);
+    expect(screen.queryByText('preview.txt')).not.toBeInTheDocument();
+    expect(screen.getByText('world.md')).toBeInTheDocument();
   });
 
   it('无 caption 的图像卡片不显示描述区', () => {
