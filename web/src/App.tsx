@@ -21,7 +21,7 @@ import { connectWs } from './api/ws';
 import { useHashRoute } from './router';
 import { StoryTellerView } from './views/StoryTellerView';
 import { ObjectDesignerView } from './views/ObjectDesignerView';
-import type { MentionAsset } from './panels/AssetMentionPicker';
+import { broadcastAssetsChanged, type MentionAsset } from './panels/AssetMentionPicker';
 import type { TaskRecord } from './types';
 import { TaskQueue } from './panels/TaskQueue';
 
@@ -200,11 +200,15 @@ export default function App() {
     return () => { disposed = true; clearInterval(timer); };
   }, []);
 
-  // 素材库真实数据源：成功 → 真实列表（空数组即空态）；失败 → null（显示空态，不误显 mock 数据）
+  // 素材库真实数据源：成功 → 真实列表（空数组即空态）；失败 → null（显示空态，不误显 mock 数据）。
+  // 刷新成功后广播 assets-changed，让 @ 引用输入框（StoryChat/AgentPanel 的 useAssetMentions）同步重拉。
   const refreshAssets = useCallback(() => {
-    void client.listAssets().then((list) => setAssets(list.map((a) => ({
-      id: a.id, kind: a.kind, name: a.name, meta: a.meta, caption: a.caption,
-    })))).catch(() => setAssets(null));
+    void client.listAssets().then((list) => {
+      setAssets(list.map((a) => ({
+        id: a.id, kind: a.kind, name: a.name, meta: a.meta, caption: a.caption,
+      })));
+      broadcastAssetsChanged();
+    }).catch(() => setAssets(null));
   }, []);
 
   useEffect(() => { refreshAssets(); }, [refreshAssets]);

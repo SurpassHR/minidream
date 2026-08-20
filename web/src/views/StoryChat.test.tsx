@@ -1,11 +1,18 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { StoryChat, parseStoryAnswers } from './StoryChat';
+import { broadcastAssetsChanged } from '../panels/AssetMentionPicker';
 
 // —— URL 感知 mock（Task 4 多会话）：sessions/history 返回 JSON，story/chat POST 返回 SSE ——
 let SESSIONS: Array<{ id: string; title: string; createdAt: number; updatedAt: number }> = [];
 let ACTIVE: string | null = null;
 let HISTORY: Array<{ who: string; text: string; at: number }> = [];
+// 素材列表可变（素材库新增素材场景）：useAssetMentions 挂载时 + assets-changed 事件时各拉取一次
+let ASSETS: Array<{ id: string; kind: 'txt' | 'img' | 'vid'; name: string }> = [
+  { id: 'txt-1', kind: 'txt', name: '世界观.md' },
+  { id: 'img-1', kind: 'img', name: '角色.png' },
+  { id: 'vid-1', kind: 'vid', name: '参考视频.mp4' },
+];
 let CHAT_BODIES: Array<{ message: string; sessionId?: string; persistAs?: string; systemPrompt?: string; images?: unknown[]; assetRefs?: Array<{ id: string; name: string; kind: string }> }> = [];
 
 // 既有用例预置：会话列表 + 激活会话 + 历史。
@@ -32,6 +39,11 @@ function presetChoiceSession() {
 
 beforeEach(() => {
   SESSIONS = []; ACTIVE = null; HISTORY = []; CHAT_BODIES = [];
+  ASSETS = [
+    { id: 'txt-1', kind: 'txt', name: '世界观.md' },
+    { id: 'img-1', kind: 'img', name: '角色.png' },
+    { id: 'vid-1', kind: 'vid', name: '参考视频.mp4' },
+  ];
   localStorage.clear();
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     const u = String(url);
@@ -57,11 +69,7 @@ beforeEach(() => {
       return new Response(JSON.stringify({ messages: HISTORY }), { status: 200 });
     }
     if (u === '/api/assets') {
-      return new Response(JSON.stringify({ assets: [
-        { id: 'txt-1', kind: 'txt', name: '世界观.md' },
-        { id: 'img-1', kind: 'img', name: '角色.png' },
-        { id: 'vid-1', kind: 'vid', name: '参考视频.mp4' },
-      ] }), { status: 200 });
+      return new Response(JSON.stringify({ assets: ASSETS }), { status: 200 });
     }
     if (u.includes('/api/assets/') && u.endsWith('/file')) {
       return new Response(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }), { status: 200 });
@@ -295,6 +303,26 @@ describe('StoryChat', () => {
     expect(menu).toHaveClass('asset-mention-menu');
     expect(menu).toHaveAttribute('data-placement', 'above');
     expect(menu).toHaveAttribute('data-width-bound', 'container');
+  });
+
+  it('素材库新增素材后 @ 引用菜单即时出现新素材', async () => {
+    presetLegacySession();
+    render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+    await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
+    const input = screen.getByTestId('chat-input');
+    // 挂载时只拉到旧素材：@ 菜单不含新素材
+    fireEvent.change(input, { target: { value: '@' } });
+    let menu = await screen.findByTestId('chat-asset-mention-menu');
+    expect(menu.textContent).toContain('世界观.md');
+    expect(menu.textContent).not.toContain('新场景.md');
+    // 模拟素材库新增素材后 App.refreshAssets 成功广播 assets-changed
+    ASSETS = [...ASSETS, { id: 'txt-2', kind: 'txt', name: '新场景.md' }];
+    broadcastAssetsChanged();
+    // 重新输入 @新 → 新素材进入候选并可直接选中
+    fireEvent.change(input, { target: { value: '@新' } });
+    await waitFor(() => expect(screen.getByTestId('chat-asset-mention-txt-2')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('chat-asset-mention-txt-2'));
+    await waitFor(() => expect(input).toHaveValue('@新场景.md '));
   });
 
   it('Shift+Enter 保留多行输入，不触发发送', async () => {

@@ -30,20 +30,39 @@ export function insertAssetMention(value: string, item: MentionAsset): string {
   return `${replaceAssetMention(value)}@${item.name} `;
 }
 
+// 素材库变更全局信号：App 在 refreshAssets 成功后广播，@ 引用菜单监听后重拉素材。
+// 素材库是全局的（~/.director/assets），变更点汇聚在 App.refreshAssets（AssetLibrary 的
+// 导入/编辑/删除/caption 都经 onAssetsChanged 触发它），在此广播可让所有 @ 引用输入框
+// （StoryChat / AgentPanel）即时拿到新素材，无需改动组件 props 契约。
+const ASSETS_CHANGED_EVENT = 'director:assets-changed';
+
+export function broadcastAssetsChanged(): void {
+  window.dispatchEvent(new CustomEvent(ASSETS_CHANGED_EVENT));
+}
+
 export function useAssetMentions(input: string) {
   const [assets, setAssets] = useState<MentionAsset[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [dismissedQuery, setDismissedQuery] = useState<string | null>(null);
   const mention = findAssetMention(input);
 
+  // 挂载时加载一次；此后监听素材库变更事件（broadcastAssetsChanged）重新拉取，
+  // 保证素材库新增/删除素材后 @ 引用菜单与素材库面板保持一致。
   useEffect(() => {
     let disposed = false;
-    void client.listAssets().then((items) => {
-      if (!disposed) setAssets(items.filter((item): item is MentionAsset => typeof item.id === 'string'));
-    }).catch(() => {
-      if (!disposed) setAssets([]);
-    });
-    return () => { disposed = true; };
+    const load = () => {
+      void client.listAssets().then((items) => {
+        if (!disposed) setAssets(items.filter((item): item is MentionAsset => typeof item.id === 'string'));
+      }).catch(() => {
+        if (!disposed) setAssets([]);
+      });
+    };
+    load();
+    window.addEventListener(ASSETS_CHANGED_EVENT, load);
+    return () => {
+      disposed = true;
+      window.removeEventListener(ASSETS_CHANGED_EVENT, load);
+    };
   }, []);
 
   useEffect(() => {
