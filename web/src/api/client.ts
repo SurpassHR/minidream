@@ -529,6 +529,32 @@ export const client = {
     return r;
   },
 
+  async deleteStoryChatMessage(index: number, sessionId?: string | null): Promise<Array<{ who: 'user' | 'agent'; text: string; at: number }>> {
+    const q = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+    const r = await req<{ messages: Array<{ who: 'user' | 'agent'; text: string; at: number }> }>(
+      `/api/story/chat/messages/${index}${q}`,
+      { method: 'DELETE' },
+    );
+    return r.messages;
+  },
+
+  async updateStoryChatMessage(
+    index: number,
+    text: string,
+    sessionId?: string | null,
+    truncateAfter?: boolean,
+  ): Promise<Array<{ who: 'user' | 'agent'; text: string; at: number }>> {
+    const q = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+    const r = await req<{ messages: Array<{ who: 'user' | 'agent'; text: string; at: number }> }>(
+      `/api/story/chat/messages/${index}${q}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ text, truncateAfter: Boolean(truncateAfter) }),
+      },
+    );
+    return r.messages;
+  },
+
   // SSE 流式对话（协议同 /api/agent/chat，端点独立）；
   // persistAs：系统动作（总结成稿）的落盘标记，避免长指令污染对话历史；
   // systemPrompt：可选的自定义系统提示词；后端会作为 pi 的原生 system prompt 传入；

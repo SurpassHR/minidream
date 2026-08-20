@@ -159,3 +159,55 @@ export function appendMessage(
   s.updatedAt = Date.now();
   return writeSessions(file, f);
 }
+
+// 删除会话中单条消息（按索引）
+export function deleteSessionMessage(file: string, sessionId: string | null, messageIndex: number): SessionFile {
+  const f = readSessions(file);
+  const targetId = sessionId ?? f.activeId;
+  const s = f.sessions.find((x) => x.id === targetId);
+  if (!s) throw new DirectorError('SESSION_NOT_FOUND', `会话不存在: ${targetId}`);
+  if (messageIndex < 0 || messageIndex >= s.messages.length) {
+    throw new DirectorError('MESSAGE_NOT_FOUND', `消息不存在: 索引 ${messageIndex}`);
+  }
+  s.messages.splice(messageIndex, 1);
+  s.updatedAt = Date.now();
+  return writeSessions(file, f);
+}
+
+// 修改会话中单条消息内容（按索引）
+export function updateSessionMessage(file: string, sessionId: string | null, messageIndex: number, text: string): SessionFile {
+  const trimmed = text.trim();
+  if (!trimmed) throw new DirectorError('INVALID_INPUT', '消息内容不能为空');
+  const f = readSessions(file);
+  const targetId = sessionId ?? f.activeId;
+  const s = f.sessions.find((x) => x.id === targetId);
+  if (!s) throw new DirectorError('SESSION_NOT_FOUND', `会话不存在: ${targetId}`);
+  if (messageIndex < 0 || messageIndex >= s.messages.length) {
+    throw new DirectorError('MESSAGE_NOT_FOUND', `消息不存在: 索引 ${messageIndex}`);
+  }
+  s.messages[messageIndex]!.text = trimmed;
+  s.updatedAt = Date.now();
+  return writeSessions(file, f);
+}
+
+// 截断指定索引之后的所有消息（保留 0..=cutoffIndex），用于编辑后重新生成
+export function truncateSessionMessages(file: string, sessionId: string | null, cutoffIndex: number): SessionFile {
+  const f = readSessions(file);
+  const targetId = sessionId ?? f.activeId;
+  const s = f.sessions.find((x) => x.id === targetId);
+  if (!s) throw new DirectorError('SESSION_NOT_FOUND', `会话不存在: ${targetId}`);
+  if (cutoffIndex < 0 || cutoffIndex >= s.messages.length) {
+    throw new DirectorError('MESSAGE_NOT_FOUND', `消息不存在: 索引 ${cutoffIndex}`);
+  }
+  s.messages = s.messages.slice(0, cutoffIndex + 1);
+  // 如果截断后剩下的第一条真实用户消息变化，更新标题
+  const firstReal = s.messages.find((m) => m.who === 'user' && !STORY_SYSTEM_TITLE_SKIP.has(m.text.trim()));
+  if (firstReal) {
+    s.title = trimTitle(firstReal.text.trim());
+  } else {
+    s.title = '新会话';
+  }
+  s.updatedAt = Date.now();
+  return writeSessions(file, f);
+}
+

@@ -68,6 +68,20 @@ beforeEach(() => {
     if (u.includes('/api/story/chat/history')) {
       return new Response(JSON.stringify({ messages: HISTORY }), { status: 200 });
     }
+    if (u.includes('/api/story/chat/messages/')) {
+      const idx = Number(u.split('?')[0].split('/').pop());
+      if (method === 'DELETE') {
+        HISTORY = HISTORY.filter((_, i) => i !== idx);
+      } else if (method === 'PATCH') {
+        const body = JSON.parse(String(init?.body)) as { text: string; truncateAfter?: boolean };
+        if (body.truncateAfter) {
+          HISTORY = [...HISTORY.slice(0, idx), { ...HISTORY[idx], text: body.text }];
+        } else {
+          HISTORY = HISTORY.map((m, i) => (i === idx ? { ...m, text: body.text } : m));
+        }
+      }
+      return new Response(JSON.stringify({ messages: HISTORY }), { status: 200 });
+    }
     if (u === '/api/assets') {
       return new Response(JSON.stringify({ assets: ASSETS }), { status: 200 });
     }
@@ -835,4 +849,70 @@ describe('StoryChat', () => {
     expect(CHAT_BODIES.at(-1)!.systemPrompt).toMatch(/^破甲预设文本\n\n/);
     expect(CHAT_BODIES.at(-1)!.message).toContain('theme: 一句话主题');
   });
+
+  describe('代码块换行切换与消息修改/删除', () => {
+    it('代码块工具栏提供换行切换按钮（默认开启 wrap）', async () => {
+      presetLegacySession();
+      HISTORY = [{ who: 'agent', text: '```typescript\nconst a = 1;\n```', at: 100 }];
+      render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+      await waitFor(() => expect(screen.getByTestId('toggle-wrap-btn')).toBeInTheDocument());
+      const btn = screen.getByTestId('toggle-wrap-btn');
+      expect(btn).toHaveAttribute('title', '取消自动换行');
+      const pre = screen.getByText('const a = 1;').closest('pre');
+      expect(pre).toHaveClass('is-wrapped');
+      fireEvent.click(btn);
+      expect(btn).toHaveAttribute('title', '自动换行');
+      expect(pre).not.toHaveClass('is-wrapped');
+    });
+
+    it('删除消息：打开二次确认并成功同步后端及更新界面', async () => {
+      presetLegacySession();
+      HISTORY = [
+        { who: 'user', text: '第一句', at: 100 },
+        { who: 'agent', text: '第二句', at: 200 },
+      ];
+      render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+      await waitFor(() => expect(screen.getByText('第一句')).toBeInTheDocument());
+
+      const delBtn = screen.getByTestId('chat-msg-delete-0');
+      fireEvent.click(delBtn);
+
+      expect(screen.getByText('删除消息')).toBeInTheDocument();
+      expect(screen.getByText(/确定要删除这条消息吗/)).toBeInTheDocument();
+
+      const confirmBtn = screen.getByText('确认删除');
+      fireEvent.click(confirmBtn);
+
+      await waitFor(() => {
+        expect(screen.queryByText('第一句')).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('第二句')).toBeInTheDocument();
+    });
+
+    it('修改消息：支持就地编辑并保存重新生成后续回复', async () => {
+      presetLegacySession();
+      HISTORY = [
+        { who: 'user', text: '旧问题', at: 100 },
+        { who: 'agent', text: '旧回答', at: 200 },
+      ];
+      render(<StoryChat projectName="demo" onSummarized={() => {}} />);
+      await waitFor(() => expect(screen.getByText('旧问题')).toBeInTheDocument());
+
+      const editBtn = screen.getByTestId('chat-msg-edit-0');
+      fireEvent.click(editBtn);
+
+      const textarea = screen.getByTestId('edit-msg-input');
+      expect(textarea).toHaveValue('旧问题');
+      fireEvent.change(textarea, { target: { value: '新修改的问题' } });
+
+      const saveRegenBtn = screen.getByTestId('save-regen-msg-btn');
+      fireEvent.click(saveRegenBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText('新修改的问题')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('旧回答')).not.toBeInTheDocument();
+    });
+  });
 });
+

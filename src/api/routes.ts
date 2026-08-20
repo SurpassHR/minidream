@@ -32,8 +32,8 @@ import {
 import type { ChatMessage } from '../agent/chat-history.js';
 import { readStory, saveStory, completeStory, resetStory, buildStoryMarkdown } from '../story/store.js';
 import {
-  appendStoryChat, createStorySession, deleteStorySession,
-  listStorySessions, readStoryChat, renameStorySession,
+  appendStoryChat, createStorySession, deleteStoryChatMessage, deleteStorySession,
+  listStorySessions, readStoryChat, renameStorySession, truncateStoryChatMessage, updateStoryChatMessage,
 } from '../story/chat-store.js';
 import {
   addBoardRagAsset, createBoard, deleteBoard, findBoard, listBoards,
@@ -1043,6 +1043,35 @@ app.delete('/api/story/chat/sessions/:id', async (req) => {
   const { id } = req.params as { id: string };
   deleteStorySession(ctx.projectDir, id);
   return listStorySessions(ctx.projectDir, (req.query as { boardId?: string }).boardId ?? null);
+});
+
+app.delete('/api/story/chat/messages/:index', async (req, reply) => {
+  const { index } = req.params as { index: string };
+  const { sessionId } = req.query as { sessionId?: string };
+  const idx = Number.parseInt(index, 10);
+  if (Number.isNaN(idx)) {
+    return reply.code(400).send({ code: 'INVALID_INPUT', message: '无效的消息索引' });
+  }
+  deleteStoryChatMessage(ctx.projectDir, sessionId ?? null, idx);
+  return { messages: readStoryChat(ctx.projectDir, sessionId ?? null) };
+});
+
+app.patch('/api/story/chat/messages/:index', async (req, reply) => {
+  const { index } = req.params as { index: string };
+  const { sessionId } = req.query as { sessionId?: string };
+  const body = req.body as { text?: string; truncateAfter?: boolean };
+  const idx = Number.parseInt(index, 10);
+  if (Number.isNaN(idx)) {
+    return reply.code(400).send({ code: 'INVALID_INPUT', message: '无效的消息索引' });
+  }
+  if (typeof body.text !== 'string' || !body.text.trim()) {
+    return reply.code(400).send({ code: 'INVALID_INPUT', message: '消息内容不能为空' });
+  }
+  updateStoryChatMessage(ctx.projectDir, sessionId ?? null, idx, body.text);
+  if (body.truncateAfter) {
+    truncateStoryChatMessage(ctx.projectDir, sessionId ?? null, idx);
+  }
+  return { messages: readStoryChat(ctx.projectDir, sessionId ?? null) };
 });
 
 app.get('/api/story/chat/history', async (req) => {

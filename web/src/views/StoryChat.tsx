@@ -80,6 +80,7 @@ async function copyText(text: string): Promise<void> {
 
 function CopyableCodeBlock(props: { children?: ReactNode }) {
   const [copied, setCopied] = useState(false);
+  const [wrapped, setWrapped] = useState(true);
   const codeChild = Array.isArray(props.children)
     ? props.children.find((child) => isValidElement(child))
     : props.children;
@@ -104,16 +105,29 @@ function CopyableCodeBlock(props: { children?: ReactNode }) {
     <div className="chat-code-block">
       <div className="chat-code-toolbar">
         <span className="chat-code-language">{language ?? '代码'}</span>
-        <button
-          type="button"
-          className="chat-code-copy"
-          aria-label={copied ? '已复制' : '复制代码'}
-          onClick={() => { void copy(); }}
-        >
-          {copied ? <><Icon name="check" />已复制</> : '复制'}
-        </button>
+        <div className="chat-code-actions">
+          <button
+            type="button"
+            className={`chat-code-copy ${wrapped ? 'is-active' : ''}`}
+            aria-label={wrapped ? '取消自动换行' : '自动换行'}
+            title={wrapped ? '取消自动换行' : '自动换行'}
+            data-testid="toggle-wrap-btn"
+            onClick={() => setWrapped((w) => !w)}
+          >
+            <Icon name="wrap-text" />
+            {wrapped ? '取消换行' : '自动换行'}
+          </button>
+          <button
+            type="button"
+            className="chat-code-copy"
+            aria-label={copied ? '已复制' : '复制代码'}
+            onClick={() => { void copy(); }}
+          >
+            {copied ? <><Icon name="check" />已复制</> : <><Icon name="copy" />复制</>}
+          </button>
+        </div>
       </div>
-      <pre className="chat-code-pre">{props.children}</pre>
+      <pre className={`chat-code-pre ${wrapped ? 'is-wrapped' : ''}`}>{props.children}</pre>
     </div>
   );
 }
@@ -153,8 +167,13 @@ export function StoryChat(props: {
   const [renameTarget, setRenameTarget] = useState<SessionMeta | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SessionMeta | null>(null);
   const [sessionDialogBusy, setSessionDialogBusy] = useState(false);
+  // 修改/删除消息
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState('');
+  const [deleteMsgTarget, setDeleteMsgTarget] = useState<number | null>(null);
   // 图像附件：Ctrl+V 粘贴 / 附件按钮选择 → 预览列表 → 随下一条消息发送
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+
   const [assetRefs, setAssetRefs] = useState<MentionAsset[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeIdRef = useRef<string | null>(null);
@@ -576,6 +595,102 @@ export function StoryChat(props: {
       });
   };
 
+  const startEditMessage = (index: number) => {
+    if (busyRef.current) return;
+    const msg = msgs[index];
+    if (!msg) return;
+    setEditingIndex(index);
+    setEditingText(msg.text);
+  };
+
+  const cancelEditMessage = () => {
+    setEditingIndex(null);
+    setEditingText('');
+  };
+
+  const submitEditMessage = async (index: number) => {
+    if (busyRef.current) return;
+    const targetMsg = msgs[index];
+    if (!targetMsg) return;
+    const newText = editingText.trim();
+    if (!newText) return;
+
+    // 如果未更改直接退出
+    if (newText === targetMsg.text.trim()) {
+      cancelEditMessage();
+      return;
+    }
+
+    const sessionId = activeIdRef.current;
+    cancelEditMessage();
+
+    // 更新后端消息（如果是用户消息，截断该消息之后的所有消息）
+    const truncateAfter = targetMsg.who === 'user';
+    const updated = await client.updateStoryChatMessage(index, newText, sessionId, truncateAfter).catch(() => null);
+    if (!updated) {
+      setError('修改消息失败');
+      return;
+    }
+
+    if (targetMsg.who === 'user') {
+      // 重置前台消息列表为截断后的状态（包括修改后的消息）
+      const preserved = msgs.slice(0, index);
+      setMsgs([...preserved, { ...targetMsg, text: newText }]);
+
+      // 自动触发 AI 重新生成回复
+      const request = beginRequest(sessionId, 'chat');
+      const sysPrompt = resolveBoardPrompt(props.board, props.prompts, 'storyTeller');
+      const msgImages = targetMsg.images?.map((a) => ({ name: a.name, data: a.dataUrl })) ?? [];
+      const refs = targetMsg.assetRefs ? [...targetMsg.assetRefs] : [];
+
+      void client.storyChat(
+        newText,
+        (chunk) => appendStream(chunk, request),
+        props.agentModel || undefined,
+        props.thinkingLevel || undefined,
+        undefined,
+        sessionId,
+        sysPrompt,
+        boardId,
+        msgImages.length > 0 ? msgImages : undefined,
+        props.modelSupportsImages,
+        refs.length > 0 ? refs : undefined,
+      )
+        .then(() => finalizeStream(request))
+        .catch((err) => {
+          const message = `\n\n（agent 连接失败：${err instanceof Error ? err.message : '未知错误'}）`;
+          appendStream(message, request);
+          if (isCurrentRequest(request)) setError(message.trim());
+        })
+        .finally(() => {
+          if (!isCurrentRequest(request)) return;
+          requestRef.current = null;
+          busyRef.current = false;
+          setBusy(false);
+          refreshSessions();
+        });
+    } else {
+      // 如果修改的是 agent 消息，直接更新本地 state
+      setMsgs((m) => m.map((item, i) => (i === index ? { ...item, text: newText } : item)));
+      refreshSessions();
+    }
+  };
+
+  const confirmDeleteMessage = async () => {
+    const index = deleteMsgTarget;
+    setDeleteMsgTarget(null);
+    if (index === null || busyRef.current) return;
+
+    const sessionId = activeIdRef.current;
+    const res = await client.deleteStoryChatMessage(index, sessionId, boardId).catch(() => null);
+    if (!res) {
+      setError('删除消息失败');
+      return;
+    }
+    setMsgs((m) => m.filter((_, i) => i !== index));
+    refreshSessions();
+  };
+
   const send = () => sendMessage(input, { includeExtras: true });
 
   useEffect(() => {
@@ -693,41 +808,102 @@ export function StoryChat(props: {
           {visibleMsgs.length === 0 && (
             <EmptyState icon={<Icon name="chat" />} text="还没有对话，从任意创意开始吧——主题、角色、情节都可以聊" />
           )}
-          {visibleMsgs.map((m, i) => (
-            <article key={i} className={`chat-msg ${m.who}`} data-testid={`chat-message-${i}`}>
-              <div className="chat-avatar" aria-hidden="true">{m.who === 'user' ? '你' : '✦'}</div>
-              <div className="chat-message-body" data-testid="chat-message-body">
-                <div className="chat-message-meta" data-testid="chat-message-meta">
-                  <strong>{m.who === 'user' ? '你' : '编剧'}</strong>
-                  <time>{m.who === 'user' ? '刚刚' : '现在'}</time>
+          {visibleMsgs.map((m, i) => {
+            const isEditing = editingIndex === i;
+            return (
+              <article key={i} className={`chat-msg ${m.who}`} data-testid={`chat-message-${i}`}>
+                <div className="chat-avatar" aria-hidden="true">{m.who === 'user' ? '你' : '✦'}</div>
+                <div className="chat-message-body" data-testid="chat-message-body">
+                  <div className="chat-message-meta" data-testid="chat-message-meta">
+                    <strong>{m.who === 'user' ? '你' : '编剧'}</strong>
+                    <time>{m.who === 'user' ? '刚刚' : '现在'}</time>
+                    {!busy && !isEditing && (
+                      <div className="chat-msg-actions">
+                        <button
+                          type="button"
+                          className="chat-msg-action-btn"
+                          title="修改消息"
+                          data-testid={`chat-msg-edit-${i}`}
+                          onClick={() => startEditMessage(i)}
+                        >
+                          <Icon name="pencil" />
+                        </button>
+                        <button
+                          type="button"
+                          className="chat-msg-action-btn"
+                          title="删除消息"
+                          data-testid={`chat-msg-delete-${i}`}
+                          onClick={() => setDeleteMsgTarget(i)}
+                        >
+                          <Icon name="trash" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="chat-message-content chat-bubble">
+                    {m.images && m.images.length > 0 && (
+                      <div className="chat-msg-imgs">
+                        {m.images.map((img) => (
+                          <img key={img.dataUrl} src={img.dataUrl} alt={img.name} title={img.name} />
+                        ))}
+                      </div>
+                    )}
+                    {m.assetRefs && m.assetRefs.length > 0 && (
+                      <div className="chat-msg-assets" data-testid="chat-msg-assets">
+                        {m.assetRefs.map((asset) => (
+                          <span key={asset.id} className="chat-msg-asset"><Icon name={asset.kind === 'txt' ? 'file-text' : 'video'} />{asset.name}</span>
+                        ))}
+                      </div>
+                    )}
+                    {isEditing ? (
+                      <div className="chat-msg-edit-box">
+                        <textarea
+                          className="chat-msg-edit-textarea"
+                          data-testid="edit-msg-input"
+                          value={editingText}
+                          onChange={(e) => setEditingText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                              e.preventDefault();
+                              void submitEditMessage(i);
+                            } else if (e.key === 'Escape') {
+                              cancelEditMessage();
+                            }
+                          }}
+                          autoFocus
+                          rows={3}
+                        />
+                        <div className="chat-msg-edit-footer">
+                          <button
+                            type="button"
+                            className="chat-msg-edit-btn"
+                            onClick={cancelEditMessage}
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            className="chat-msg-edit-btn is-primary"
+                            data-testid="save-regen-msg-btn"
+                            onClick={() => { void submitEditMessage(i); }}
+                          >
+                            保存{m.who === 'user' ? '并重试' : ''}
+                          </button>
+                        </div>
+                      </div>
+                    ) : m.who === 'agent' ? (
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{ pre: CopyableCodeBlock }}
+                      >{parseChoiceBlock(m.text)?.prompt ?? m.text}</ReactMarkdown>
+                    ) : (
+                      <p>{m.text}</p>
+                    )}
+                  </div>
                 </div>
-                <div className="chat-message-content chat-bubble">
-                  {m.images && m.images.length > 0 && (
-                    <div className="chat-msg-imgs">
-                      {m.images.map((img) => (
-                        <img key={img.dataUrl} src={img.dataUrl} alt={img.name} title={img.name} />
-                      ))}
-                    </div>
-                  )}
-                  {m.assetRefs && m.assetRefs.length > 0 && (
-                    <div className="chat-msg-assets" data-testid="chat-msg-assets">
-                      {m.assetRefs.map((asset) => (
-                        <span key={asset.id} className="chat-msg-asset"><Icon name={asset.kind === 'txt' ? 'file-text' : 'video'} />{asset.name}</span>
-                      ))}
-                    </div>
-                  )}
-                  {m.who === 'agent' ? (
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{ pre: CopyableCodeBlock }}
-                    >{parseChoiceBlock(m.text)?.prompt ?? m.text}</ReactMarkdown>
-                  ) : (
-                    <p>{m.text}</p>
-                  )}
-                </div>
-              </div>
-            </article>
-          ))}
+              </article>
+            );
+          })}
           {busy && <div className="chat-thinking"><Icon name="loader" /> AI 思考中…</div>}
         </div>
         <div
@@ -833,6 +1009,14 @@ export function StoryChat(props: {
         confirmLabel="确认删除"
         onCancel={() => setDeleteTarget(null)}
         onConfirm={() => { void confirmDeleteSession(); }}
+      />
+      <ConfirmDialog
+        open={deleteMsgTarget !== null}
+        title="删除消息"
+        body="确定要删除这条消息吗？删除后将从当前会话的上下文记录中移除。"
+        confirmLabel="确认删除"
+        onCancel={() => setDeleteMsgTarget(null)}
+        onConfirm={() => { void confirmDeleteMessage(); }}
       />
     </div>
   );

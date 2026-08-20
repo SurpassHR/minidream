@@ -5,7 +5,8 @@
 import { join } from 'node:path';
 import {
   activeMessages, appendMessage, createSession, deleteSession,
-  renameSession, sessionList,
+  deleteSessionMessage, renameSession, sessionList,
+  truncateSessionMessages, updateSessionMessage,
   type ChatMessage, type SessionFile, type SessionMeta,
 } from '../sessions/store.js';
 
@@ -47,3 +48,16 @@ export function renameStorySession(projectDir: string, id: string, title: string
 export function deleteStorySession(projectDir: string, id: string): SessionFile {
   return deleteSession(chatFile(projectDir), id);
 }
+
+export function deleteStoryChatMessage(projectDir: string, sessionId: string | null, messageIndex: number): SessionFile {
+  return deleteSessionMessage(chatFile(projectDir), sessionId, messageIndex);
+}
+
+export function updateStoryChatMessage(projectDir: string, sessionId: string | null, messageIndex: number, text: string): SessionFile {
+  return updateSessionMessage(chatFile(projectDir), sessionId, messageIndex, text);
+}
+
+export function truncateStoryChatMessage(projectDir: string, sessionId: string | null, cutoffIndex: number): SessionFile {
+  return truncateSessionMessages(chatFile(projectDir), sessionId, cutoffIndex);
+}
+

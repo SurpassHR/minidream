@@ -3,13 +3,13 @@ import type { CSSProperties, ReactNode, SVGProps } from 'react';
 // 项目统一 SVG 图标库（Feather/Lucide 风格：24×24、描边、currentColor）。
 // 用于替换原 emoji 图标：尺寸默认继承 font-size（width/height: 1em），颜色继承文字色。
 export type IconName =
-  | 'gear' | 'pencil' | 'trash' | 'x' | 'check'
+  | 'gear' | 'pencil' | 'trash' | 'x' | 'check' | 'copy'
   | 'video' | 'image' | 'file-text' | 'film'
   | 'monitor' | 'brain' | 'bot' | 'book' | 'shield' | 'alert' | 'wand'
   | 'user' | 'landscape' | 'package' | 'loader'
   | 'check-circle' | 'x-circle' | 'sparkles' | 'chat' | 'scroll' | 'file'
   | 'paperclip' | 'sun' | 'moon'
-  | 'frame' | 'text-lines' | 'sliders' | 'play';
+  | 'frame' | 'text-lines' | 'wrap-text' | 'sliders' | 'play';
 
 const PATHS: Record<IconName, ReactNode> = {
   gear: (
@@ -35,6 +35,12 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   check: <path d="M20 6 9 17l-5-5" />,
+  copy: (
+    <>
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </>
+  ),
   video: (
     <>
       <rect x="1" y="5" width="15" height="14" rx="2" />
@@ -70,6 +76,14 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M5 7h14" />
       <path d="M5 12h10" />
       <path d="M5 17h12" />
+    </>
+  ),
+  'wrap-text': (
+    <>
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <path d="M3 12h15a3 3 0 1 1 0 6h-4" />
+      <polyline points="16 16 14 18 16 20" />
+      <line x1="3" y1="18" x2="10" y2="18" />
     </>
   ),
   sliders: (

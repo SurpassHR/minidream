@@ -366,6 +366,35 @@ describe('API 故事会话', () => {
     const h3 = await a.inject({ method: 'GET', url: '/api/story/chat/history' });
     expect(h3.json().messages[0].text).toBe('会话乙的消息');
   });
+
+  it('DELETE /api/story/chat/messages/:index 删除指定消息；PATCH 修改消息（支持 truncateAfter 截断）', async () => {
+    const r1 = await a.inject({ method: 'POST', url: '/api/story/chat/sessions', payload: {} });
+    const sid = r1.json().activeId as string;
+    vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
+    vi.stubEnv('MOCK_REPLY', '回显');
+    await a.inject({ method: 'POST', url: '/api/story/chat', payload: { message: '消息一', sessionId: sid } });
+    await a.inject({ method: 'POST', url: '/api/story/chat', payload: { message: '消息二', sessionId: sid } });
+    
+    // 此时消息应为：[user: 消息一, agent: 回显, user: 消息二, agent: 回显]
+    const h1 = await a.inject({ method: 'GET', url: `/api/story/chat/history?sessionId=${sid}` });
+    expect(h1.json().messages).toHaveLength(4);
+
+    // 删除消息二 (index = 2)
+    const delRes = await a.inject({ method: 'DELETE', url: `/api/story/chat/messages/2?sessionId=${sid}` });
+    expect(delRes.statusCode).toBe(200);
+    expect(delRes.json().messages).toHaveLength(3);
+    expect(delRes.json().messages.map((m: { text: string }) => m.text)).toEqual(['消息一', '回显', '回显']);
+
+    // 修改消息一 (index = 0) 并且 truncateAfter = true
+    const patchRes = await a.inject({
+      method: 'PATCH',
+      url: `/api/story/chat/messages/0?sessionId=${sid}`,
+      payload: { text: '修改后的消息一', truncateAfter: true },
+    });
+    expect(patchRes.statusCode).toBe(200);
+    expect(patchRes.json().messages).toHaveLength(1);
+    expect(patchRes.json().messages[0].text).toBe('修改后的消息一');
+  });
 });
 
 describe('API 全局设置', () => {
