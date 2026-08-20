@@ -720,22 +720,42 @@ export const OBJECT_DESIGNER_SYSTEM = `你是导演工作台的「物体设计�
 4. 控制在 120 字以内；
 5. 用中文回答。`;
 
-// 总结成稿：从对话提炼完整六步答案（约定格式，前端解析）
-export const STORY_SUMMARIZE_PROMPT = `你是导演工作台的故事编剧。请把刚才的对话讨论总结为完整的故事设定。
-请务必严格按以下格式输出（每行一个步骤，键名必须是英文 stepId，冒号后为内容）：
+// 提炼分镜提示词：从对话讨论提炼出符合 mmh3-storyboard-split 与 ComfyUI 协议的完整 YAML 分镜提示词
+export const STORY_SUMMARIZE_PROMPT = `你是导演工作台的 MiniMax H3 影视分镜与提示词专家。
+请把刚才与用户的对话讨论内容，提炼并输出为符合 mmh3-storyboard-split 规范与 ComfyUI-MiniMax-H3-Long-Video 节点解析协议的完整 YAML 分镜提示词。
 
-theme: 一句话主题
-protagonist: 主角身份、性格、目标
-support: 配角列表（每句一人，可空）
-antagonist: 冲突来源
-scenes: 场景列表
-ending: 结局设定
+请务必按以下 YAML 代码块格式输出（用 \`\`\`yaml ... \`\`\` 包裹）：
 
-要求：
-1. 冒号前必须是 theme/protagonist/support/antagonist/scenes/ending，不要翻译成中文键名；
-2. 基于对话内容提炼，未讨论的步骤填「（待定）」；
-3. 保持用户讨论中的具体设定，不要泛化；
-4. 用中文。`;
+\`\`\`yaml
+version: 1
+project: <项目英文标识/slug>
+mode: storyboard
+segments:
+  - shot: 1
+    duration: 3.5
+    prompt: |
+      integrated_multimodal_description: [Shot 1] Live-action, cinematic, ... (Subject + Environment + Camera)
+      overall_soundscape: ...
+      non_diegetic_music: ...
+  - shot: 2
+    duration: 3.5
+    prompt: |
+      integrated_multimodal_description: For this segment, <Picture 2> is the last generated frame of the previous segment. It serves as the scene reference for this segment: it contains the scene itself and all characters that have appeared so far. This segment keeps the scene and every character consistent with it. The segment opens directly from a new camera angle and framing, a different composition from the reference image: ... [Shot 1] ...
+      overall_soundscape: ...
+      non_diegetic_music: ...
+\`\`\`
+
+核心规则与要求：
+1. **分镜切分**：将故事讨论切分成连贯的 2~6 个分镜（segments），各分镜首尾衔接；
+2. **单段时长**：duration 为正数，只允许使用 3 / 3.5 / 4，所有分段时长保持一致；
+3. **链式场景参考（关键机制）**：
+   - 段 1（shot 1）无链式声明，正常使用用户参考图（如 <Picture 1>）；
+   - 段 2 起（shot >= 2），prompt 必须在 integrated_multimodal_description 开头显式声明上一段末帧作为场景参考（编号恒为 <Picture n+1>，其中 n 为用户全局参考图数量，默认 n=1 则链式帧恒为 <Picture 2>，n 不随分镜递增），并明确本段新机位/景别/焦距；
+4. **MiniMax H3 语法**：
+   - 提示词必须完整包含 integrated_multimodal_description、overall_soundscape、non_diegetic_music；
+   - 动作/状态使用 [中括号]，参考图使用 <尖括号>，对白使用 <d>[语言代码] 对白内容</d>；
+   - **绝对禁止任何否定句或负向词**（如 no, not, without, never, 不要, 避免等），全部转写为正向视觉描述；
+5. 只基于对话中讨论的实际设定，不要臆造无关剧情；除 YAML 代码块外，可在代码块后附上简明中文分镜对照说明。`;
 
 // 角色提示词库键表：键=消费键（设置里提示词库的条目名），值=内置默认（回退来源）
 export const ROLE_PROMPT_KEYS = {

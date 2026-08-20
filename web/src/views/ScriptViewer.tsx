@@ -50,7 +50,7 @@ export function ScriptViewer(props: { text: string }) {
   return (
     <div className="script-viewer-container" data-testid="script-viewer-container">
       <div className="script-viewer-toolbar">
-        <span className="script-viewer-badge">markdown</span>
+        <span className="script-viewer-badge">yaml</span>
         <div className="script-viewer-actions">
           <button
             type="button"

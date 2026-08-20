@@ -152,13 +152,13 @@ describe('StoryTellerView 对话式', () => {
   it('未完成时右侧剧本栏占位', async () => {
     render(<StoryTellerView projectName="demo" />);
     await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
-    expect(screen.getByTestId('script-sidebar')).toHaveTextContent('剧本将在这里展示');
+    expect(screen.getByTestId('script-sidebar')).toHaveTextContent('分镜提示词（YAML 格式）将在这里展示');
   });
 
-  it('总结成稿后显示完成横幅 + 右侧剧本 md', async () => {
+  it('生成分镜提示词后显示完成横幅 + 右侧剧本 md', async () => {
     render(<StoryTellerView projectName="demo" />);
     await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('总结成稿'));
+    fireEvent.click(screen.getByText('生成分镜提示词'));
     await waitFor(() => expect(screen.getByText(/已完成 · 已生成故事文档/)).toBeInTheDocument());
     await waitFor(() => expect(screen.getByTestId('script-viewer')).toBeInTheDocument());
     // ScriptViewer 接线回归防护：md 内容（来自 complete 响应）渲染到剧本栏
@@ -173,7 +173,7 @@ describe('StoryTellerView 对话式', () => {
     await waitFor(() => expect(screen.getByText('确认重置')).toBeInTheDocument());
     fireEvent.click(screen.getByText('确认重置'));
     await waitFor(() => expect(screen.queryByText(/已完成 · 已生成故事文档/)).not.toBeInTheDocument());
-    expect(screen.getByTestId('script-sidebar')).toHaveTextContent('剧本将在这里展示');
+    expect(screen.getByTestId('script-sidebar')).toHaveTextContent('分镜提示词（YAML 格式）将在这里展示');
   });
 
   it('已完成项目挂载：右侧栏从 GET 恢复剧本', async () => {
@@ -195,7 +195,7 @@ describe('StoryTellerView 对话式', () => {
     rerender(<StoryTellerView projectName="demoB" />);
     await waitFor(() => expect(screen.getByText('加载故事进度失败')).toBeInTheDocument());
     expect(screen.queryByTestId('script-viewer')).not.toBeInTheDocument();
-    expect(screen.getByTestId('script-sidebar')).toHaveTextContent('剧本将在这里展示');
+    expect(screen.getByTestId('script-sidebar')).toHaveTextContent('分镜提示词（YAML 格式）将在这里展示');
   });
 
   it('两侧边栏分割条存在并支持拖动调整宽度', async () => {

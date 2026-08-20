@@ -77,6 +77,12 @@ const STEP_TITLES: Record<string, string> = {
 };
 
 export function buildStoryMarkdown(projectName: string, answers: Record<string, string>): string {
+  if (answers.yaml && answers.yaml.trim()) {
+    return answers.yaml.trim();
+  }
+  if (answers.summary && answers.summary.trim()) {
+    return answers.summary.trim();
+  }
   const lines = [`# ${projectName} · 故事设定`, ''];
   for (const step of STORY_STEPS) {
     const answer = (answers[step.id] ?? '').trim();

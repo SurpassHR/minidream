@@ -78,7 +78,33 @@ describe('saveStory 完成后守卫', () => {
 });
 
 describe('buildStoryMarkdown', () => {
-  it('按步骤顺序组装 Markdown 文档', () => {
+  it('优先产出 yaml 字段内容（符合 mmh3-storyboard-split 协议）', () => {
+    const yamlContent = [
+      'version: 1',
+      'project: test-project',
+      'mode: storyboard',
+      'segments:',
+      '  - shot: 1',
+      '    duration: 3.5',
+      '    prompt: |',
+      '      integrated_multimodal_description: [Shot 1] Live-action scene...',
+    ].join('\n');
+    const md = buildStoryMarkdown('测试项目', {
+      yaml: yamlContent,
+      theme: '战争与和解',
+    });
+    expect(md).toBe(yamlContent);
+  });
+
+  it('summary 字段回退支持', () => {
+    const summaryContent = 'version: 1\nmode: storyboard';
+    const md = buildStoryMarkdown('测试项目', {
+      summary: summaryContent,
+    });
+    expect(md).toBe(summaryContent);
+  });
+
+  it('按步骤顺序组装传统 Markdown 文档（兼容旧格式）', () => {
     const md = buildStoryMarkdown('测试项目', {
       theme: '战争与和解', protagonist: '精灵骑士', scenes: '迷雾森林',
     });

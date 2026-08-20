@@ -10,7 +10,7 @@ import { ROLE_PROMPT_KEYS, type RolePromptKey } from '../views/roles';
 const ROLE_PROMPT_LABELS: Record<RolePromptKey, string> = {
   storyTeller: '故事向导 · 对话式',
   objectDesigner: '物体设计 · AI 优化',
-  storySummarize: '总结成稿指令',
+  storySummarize: '分镜提示词生成指令',
 };
 
 // 全局提示词库保留的角色键：storyTeller / storySummarize 已下沉到剧本项目

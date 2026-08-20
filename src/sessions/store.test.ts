@@ -118,7 +118,7 @@ describe('appendMessage', () => {
     expect(readSessions(file).sessions[0]!.title).toBe('中文');
 
     const second = createSession(file);
-    appendMessage(file, second.activeId, 'user', '（请总结成稿）', 300);
+    appendMessage(file, second.activeId, 'user', '（生成分镜提示词）', 300);
     appendMessage(file, second.activeId, 'user', '另一个故事', 300);
     expect(readSessions(file).sessions.find((s) => s.id === second.activeId)!.title).toBe('另一个故事');
   });

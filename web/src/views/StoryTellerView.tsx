@@ -9,10 +9,10 @@ import { ConfirmDialog } from '../panels/ConfirmDialog';
 import { TextInputDialog } from '../panels/TextInputDialog';
 import { ROLE_PROMPT_KEYS } from './roles';
 
-// story-teller 仅对话式：自由聊天 + 总结成稿入库（向导式已移除）。
+// story-teller 仅对话式：自由聊天 + 提炼分镜提示词入库（向导式已移除）。
 // v3：剧本项目（Story Board）= 项目级系统提示词（storyTeller/storySummarize）+ RAG 知识库；
 // 每项目一套完全自定义上下文，替代全局提示词库的 storyTeller/storySummarize（设置弹窗已瘦身）。
-// story 状态只需 completedAt（完成横幅/剧本栏）；answers 由总结成稿写入后端。
+// story 状态只需 completedAt（完成横幅/剧本栏）；answers 由生成分镜提示词写入后端。
 
 // 剧本项目加载失败/空库时的兜底板（后端正常会自动落默认项目，此处仅防御）
 const VIRTUAL_BOARD: StoryBoard = {
@@ -22,7 +22,7 @@ const VIRTUAL_BOARD: StoryBoard = {
 
 const PROMPT_META: Array<{ key: 'storyTeller' | 'storySummarize'; label: string; desc: string }> = [
   { key: 'storyTeller', label: 'storyTeller', desc: '故事向导 · 对话系统提示词' },
-  { key: 'storySummarize', label: 'storySummarize', desc: '总结成稿 · 六步答案格式' },
+  { key: 'storySummarize', label: 'storySummarize', desc: '分镜提示词 · MiniMax H3 YAML 格式' },
 ];
 
 export function StoryTellerView(props: {
@@ -172,7 +172,7 @@ export function StoryTellerView(props: {
     return () => { disposed = true; };
   }, [props.projectName]);
 
-  // 对话式总结成稿：重置（若已完成）/保存答案 → complete 入库 → 刷新完成状态
+  // 对话式生成分镜提示词：重置（若已完成）/保存答案 → complete 入库 → 刷新完成状态
   const handleSummarized = async (answers: Record<string, string>) => {
     try {
       if (story?.completedAt) {
@@ -425,19 +425,19 @@ export function StoryTellerView(props: {
 
           <div className="ctx-tabs">
             <button className={`ctx-tab${rightTab === 'ctx' ? ' on' : ''}`} onClick={() => setRightTab('ctx')}>上下文</button>
-            <button className={`ctx-tab${rightTab === 'script' ? ' on' : ''}`} onClick={() => setRightTab('script')}>剧本</button>
+            <button className={`ctx-tab${rightTab === 'script' ? ' on' : ''}`} onClick={() => setRightTab('script')}>提示词 (YAML)</button>
           </div>
           {rightTab === 'ctx' ? (
             <ContextPanel board={activeBoard} globalPrompts={props.prompts} />
           ) : (
             <>
-              <div className="panel-title">剧本 <span className="mini">story_{props.projectName || '未命名项目'}.md</span></div>
+              <div className="panel-title">分镜提示词 <span className="mini">story_{props.projectName || '未命名项目'}.yaml</span></div>
               {md ? (
                 <ScriptViewer text={md} />
               ) : (
                 <div className="script-empty">
-                  对话结束点击「总结成稿」后，
-                  剧本将在这里展示
+                  对话结束点击「生成分镜提示词」后，
+                  分镜提示词（YAML 格式）将在这里展示
                 </div>
               )}
             </>

@@ -69,7 +69,7 @@ describe('parseChoiceBlock', () => {
 
 describe('story choice constants', () => {
   it('提供系统标记和 kickoff 文案', () => {
-    expect(STORY_SYSTEM_MARKERS).toEqual(['（开始访谈）', '（请总结成稿）']);
+    expect(STORY_SYSTEM_MARKERS).toEqual(['（开始访谈）', '（生成分镜提示词）']);
     expect(STORY_KICKOFF_MESSAGE).toContain('choice');
   });
 });

@@ -1104,7 +1104,7 @@ app.post('/api/story/chat', async (req, reply) => {
   const board = body.boardId ? findBoard(ctx.projectDir, body.boardId) : undefined;
   const boardPrompt = board?.systemPrompts.storyTeller?.trim();
   const effectiveSystem = body.systemPrompt?.trim() || boardPrompt || undefined;
-  // 系统动作（总结成稿等 persistAs 标记）不做 RAG 检索：查询是长指令，命中无意义
+  // 系统动作（生成分镜提示词等 persistAs 标记）不做 RAG 检索：查询是长指令，命中无意义
   let ragContext = '';
   if (message && board?.ragEnabled && board.ragAssets.length > 0 && !body.persistAs) {
     const r = await ragSearch(
@@ -1118,7 +1118,8 @@ app.post('/api/story/chat', async (req, reply) => {
   }
   const assetContext = buildStoryAssetContext(ctx.projectDir, assetRefs);
   const assetImageInput = buildStoryAssetImageFiles(ctx.projectDir, assetRefs);
-  const mode = body.persistAs === '（请总结成稿）' ? 'system' : 'chat';
+  // 总结模式（生成分镜提示词）走 mode='system'，避免被 chat 协议的 choice 契约污染
+  const mode = (body.persistAs === '（生成分镜提示词）' || body.persistAs === '（请总结成稿）') ? 'system' : 'chat';
   const buildPrompt = (visionContext = '') => {
     const context = [assetContext, visionContext].filter((part) => part.trim()).join('\n\n');
     return buildStoryChatPrompt(
@@ -1156,7 +1157,7 @@ app.post('/api/story/chat', async (req, reply) => {
   });
   const send = (text: string) => reply.raw.write(`data: ${JSON.stringify({ chunk: text })}\n\n`);
   // 用户消息先落盘（不依赖 pi 是否正常退出）；agent 全文在流结束后落盘。
-  // persistAs：系统动作（总结成稿/回填向导）的落盘标记——message 是长指令 prompt，
+  // persistAs：系统动作（生成分镜提示词/回填向导）的落盘标记——message 是长指令 prompt，
   // 若原文落盘会快速消耗 100 条历史上限并污染下次对话的 20 条上下文窗口。
   // boardId：自动创建会话时归组到剧本项目
   // 仅图片无文本时落盘标记占位，避免历史气泡为空；文本正常落盘

@@ -15,7 +15,7 @@ export interface SessionFile { sessions: ChatSession[]; activeId: string | null 
 export interface SessionMeta { id: string; title: string; createdAt: number; updatedAt: number }
 
 const TITLE_LIMIT = 20;
-const STORY_SYSTEM_TITLE_SKIP = new Set(['（开始访谈）', '（请总结成稿）']);
+const STORY_SYSTEM_TITLE_SKIP = new Set(['（开始访谈）', '（生成分镜提示词）', '（请总结成稿）']);
 let seq = 0;
 
 function newId(): string {

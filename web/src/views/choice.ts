@@ -1,5 +1,5 @@
 export const STORY_KICKOFF_MARKER = '（开始访谈）';
-export const STORY_SUMMARIZE_MARKER = '（请总结成稿）';
+export const STORY_SUMMARIZE_MARKER = '（生成分镜提示词）';
 export const STORY_SYSTEM_MARKERS = [STORY_KICKOFF_MARKER, STORY_SUMMARIZE_MARKER] as const;
 export const STORY_KICKOFF_MESSAGE =
   '这是新会话。按系统提示词开始访谈：先问用户希望使用哪种访谈语言，然后在文末给出 choice 代码块。';

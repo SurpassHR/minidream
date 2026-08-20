@@ -207,12 +207,12 @@ describe('API 故事对话', () => {
     expect(hist.json().messages[0].text).toBe('（开始访谈）');
   });
 
-  it('POST /api/story/chat 总结成稿使用 system 要求而不注入 choice 契约', async () => {
+  it('POST /api/story/chat 生成分镜提示词使用 system 要求而不注入 choice 契约', async () => {
     vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
     vi.stubEnv('MOCK_ECHO_INPUT', '1');
     const res = await a.inject({
       method: 'POST', url: '/api/story/chat',
-      payload: { message: '请总结成稿', persistAs: '（请总结成稿）' },
+      payload: { message: '生成分镜提示词', persistAs: '（生成分镜提示词）' },
     });
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('每次回答 100-200 字，聚焦推进故事');
@@ -226,14 +226,14 @@ describe('API 故事对话', () => {
     const longInstruction = '你是导演工作台的故事编剧……'.repeat(10);
     const res = await a.inject({
       method: 'POST', url: '/api/story/chat',
-      payload: { message: longInstruction, persistAs: '（请总结成稿）' },
+      payload: { message: longInstruction, persistAs: '（生成分镜提示词）' },
     });
     expect(res.statusCode).toBe(200);
     // 历史中用户消息为标记而非长指令
     const hist = await a.inject({ method: 'GET', url: '/api/story/chat/history' });
     const messages = hist.json().messages;
     expect(messages[0].who).toBe('user');
-    expect(messages[0].text).toBe('（请总结成稿）');
+    expect(messages[0].text).toBe('（生成分镜提示词）');
     expect(messages[0].text).not.toContain('故事编剧');
   });
 
@@ -491,7 +491,7 @@ describe('buildStoryChatPrompt 纯函数', () => {
     expect(parts.userPrompt).not.toContain('你是严格的故事编剧');
   });
 
-  it('chat 模式注入 choice 契约，system 模式保持总结成稿旧要求', async () => {
+  it('chat 模式注入 choice 契约，system 模式保持系统指令要求', async () => {
     const { buildStoryChatPrompt } = await import('./routes.js');
     const chat = buildStoryChatPrompt('p', {}, [], '你好', undefined, undefined, 'chat');
     expect(chat.systemPrompt).toContain('文末必须追加且仅追加一个 choice 代码块');
