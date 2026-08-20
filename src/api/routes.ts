@@ -34,6 +34,7 @@ import { readStory, saveStory, completeStory, resetStory, buildStoryMarkdown } f
 import {
   appendStoryChat, createStorySession, deleteStoryChatMessage, deleteStorySession,
   listStorySessions, readStoryChat, renameStorySession, truncateStoryChatMessage, updateStoryChatMessage,
+  listStoryPromptVersions, addStoryPromptVersion, setActiveStoryPromptVersion, deleteStoryPromptVersion,
 } from '../story/chat-store.js';
 import {
   addBoardRagAsset, createBoard, deleteBoard, findBoard, listBoards,
@@ -1077,6 +1078,53 @@ app.patch('/api/story/chat/messages/:index', async (req, reply) => {
 app.get('/api/story/chat/history', async (req) => {
   const { sessionId } = req.query as { sessionId?: string };
   return { messages: readStoryChat(ctx.projectDir, sessionId ?? null) };
+});
+
+// 会话关联的提示词 YAML 多版本管理
+app.get('/api/story/chat/versions', async (req) => {
+  const { sessionId } = req.query as { sessionId?: string };
+  return listStoryPromptVersions(ctx.projectDir, sessionId ?? null);
+});
+
+app.post('/api/story/chat/versions', async (req, reply) => {
+  const query = req.query as { sessionId?: string };
+  const body = req.body as { sessionId?: string; yaml?: string; label?: string };
+  const targetSessionId = body.sessionId ?? query.sessionId ?? null;
+  if (!body.yaml || typeof body.yaml !== 'string') {
+    return reply.code(400).send({ code: 'INVALID_INPUT', message: 'yaml 内容不能为空' });
+  }
+  const res = addStoryPromptVersion(ctx.projectDir, targetSessionId, body.yaml, body.label);
+  reply.code(201);
+  return res;
+});
+
+app.put('/api/story/chat/versions/active', async (req, reply) => {
+  const query = req.query as { sessionId?: string };
+  const body = req.body as { sessionId?: string; versionId?: string };
+  const targetSessionId = body.sessionId ?? query.sessionId ?? null;
+  if (!body.versionId) {
+    return reply.code(400).send({ code: 'INVALID_INPUT', message: '缺少 versionId' });
+  }
+  const res = setActiveStoryPromptVersion(ctx.projectDir, targetSessionId, body.versionId);
+  return res;
+});
+
+app.post('/api/story/chat/versions/active', async (req, reply) => {
+  const query = req.query as { sessionId?: string };
+  const body = req.body as { sessionId?: string; versionId?: string };
+  const targetSessionId = body.sessionId ?? query.sessionId ?? null;
+  if (!body.versionId) {
+    return reply.code(400).send({ code: 'INVALID_INPUT', message: '缺少 versionId' });
+  }
+  const res = setActiveStoryPromptVersion(ctx.projectDir, targetSessionId, body.versionId);
+  return res;
+});
+
+app.delete('/api/story/chat/versions/:versionId', async (req) => {
+  const { versionId } = req.params as { versionId: string };
+  const { sessionId } = req.query as { sessionId?: string };
+  const res = deleteStoryPromptVersion(ctx.projectDir, sessionId ?? null, versionId);
+  return res;
 });
 
 app.post('/api/story/chat', async (req, reply) => {

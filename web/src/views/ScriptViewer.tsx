@@ -35,6 +35,7 @@ export function tokenizeScriptLine(line: string): ScriptToken[] {
 export function ScriptViewer(props: { text: string }) {
   const [copied, setCopied] = useState(false);
   const [wrapped, setWrapped] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
 
   const handleCopy = async () => {
     try {
@@ -48,7 +49,7 @@ export function ScriptViewer(props: { text: string }) {
 
   const lines = props.text.replace(/\r\n/g, '\n').split('\n');
   return (
-    <div className="script-viewer-container" data-testid="script-viewer-container">
+    <div className={`script-viewer-container ${collapsed ? 'is-collapsed' : ''}`} data-testid="script-viewer-container">
       <div className="script-viewer-toolbar">
         <span className="script-viewer-badge">yaml</span>
         <div className="script-viewer-actions">
@@ -72,25 +73,37 @@ export function ScriptViewer(props: { text: string }) {
             <Icon name={copied ? 'check' : 'copy'} />
             <span>{copied ? '已复制' : '复制'}</span>
           </button>
+          <button
+            type="button"
+            className={`script-viewer-btn script-viewer-toggle ${collapsed ? 'is-collapsed' : ''}`}
+            onClick={() => setCollapsed((c) => !c)}
+            title={collapsed ? '展开代码' : '折叠代码'}
+            aria-label={collapsed ? '展开代码' : '折叠代码'}
+            data-testid="script-toggle-collapse-btn"
+          >
+            <Icon name="chevron-down" />
+          </button>
         </div>
       </div>
-      <div
-        className={`script-viewer ${wrapped ? 'is-wrapped' : ''}`}
-        data-testid="script-viewer"
-      >
-        {lines.map((ln, i) => (
-          <div key={i} className="script-line" data-testid={`script-line-${i + 1}`}>
-            <span className="script-no">{i + 1}</span>
-            <span className="script-code">
-              {tokenizeScriptLine(ln).map((t, j) =>
-                t.kind === 'plain' ? t.text : (
-                  <span key={j} className={`tok-${t.kind}`}>{t.text}</span>
-                ),
-              )}
-            </span>
-          </div>
-        ))}
-      </div>
+      {!collapsed && (
+        <div
+          className={`script-viewer ${wrapped ? 'is-wrapped' : ''}`}
+          data-testid="script-viewer"
+        >
+          {lines.map((ln, i) => (
+            <div key={i} className="script-line" data-testid={`script-line-${i + 1}`}>
+              <span className="script-no">{i + 1}</span>
+              <span className="script-code">
+                {tokenizeScriptLine(ln).map((t, j) =>
+                  t.kind === 'plain' ? t.text : (
+                    <span key={j} className={`tok-${t.kind}`}>{t.text}</span>
+                  ),
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

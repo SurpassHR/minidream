@@ -1119,6 +1119,18 @@
   margin-right: 0;
   vertical-align: 0;
 }
+.script-viewer-toggle .dw-icon {
+  transition: transform .15s ease;
+}
+.script-viewer-toggle.is-collapsed .dw-icon {
+  transform: rotate(-90deg);
+}
+.script-viewer-container.is-collapsed {
+  flex: 0 0 auto;
+}
+.script-viewer-container.is-collapsed .script-viewer-toolbar {
+  border-bottom: none;
+}
 .script-viewer {
   overflow: auto; max-height: 62vh; background: var(--bg);
   border: none; border-radius: 0; padding: 8px 0; flex: 1; min-height: 0;

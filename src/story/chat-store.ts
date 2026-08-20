@@ -7,10 +7,11 @@ import {
   activeMessages, appendMessage, createSession, deleteSession,
   deleteSessionMessage, renameSession, sessionList,
   truncateSessionMessages, updateSessionMessage,
-  type ChatMessage, type SessionFile, type SessionMeta,
+  getPromptVersions, addPromptVersion, setActivePromptVersion, deletePromptVersion,
+  type ChatMessage, type PromptVersion, type SessionFile, type SessionMeta,
 } from '../sessions/store.js';
 
-export type { ChatMessage, ChatSession, SessionFile, SessionMeta } from '../sessions/store.js';
+export type { ChatMessage, ChatSession, PromptVersion, SessionFile, SessionMeta } from '../sessions/store.js';
 
 const MAX_MESSAGES = 100;
 
@@ -60,4 +61,26 @@ export function updateStoryChatMessage(projectDir: string, sessionId: string | n
 export function truncateStoryChatMessage(projectDir: string, sessionId: string | null, cutoffIndex: number): SessionFile {
   return truncateSessionMessages(chatFile(projectDir), sessionId, cutoffIndex);
 }
+
+export function listStoryPromptVersions(projectDir: string, sessionId: string | null): { versions: PromptVersion[]; activeVersionId: string | null } {
+  return getPromptVersions(chatFile(projectDir), sessionId);
+}
+
+export function addStoryPromptVersion(
+  projectDir: string,
+  sessionId: string | null,
+  yaml: string,
+  label?: string,
+): { file: SessionFile; version: PromptVersion; versions: PromptVersion[]; activeVersionId: string } {
+  return addPromptVersion(chatFile(projectDir), sessionId, yaml, label);
+}
+
+export function setActiveStoryPromptVersion(projectDir: string, sessionId: string | null, versionId: string): { file: SessionFile; activeVersionId: string; versions: PromptVersion[] } {
+  return setActivePromptVersion(chatFile(projectDir), sessionId, versionId);
+}
+
+export function deleteStoryPromptVersion(projectDir: string, sessionId: string | null, versionId: string): { file: SessionFile; activeVersionId: string | null; versions: PromptVersion[] } {
+  return deletePromptVersion(chatFile(projectDir), sessionId, versionId);
+}
+
 

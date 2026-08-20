@@ -77,5 +77,17 @@ describe('ScriptViewer', () => {
     fireEvent.click(copyBtn);
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('第一行内容\n第二行内容');
   });
+
+  it('支持展开/折叠代码块', () => {
+    render(<ScriptViewer text={'测试展开折叠'} />);
+    const collapseBtn = screen.getByTestId('script-toggle-collapse-btn');
+    expect(screen.getByTestId('script-viewer')).toBeInTheDocument();
+
+    fireEvent.click(collapseBtn);
+    expect(screen.queryByTestId('script-viewer')).toBeNull();
+
+    fireEvent.click(collapseBtn);
+    expect(screen.getByTestId('script-viewer')).toBeInTheDocument();
+  });
 });
 

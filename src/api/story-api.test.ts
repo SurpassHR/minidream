@@ -640,4 +640,55 @@ describe('API 剧本项目（boards：项目级提示词 + RAG）', () => {
       delete process.env.MOCK_REPLY;
     }
   });
+
+  it('会话级提示词 YAML 多版本增删查与切换 API 正常工作', async () => {
+    const s = await a.inject({ method: 'POST', url: '/api/story/chat/sessions', payload: {} });
+    const sid = s.json().activeId;
+
+    // 初始版本列表为空
+    const initList = await a.inject({ method: 'GET', url: `/api/story/chat/versions?sessionId=${sid}` });
+    expect(initList.statusCode).toBe(200);
+    expect(initList.json().versions).toEqual([]);
+    expect(initList.json().activeVersionId).toBeNull();
+
+    // 添加第一个版本
+    const post1 = await a.inject({
+      method: 'POST', url: '/api/story/chat/versions',
+      payload: { sessionId: sid, yaml: 'version: 1\nsegments: [a]' },
+    });
+    expect(post1.statusCode).toBe(201);
+    expect(post1.json().version.version).toBe(1);
+    expect(post1.json().version.label).toBe('v1');
+    const v1Id = post1.json().version.id;
+
+    // 添加第二个版本（带自定义 label）
+    const post2 = await a.inject({
+      method: 'POST', url: '/api/story/chat/versions',
+      payload: { sessionId: sid, yaml: 'version: 1\nsegments: [b]', label: '第二版' },
+    });
+    expect(post2.statusCode).toBe(201);
+    expect(post2.json().version.version).toBe(2);
+    expect(post2.json().version.label).toBe('第二版');
+    const v2Id = post2.json().version.id;
+
+    // 查询列表
+    const listRes = await a.inject({ method: 'GET', url: `/api/story/chat/versions?sessionId=${sid}` });
+    expect(listRes.json().versions).toHaveLength(2);
+    expect(listRes.json().activeVersionId).toBe(v2Id);
+
+    // 切换 active
+    const switchRes = await a.inject({
+      method: 'PUT', url: '/api/story/chat/versions/active',
+      payload: { sessionId: sid, versionId: v1Id },
+    });
+    expect(switchRes.statusCode).toBe(200);
+    expect(switchRes.json().activeVersionId).toBe(v1Id);
+
+    // 删除版本
+    const delRes = await a.inject({
+      method: 'DELETE', url: `/api/story/chat/versions/${v2Id}?sessionId=${sid}`,
+    });
+    expect(delRes.statusCode).toBe(200);
+    expect(delRes.json().versions).toHaveLength(1);
+  });
 });

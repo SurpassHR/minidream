@@ -37,6 +37,9 @@ beforeEach(() => {
         systemPrompts: {}, ragEnabled: false, ragAssets: [],
       }] }), { status: 200 });
     }
+    if (u.includes('/api/story/chat/sessions') && u.includes('/versions')) {
+      return new Response(JSON.stringify({ versions: [], activeVersionId: null }), { status: 200 });
+    }
     if (u.includes('/api/story/chat/sessions')) {
       // GET 空库 → StoryChat 自动 POST 新建；后续点击项目行按钮创建子会话
       if (init?.method === 'POST') {
@@ -209,6 +212,118 @@ describe('StoryTellerView 对话式', () => {
     fireEvent.mouseUp(window);
 
     expect(screen.getByTestId('board-sidebar')).toHaveStyle({ width: '300px' });
+  });
+
+  it('支持展示和切换不同 prompt 版本', async () => {
+    const versions = [
+      { id: 'pv_1', version: 1, label: '版本 1', yaml: 'version: 1\nsummary: 第一版', createdAt: 100 },
+      { id: 'pv_2', version: 2, label: '版本 2', yaml: 'version: 1\nsummary: 第二版', createdAt: 200 },
+    ];
+    let activeVerId = 'pv_2';
+
+    // 针对 versions 请求返回列表
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = typeof url === 'string' ? url : url.toString();
+      if (u.includes('/versions')) {
+        if (init?.method === 'PUT') {
+          const body = JSON.parse(String(init.body)) as { versionId: string };
+          activeVerId = body.versionId;
+        }
+        return new Response(JSON.stringify({ versions, activeVersionId: activeVerId }), { status: 200 });
+      }
+      if (u.includes('/api/story/boards')) {
+        return new Response(JSON.stringify({ boards: [{
+          id: 'b1', name: 'Minimax-H3 Prompt Writer', createdAt: 1, updatedAt: 1,
+          systemPrompts: {}, ragEnabled: false, ragAssets: [],
+        }] }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat/sessions')) {
+        if (init?.method === 'POST') {
+          return new Response(JSON.stringify({ sessions: [{ id: 's1', title: '会话1', createdAt: 1, updatedAt: 1 }], activeId: 's1' }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ sessions: [{ id: 's1', title: '会话1', createdAt: 1, updatedAt: 1 }], activeId: 's1' }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat/history')) {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200 });
+      }
+      if (u.includes('/api/story')) {
+        return new Response(JSON.stringify({ story: { step: 0, answers: {}, completedAt: null }, md: 'version: 1\nsummary: 第二版' }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
+    // 切换到 提示词 (YAML) tab
+    const yamlTabBtn = screen.getByRole('button', { name: '提示词 (YAML)' });
+    fireEvent.click(yamlTabBtn);
+    await waitFor(() => {
+      expect(screen.getByTestId('prompt-versions-bar')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('prompt-version-1')).toBeInTheDocument();
+    expect(screen.getByTestId('prompt-version-2')).toBeInTheDocument();
+
+    // 点击切换版本 1
+    fireEvent.click(screen.getByTestId('prompt-version-1'));
+    await waitFor(() => expect(screen.getByTestId('prompt-version-1').className).toContain('active'));
+    expect(screen.getByTestId('script-viewer')).toHaveTextContent('第一版');
+  });
+
+  it('切换会话时，右侧栏的提示词 YAML 自动联动切换到该会话的版本', async () => {
+    const session1Versions = [
+      { id: 'pv_s1_1', version: 1, label: '版本 1', yaml: 'version: 1\nsummary: 会话一专属提示词', createdAt: 100 },
+    ];
+    const session2Versions = [
+      { id: 'pv_s2_1', version: 1, label: '版本 1', yaml: 'version: 1\nsummary: 会话二专属提示词', createdAt: 200 },
+    ];
+
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
+      const u = typeof url === 'string' ? url : url.toString();
+      if (u.includes('/versions')) {
+        if (u.includes('s1')) {
+          return new Response(JSON.stringify({ versions: session1Versions, activeVersionId: 'pv_s1_1' }), { status: 200 });
+        }
+        if (u.includes('s2')) {
+          return new Response(JSON.stringify({ versions: session2Versions, activeVersionId: 'pv_s2_1' }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ versions: [], activeVersionId: null }), { status: 200 });
+      }
+      if (u.includes('/api/story/boards')) {
+        return new Response(JSON.stringify({ boards: [{
+          id: 'b1', name: 'Minimax-H3 Prompt Writer', createdAt: 1, updatedAt: 1,
+          systemPrompts: {}, ragEnabled: false, ragAssets: [],
+        }] }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat/sessions')) {
+        return new Response(JSON.stringify({
+          sessions: [
+            { id: 's1', title: '会话1', createdAt: 1, updatedAt: 1 },
+            { id: 's2', title: '会话2', createdAt: 2, updatedAt: 2 },
+          ],
+          activeId: 's1',
+        }), { status: 200 });
+      }
+      if (u.includes('/api/story/chat/history')) {
+        return new Response(JSON.stringify({ messages: [] }), { status: 200 });
+      }
+      if (u.includes('/api/story')) {
+        return new Response(JSON.stringify({ story: { step: 0, answers: {}, completedAt: null }, md: null }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByTestId('chat-input')).toBeInTheDocument());
+
+    // 切换到 提示词 (YAML) tab
+    fireEvent.click(screen.getByRole('button', { name: '提示词 (YAML)' }));
+    // 初始处于 s1，展示会话一提示词
+    await waitFor(() => expect(screen.getByTestId('script-viewer')).toHaveTextContent('会话一专属提示词'));
+
+    // 点击切换到会话 2
+    fireEvent.click(screen.getByTestId('session-item-s2').querySelector('.session-select')!);
+    // 验证右侧栏提示词 YAML 自动更新为会话 2 的提示词
+    await waitFor(() => expect(screen.getByTestId('script-viewer')).toHaveTextContent('会话二专属提示词'));
   });
 });
 

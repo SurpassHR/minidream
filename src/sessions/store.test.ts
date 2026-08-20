@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   activeMessages, appendMessage, createSession, deleteSession,
   readSessions, renameSession, sessionList,
+  getPromptVersions, addPromptVersion, setActivePromptVersion, deletePromptVersion,
 } from './store.js';
 import { DirectorError } from '../types.js';
 
@@ -182,4 +183,59 @@ describe('回归：迁移 id 稳定 + 未知 id 回退（修复前 FAIL）', () 
     expect(after.activeId).toBe(after.sessions[0]!.id);
   });
 });
+
+describe('PromptVersion store logic', () => {
+  it('addPromptVersion 自动递增版本号与标签，并设为 activeVersionId', () => {
+    const f1 = createSession(file);
+    const sid = f1.activeId!;
+    const res1 = addPromptVersion(file, sid, 'version: 1\nsegments: []');
+    expect(res1.version.version).toBe(1);
+    expect(res1.version.label).toBe('v1');
+    expect(res1.version.yaml).toBe('version: 1\nsegments: []');
+    
+    const list1 = getPromptVersions(file, sid);
+    expect(list1.versions).toHaveLength(1);
+    expect(list1.activeVersionId).toBe(res1.version.id);
+
+    const res2 = addPromptVersion(file, sid, 'version: 2\nsegments: []');
+    expect(res2.version.version).toBe(2);
+    expect(res2.version.label).toBe('v2');
+    
+    const list2 = getPromptVersions(file, sid);
+    expect(list2.versions).toHaveLength(2);
+    expect(list2.activeVersionId).toBe(res2.version.id);
+  });
+
+  it('addPromptVersion 支持自定义 label', () => {
+    const f1 = createSession(file);
+    const sid = f1.activeId!;
+    const res = addPromptVersion(file, sid, 'version: 1', '终版草案');
+    expect(res.version.label).toBe('终版草案');
+    expect(res.version.version).toBe(1);
+  });
+
+  it('setActivePromptVersion 切换当前激活版本', () => {
+    const f1 = createSession(file);
+    const sid = f1.activeId!;
+    const res1 = addPromptVersion(file, sid, 'v1');
+    const res2 = addPromptVersion(file, sid, 'v2');
+    expect(getPromptVersions(file, sid).activeVersionId).toBe(res2.version.id);
+
+    setActivePromptVersion(file, sid, res1.version.id);
+    expect(getPromptVersions(file, sid).activeVersionId).toBe(res1.version.id);
+  });
+
+  it('deletePromptVersion 删除版本并自动调整 activeVersionId', () => {
+    const f1 = createSession(file);
+    const sid = f1.activeId!;
+    const res1 = addPromptVersion(file, sid, 'v1');
+    const res2 = addPromptVersion(file, sid, 'v2');
+
+    deletePromptVersion(file, sid, res2.version.id);
+    const list = getPromptVersions(file, sid);
+    expect(list.versions).toHaveLength(1);
+    expect(list.activeVersionId).toBe(res1.version.id);
+  });
+});
+
 

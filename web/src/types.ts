@@ -124,6 +124,14 @@ export interface AssetRecord {
 }
 
 // 会话元数据（镜像后端 src/sessions/store.ts）
+export interface PromptVersion {
+  id: string;
+  version: number;
+  label: string;
+  yaml: string;
+  createdAt: number;
+}
+
 export interface SessionMeta {
   id: string;
   title: string;

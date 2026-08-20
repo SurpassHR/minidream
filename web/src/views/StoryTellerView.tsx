@@ -132,6 +132,42 @@ export function StoryTellerView(props: {
     [boards, activeBoardId],
   );
 
+  // 当前激活会话的 prompt versions 列表
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [promptVersions, setPromptVersions] = useState<PromptVersion[]>([]);
+  const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
+
+  // 会话切换时，拉取会话绑定的 prompt versions，并联动更新右侧 YAML 提示词展示
+  const loadPromptVersions = useCallback(async (sessionId: string | null) => {
+    if (!sessionId) {
+      setPromptVersions([]);
+      setActiveVersionId(null);
+      return;
+    }
+    try {
+      const res = await client.listStoryPromptVersions(sessionId);
+      const versions = Array.isArray(res?.versions) ? res.versions : [];
+      const activeId = res?.activeVersionId ?? (versions.length > 0 ? versions[versions.length - 1]!.id : null);
+      setPromptVersions(versions);
+      setActiveVersionId(activeId);
+      if (versions.length > 0) {
+        const activeV = versions.find((x) => x.id === activeId) ?? versions[versions.length - 1]!;
+        setMd(activeV.yaml);
+      } else {
+        // 该会话暂无 prompt 版本：清空右侧 YAML 展示（如果项目有全局故事，可降级为 null 或保持空占位）
+        setMd(null);
+      }
+    } catch {
+      setPromptVersions([]);
+      setActiveVersionId(null);
+    }
+  }, []);
+
+  const handleSessionChange = useCallback((sessionId: string | null) => {
+    setCurrentSessionId(sessionId);
+    void loadPromptVersions(sessionId);
+  }, [loadPromptVersions]);
+
   // 项目切换/挂载时加载进度（completedAt + md）
   useEffect(() => {
     let disposed = false;
@@ -140,6 +176,7 @@ export function StoryTellerView(props: {
     void client.getStory().then(({ story: s, md: m }) => {
       if (disposed) return;
       setStory(s);
+      // 如果此时还没有会话版本数据，可以以项目 md 作为初始展示；否则以会话版本为准
       setMd(m ?? null);
       setLoaded(true);
     }).catch(() => {
@@ -172,8 +209,8 @@ export function StoryTellerView(props: {
     return () => { disposed = true; };
   }, [props.projectName]);
 
-  // 对话式生成分镜提示词：重置（若已完成）/保存答案 → complete 入库 → 刷新完成状态
-  const handleSummarized = async (answers: Record<string, string>) => {
+  // 对话式生成分镜提示词：重置（若已完成）/保存答案 → complete 入库 → 刷新完成状态，同时为当前会话新增 prompt version
+  const handleSummarized = async (answers: Record<string, string>, sessionId?: string | null) => {
     try {
       if (story?.completedAt) {
         await client.resetStory();
@@ -184,8 +221,44 @@ export function StoryTellerView(props: {
       setMd(r.md);
       setRightTab('script');
       setError('');
+
+      const targetSessionId = sessionId ?? currentSessionId;
+      if (targetSessionId && (answers.yaml || r.md)) {
+        const yamlContent = answers.yaml?.trim() || r.md || '';
+        if (yamlContent) {
+          const added = await client.addStoryPromptVersion(targetSessionId, yamlContent).catch(() => null);
+          if (added) {
+            setCurrentSessionId(targetSessionId);
+            const vList = Array.isArray(added.versions) ? added.versions : [];
+            setPromptVersions(vList);
+            setActiveVersionId(added.activeVersionId ?? null);
+            const activeV = vList.find((x) => x.id === added.activeVersionId) ?? added.version;
+            if (activeV?.yaml) setMd(activeV.yaml);
+          }
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '总结入库失败');
+    }
+  };
+
+  const selectPromptVersion = async (v: PromptVersion) => {
+    if (!currentSessionId) return;
+    setActiveVersionId(v.id);
+    setMd(v.yaml);
+    await client.setActiveStoryPromptVersion(currentSessionId, v.id).catch(() => {});
+  };
+
+  const deletePromptVersion = async (v: PromptVersion) => {
+    if (!currentSessionId) return;
+    const res = await client.deleteStoryPromptVersion(currentSessionId, v.id).catch(() => null);
+    if (res) {
+      setPromptVersions(res.versions);
+      setActiveVersionId(res.activeVersionId);
+      const activeV = res.versions.find((x) => x.id === res.activeVersionId);
+      if (activeV) {
+        setMd(activeV.yaml);
+      }
     }
   };
 
@@ -376,6 +449,7 @@ export function StoryTellerView(props: {
                 <StoryChat
                   projectName={props.projectName}
                   onSummarized={handleSummarized}
+                  onSessionChange={handleSessionChange}
                   prompts={props.prompts}
                   armorBreak={props.armorBreak}
                   armorBreakEnabled={props.armorBreakEnabled}
@@ -432,6 +506,44 @@ export function StoryTellerView(props: {
           ) : (
             <>
               <div className="panel-title">分镜提示词 <span className="mini">story_{props.projectName || '未命名项目'}.yaml</span></div>
+              {Array.isArray(promptVersions) && promptVersions.length > 0 && (
+                <div className="prompt-versions-bar" data-testid="prompt-versions-bar" style={{ display: 'flex', gap: '6px', overflowX: 'auto', padding: '6px 0', borderBottom: '1px solid var(--border, #333)', marginBottom: '8px' }}>
+                  {promptVersions.map((v) => (
+                    <div
+                      key={v.id}
+                      className={`prompt-version-tag${v.id === activeVersionId ? ' active' : ''}`}
+                      data-testid={`prompt-version-${v.version}`}
+                      onClick={() => void selectPromptVersion(v)}
+                      style={{
+                        padding: '2px 8px',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        background: v.id === activeVersionId ? 'var(--primary, #3b82f6)' : 'var(--bg-tag, #2a2a2a)',
+                        color: v.id === activeVersionId ? '#fff' : 'var(--text-muted, #aaa)',
+                        border: '1px solid var(--border, #444)',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      <span>{v.label}</span>
+                      <span
+                        data-testid={`delete-version-${v.version}`}
+                        title="删除该版本"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void deletePromptVersion(v);
+                        }}
+                        style={{ cursor: 'pointer', opacity: 0.7 }}
+                      >
+                        ×
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {md ? (
                 <ScriptViewer text={md} />
               ) : (

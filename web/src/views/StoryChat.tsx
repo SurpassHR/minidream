@@ -158,8 +158,10 @@ function fmtSessionDate(at: number): string {
 
 export function StoryChat(props: {
   projectName: string;
-  // 提炼分镜提示词成功回调：携带解析出的答案（父组件先 saveStory 再 completeStory 入库）
-  onSummarized: (answers: Record<string, string>) => void;
+  // 提炼分镜提示词成功回调：携带解析出的答案与生成该答案的 sessionId（父组件先 saveStory 再 completeStory 入库）
+  onSummarized: (answers: Record<string, string>, sessionId?: string | null) => void;
+  // 会话切换回调
+  onSessionChange?: (sessionId: string | null) => void;
   // 提示词库（角色系统提示词；未配置键回退内置默认）
   prompts?: Record<string, string>;
   // 破甲预设：开启且文本非空时插入到所有系统提示词之前
@@ -263,6 +265,7 @@ export function StoryChat(props: {
         setSessions(r.sessions);
         activeIdRef.current = r.activeId;
         setActiveId(r.activeId);
+        props.onSessionChange?.(r.activeId);
         if (r.activeId) {
           const history = await client.getStoryChatHistory(r.activeId);
           if (!disposed) {
@@ -386,6 +389,7 @@ export function StoryChat(props: {
     setSessions(r.sessions);
     activeIdRef.current = r.activeId;
     setActiveId(r.activeId);
+    props.onSessionChange?.(r.activeId);
     setHistoryReady(true);
     setHasKickoffMarker(false);
     if (r.activeId) kickoffAttemptedRef.current.delete(r.activeId);
@@ -406,6 +410,7 @@ export function StoryChat(props: {
     if (id === activeId) return;
     activeIdRef.current = id;
     setActiveId(id);
+    props.onSessionChange?.(id);
     setHistoryReady(false);
     setHasKickoffMarker(false);
     setMsgs([]);
@@ -451,6 +456,7 @@ export function StoryChat(props: {
     setSessions(r.sessions);
     activeIdRef.current = r.activeId;
     setActiveId(r.activeId);
+    props.onSessionChange?.(r.activeId);
     setHistoryReady(false);
     setHasKickoffMarker(false);
     setMsgs([]);
@@ -766,7 +772,7 @@ export function StoryChat(props: {
       if (isCurrentRequest(request)) {
         const answers = parseStoryAnswers(acc);
         if (Object.keys(answers).length === 0) setError('未识别到分镜提示词 YAML 格式，请重试');
-        else props.onSummarized(answers);
+        else props.onSummarized(answers, sessionId);
       }
     } catch (err) {
       const message = `\n\n（agent 连接失败：${err instanceof Error ? err.message : '未知错误'}）`;

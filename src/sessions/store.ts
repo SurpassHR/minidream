@@ -6,10 +6,20 @@ import { dirname } from 'node:path';
 import { DirectorError } from '../types.js';
 
 export interface ChatMessage { who: 'user' | 'agent'; text: string; at: number }
+export interface PromptVersion {
+  id: string;
+  version: number;
+  label: string;
+  yaml: string;
+  createdAt: number;
+}
 export interface ChatSession {
   id: string; title: string; createdAt: number; updatedAt: number; messages: ChatMessage[];
   // 会话归属（故事向导剧本项目用；AGENT 面板与旧数据无此字段 = 未归组）
   boardId?: string;
+  // 会话关联的提示词 YAML 版本列表及当前激活版本
+  promptVersions?: PromptVersion[];
+  activeVersionId?: string | null;
 }
 export interface SessionFile { sessions: ChatSession[]; activeId: string | null }
 export interface SessionMeta { id: string; title: string; createdAt: number; updatedAt: number }
@@ -55,6 +65,8 @@ export function readSessions(file: string): SessionFile {
         updatedAt: typeof s.updatedAt === 'number' ? s.updatedAt : Date.now(),
         messages: Array.isArray(s.messages) ? s.messages : [],
         boardId: typeof s.boardId === 'string' ? s.boardId : undefined,
+        promptVersions: Array.isArray(s.promptVersions) ? s.promptVersions : [],
+        activeVersionId: typeof s.activeVersionId === 'string' ? s.activeVersionId : null,
       })),
       activeId: typeof data.activeId === 'string' ? data.activeId : null,
     };
@@ -210,4 +222,89 @@ export function truncateSessionMessages(file: string, sessionId: string | null, 
   s.updatedAt = Date.now();
   return writeSessions(file, f);
 }
+
+// —— 提示词 YAML 版本管理 ——
+
+export function getPromptVersions(file: string, sessionId: string | null): { versions: PromptVersion[]; activeVersionId: string | null } {
+  const f = readSessions(file);
+  const targetId = sessionId ?? f.activeId;
+  const s = f.sessions.find((x) => x.id === targetId);
+  if (!s) return { versions: [], activeVersionId: null };
+  const versions = Array.isArray(s.promptVersions) ? s.promptVersions : [];
+  return {
+    versions,
+    activeVersionId: s.activeVersionId ?? (versions.length > 0 ? versions[versions.length - 1]!.id : null),
+  };
+}
+
+export function addPromptVersion(
+  file: string,
+  sessionId: string | null,
+  yaml: string,
+  customLabel?: string,
+): { file: SessionFile; version: PromptVersion } {
+  const trimmed = yaml.trim();
+  if (!trimmed) throw new DirectorError('INVALID_INPUT', '提示词 YAML 内容不能为空');
+  const f = readSessions(file);
+  let targetId = sessionId ?? f.activeId;
+  let s = f.sessions.find((x) => x.id === targetId);
+  if (!s) {
+    // 若当前无会话，自动新建会话
+    const now = Date.now();
+    s = { id: newId(), title: '新会话', createdAt: now, updatedAt: now, messages: [], promptVersions: [] };
+    f.sessions.push(s);
+    f.activeId = s.id;
+    targetId = s.id;
+  }
+  if (!Array.isArray(s.promptVersions)) {
+    s.promptVersions = [];
+  }
+  const maxVersion = s.promptVersions.reduce((max, v) => Math.max(max, v.version || 0), 0);
+  const nextVersion = maxVersion + 1;
+  const now = Date.now();
+  const versionObj: PromptVersion = {
+    id: `pv-${now.toString(36)}-${s.promptVersions.length + 1}`,
+    version: nextVersion,
+    label: customLabel?.trim() || `v${nextVersion}`,
+    yaml: trimmed,
+    createdAt: now,
+  };
+  s.promptVersions.push(versionObj);
+  s.activeVersionId = versionObj.id;
+  s.updatedAt = now;
+  writeSessions(file, f);
+  return { file: f, version: versionObj, versions: s.promptVersions, activeVersionId: versionObj.id };
+}
+
+export function setActivePromptVersion(file: string, sessionId: string | null, versionId: string): { file: SessionFile; activeVersionId: string; versions: PromptVersion[] } {
+  const f = readSessions(file);
+  const targetId = sessionId ?? f.activeId;
+  const s = f.sessions.find((x) => x.id === targetId);
+  if (!s) throw new DirectorError('SESSION_NOT_FOUND', `会话不存在: ${targetId}`);
+  const versions = Array.isArray(s.promptVersions) ? s.promptVersions : [];
+  const exists = versions.some((v) => v.id === versionId);
+  if (!exists) throw new DirectorError('INVALID_INPUT', `提示词版本不存在: ${versionId}`);
+  s.activeVersionId = versionId;
+  s.updatedAt = Date.now();
+  writeSessions(file, f);
+  return { file: f, activeVersionId: versionId, versions };
+}
+
+export function deletePromptVersion(file: string, sessionId: string | null, versionId: string): { file: SessionFile; activeVersionId: string | null; versions: PromptVersion[] } {
+  const f = readSessions(file);
+  const targetId = sessionId ?? f.activeId;
+  const s = f.sessions.find((x) => x.id === targetId);
+  if (!s) throw new DirectorError('SESSION_NOT_FOUND', `会话不存在: ${targetId}`);
+  const versions = Array.isArray(s.promptVersions) ? s.promptVersions : [];
+  const idx = versions.findIndex((v) => v.id === versionId);
+  if (idx < 0) throw new DirectorError('INVALID_INPUT', `提示词版本不存在: ${versionId}`);
+  versions.splice(idx, 1);
+  if (s.activeVersionId === versionId) {
+    s.activeVersionId = versions.length > 0 ? versions[versions.length - 1]!.id : null;
+  }
+  s.updatedAt = Date.now();
+  writeSessions(file, f);
+  return { file: f, activeVersionId: s.activeVersionId, versions };
+}
+
 

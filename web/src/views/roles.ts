@@ -721,11 +721,15 @@ export const OBJECT_DESIGNER_SYSTEM = `你是导演工作台的「物体设计�
 5. 用中文回答。`;
 
 // 提炼分镜提示词：从对话讨论提炼出符合 mmh3-storyboard-split 与 ComfyUI 协议的完整 YAML 分镜提示词
-export const STORY_SUMMARIZE_PROMPT = `你是导演工作台的 MiniMax H3 影视分镜与提示词专家。
-请把刚才与用户的对话讨论内容，提炼并输出为符合 mmh3-storyboard-split 规范与 ComfyUI-MiniMax-H3-Long-Video 节点解析协议的完整 YAML 分镜提示词。
+export const STORY_SUMMARIZE_PROMPT = `你是导演工作台的 MiniMax H3 影视分镜与提示词提取器（mmh3-storyboard-split 协议）。
+你的唯一任务是：基于与用户的对话内容，直接输出标准合规的 YAML 分镜提示词。
 
-请务必按以下 YAML 代码块格式输出（用 \`\`\`yaml ... \`\`\` 包裹）：
+【极度重要输出限制】：
+1. **立即直接输出 YAML**，绝对禁止输出任何思考过程、自我分析、打招呼、前言、开场白、目录探测或无关说明（禁止出现"让我先检查"、"从对话历史看"、"我需要确认"等任何内心独白）。
+2. **严禁调用任何外部工具或尝试读取/写入本地文件系统**。
+3. 全文必须以 \`\`\`yaml 开始，以 \`\`\` 结束。
 
+输出格式规范：
 \`\`\`yaml
 version: 1
 project: <项目英文标识/slug>
@@ -755,7 +759,7 @@ segments:
    - 提示词必须完整包含 integrated_multimodal_description、overall_soundscape、non_diegetic_music；
    - 动作/状态使用 [中括号]，参考图使用 <尖括号>，对白使用 <d>[语言代码] 对白内容</d>；
    - **绝对禁止任何否定句或负向词**（如 no, not, without, never, 不要, 避免等），全部转写为正向视觉描述；
-5. 只基于对话中讨论的实际设定，不要臆造无关剧情；除 YAML 代码块外，可在代码块后附上简明中文分镜对照说明。`;
+5. 只基于对话中讨论的实际设定，不要臆造无关剧情。`;
 
 // 角色提示词库键表：键=消费键（设置里提示词库的条目名），值=内置默认（回退来源）
 export const ROLE_PROMPT_KEYS = {

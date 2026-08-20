@@ -1,6 +1,6 @@
 import type {
   DirectorEdge, DirectorNode, EdgeKind, GenTask, Graph, NodeType, ProjectInfo, SnapshotMeta, TaskRecord,
-  StoryProgress, AssetRecord, DesignKind, DesignObject, AppSettings, SessionMeta, StoryBoard, RagHit,
+  StoryProgress, AssetRecord, DesignKind, DesignObject, AppSettings, SessionMeta, StoryBoard, RagHit, PromptVersion,
 } from '../types';
 
 class ApiError extends Error {
@@ -611,5 +611,29 @@ export const client = {
         }
       }
     }
+  },
+
+  // —— 故事对话式提示词版本（单会话多版本管理）——
+  async listStoryPromptVersions(sessionId?: string | null): Promise<{ versions: PromptVersion[]; activeVersionId: string | null }> {
+    const q = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+    return await req<{ versions: PromptVersion[]; activeVersionId: string | null }>(`/api/story/chat/versions${q}`);
+  },
+  async addStoryPromptVersion(sessionId: string | null | undefined, yaml: string, label?: string): Promise<{ version: PromptVersion; versions: PromptVersion[]; activeVersionId: string }> {
+    const q = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+    return await req<{ version: PromptVersion; versions: PromptVersion[]; activeVersionId: string }>(`/api/story/chat/versions${q}`, {
+      method: 'POST', body: JSON.stringify({ yaml, label, sessionId: sessionId ?? undefined }),
+    });
+  },
+  async setActiveStoryPromptVersion(sessionId: string | null | undefined, versionId: string): Promise<{ activeVersionId: string; versions: PromptVersion[] }> {
+    const q = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+    return await req<{ activeVersionId: string; versions: PromptVersion[] }>(`/api/story/chat/versions/active${q}`, {
+      method: 'POST', body: JSON.stringify({ versionId }),
+    });
+  },
+  async deleteStoryPromptVersion(sessionId: string | null | undefined, versionId: string): Promise<{ activeVersionId: string | null; versions: PromptVersion[] }> {
+    const q = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+    return await req<{ activeVersionId: string | null; versions: PromptVersion[] }>(`/api/story/chat/versions/${encodeURIComponent(versionId)}${q}`, {
+      method: 'DELETE', body: JSON.stringify({}),
+    });
   },
 };
