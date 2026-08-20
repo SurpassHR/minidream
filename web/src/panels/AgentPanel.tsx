@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { client } from '../api/client';
 import { agentChat } from '../api/agent';
 import { Icon } from '../icons';
+import { CollapsibleCodeBlock } from './CollapsibleCodeBlock';
 import { ConfirmDialog } from './ConfirmDialog';
 import { TextInputDialog } from './TextInputDialog';
 import type { SessionMeta } from '../types';
@@ -304,7 +305,7 @@ export function AgentPanel(props: {
                 </div>
               )}
               {m.who === 'agent' ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: CollapsibleCodeBlock }}>{m.text}</ReactMarkdown>
               ) : m.text}
             </div>
           </div>

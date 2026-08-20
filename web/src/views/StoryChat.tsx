@@ -1,8 +1,9 @@
-import { isValidElement, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { client } from '../api/client';
+import { CollapsibleCodeBlock } from '../panels/CollapsibleCodeBlock';
 import { Icon } from '../icons';
 import { ConfirmDialog } from '../panels/ConfirmDialog';
 import { TextInputDialog } from '../panels/TextInputDialog';
@@ -31,8 +32,36 @@ export interface ChatMsg {
 // 待发送的图像附件（预览 + 随消息发送）
 export interface ChatAttachment { id: string; name: string; dataUrl: string; assetId?: string; fromMention?: boolean }
 
-// 六步答案约定格式解析：支持英文 key、中文键名（主题/主角等）、Markdown 列表与标题格式
+// 提炼分镜提示词答案解析：支持提取 YAML 格式分镜提示词（符合 mmh3-storyboard-split 协议），并兼容六步答案格式
 export function parseStoryAnswers(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!text || !text.trim()) return out;
+
+  // 1. 优先提取 ```yaml ... ``` 或 ```yml ... ``` 或 ``` ... ``` 代码块中的 YAML
+  const yamlBlockMatch = /```(?:ya?ml)?\s*\n([\s\S]*?)\n```/i.exec(text);
+  const candidateYaml = yamlBlockMatch ? yamlBlockMatch[1].trim() : '';
+
+  if (candidateYaml && (candidateYaml.includes('segments:') || candidateYaml.includes('version:') || candidateYaml.includes('prompt:'))) {
+    out.yaml = candidateYaml;
+    const projectMatch = /^project:\s*(.+)$/m.exec(candidateYaml);
+    if (projectMatch) out.project = projectMatch[1].trim().replace(/^["']|["']$/g, '');
+    const modeMatch = /^mode:\s*(.+)$/m.exec(candidateYaml);
+    if (modeMatch) out.mode = modeMatch[1].trim().replace(/^["']|["']$/g, '');
+    return out;
+  }
+
+  // 2. 判断整段文本是否直接为 YAML（以 version: 开头且含 segments:）
+  const trimmed = text.trim();
+  if (/^version:\s*\d+/m.test(trimmed) && trimmed.includes('segments:')) {
+    out.yaml = trimmed;
+    const projectMatch = /^project:\s*(.+)$/m.exec(trimmed);
+    if (projectMatch) out.project = projectMatch[1].trim().replace(/^["']|["']$/g, '');
+    const modeMatch = /^mode:\s*(.+)$/m.exec(trimmed);
+    if (modeMatch) out.mode = modeMatch[1].trim().replace(/^["']|["']$/g, '');
+    return out;
+  }
+
+  // 3. 兼容六步答案约定格式解析：支持英文 key、中文键名（主题/主角等）、Markdown 列表与标题格式
   const KEY_MAP: Record<string, string> = {
     theme: 'theme',
     protagonist: 'protagonist',
@@ -56,7 +85,6 @@ export function parseStoryAnswers(text: string): Record<string, string> {
     结局设定: 'ending',
   };
 
-  const out: Record<string, string> = {};
   const lines = text.split('\n');
 
   let currentKey: string | null = null;
@@ -128,87 +156,9 @@ function fmtSessionDate(at: number): string {
     : `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function codeText(node: ReactNode): string {
-  if (typeof node === 'string' || typeof node === 'number') return String(node);
-  if (Array.isArray(node)) return node.map(codeText).join('');
-  if (isValidElement<{ children?: ReactNode }>(node)) return codeText(node.props.children);
-  return '';
-}
-
-async function copyText(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  document.body.appendChild(textarea);
-  textarea.select();
-  const copied = document.execCommand('copy');
-  textarea.remove();
-  if (!copied) throw new Error('复制失败');
-}
-
-function CopyableCodeBlock(props: { children?: ReactNode }) {
-  const [copied, setCopied] = useState(false);
-  const [wrapped, setWrapped] = useState(true);
-  const codeChild = Array.isArray(props.children)
-    ? props.children.find((child) => isValidElement(child))
-    : props.children;
-  const codeElement = isValidElement<{ className?: string; children?: ReactNode }>(codeChild)
-    ? codeChild
-    : null;
-  const className = codeElement?.props.className ?? '';
-  const language = className.match(/language-([\w-]+)/)?.[1];
-  const source = codeText(codeElement?.props.children ?? props.children).replace(/\n$/, '');
-
-  const copy = async () => {
-    try {
-      await copyText(source);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      setCopied(false);
-    }
-  };
-
-  return (
-    <div className="chat-code-block">
-      <div className="chat-code-toolbar">
-        <span className="chat-code-language">{language ?? '代码'}</span>
-        <div className="chat-code-actions">
-          <button
-            type="button"
-            className={`chat-code-copy ${wrapped ? 'is-active' : ''}`}
-            aria-label={wrapped ? '取消自动换行' : '自动换行'}
-            title={wrapped ? '取消自动换行' : '自动换行'}
-            data-testid="toggle-wrap-btn"
-            onClick={() => setWrapped((w) => !w)}
-          >
-            <Icon name="wrap-text" />
-            {wrapped ? '取消换行' : '自动换行'}
-          </button>
-          <button
-            type="button"
-            className="chat-code-copy"
-            aria-label={copied ? '已复制' : '复制代码'}
-            onClick={() => { void copy(); }}
-          >
-            {copied ? <><Icon name="check" />已复制</> : <><Icon name="copy" />复制</>}
-          </button>
-        </div>
-      </div>
-      <pre className={`chat-code-pre ${wrapped ? 'is-wrapped' : ''}`}>{props.children}</pre>
-    </div>
-  );
-}
-
 export function StoryChat(props: {
   projectName: string;
-  // 总结成稿成功回调：携带解析出的答案（父组件先 saveStory 再 completeStory 入库）
+  // 提炼分镜提示词成功回调：携带解析出的答案（父组件先 saveStory 再 completeStory 入库）
   onSummarized: (answers: Record<string, string>) => void;
   // 提示词库（角色系统提示词；未配置键回退内置默认）
   prompts?: Record<string, string>;
@@ -756,7 +706,7 @@ export function StoryChat(props: {
     if (index === null || busyRef.current) return;
 
     const sessionId = activeIdRef.current;
-    const res = await client.deleteStoryChatMessage(index, sessionId, boardId).catch(() => null);
+    const res = await client.deleteStoryChatMessage(index, sessionId).catch(() => null);
     if (!res) {
       setError('删除消息失败');
       return;
@@ -785,16 +735,16 @@ export function StoryChat(props: {
     return () => window.removeEventListener('keydown', handleChoiceKey);
   }, []);
 
-  // 跑一次「总结成稿」：让 AI 基于全部对话输出六步答案。
-  // 发送的 message 是组装好的角色+指令 prompt；persistAs 标记（「（请总结成稿）」）
+  // 跑一次「生成分镜提示词」：让 AI 基于全部对话输出 YAML 分镜提示词。
+  // 发送的 message 是组装好的角色+指令 prompt；persistAs 标记（「（生成分镜提示词）」）
   // 让后端落盘时用标记替代长指令原文——避免长指令消耗 100 条历史上限并污染下次对话上下文。
-  // 流式累积输出 → 解析六步答案 → 回调父组件。
+  // 流式累积输出 → 解析分镜 YAML → 回调父组件。
   // try/catch/finally：连接失败时只提示连接失败，跳过解析与回调（
-  // 避免与「未识别到答案格式」同时出现两条矛盾提示）。
+  // 避免与「未识别到分镜提示词 YAML 格式」同时出现两条矛盾提示）。
   const runAction = async () => {
     if (busyRef.current) return;
-    // 总结请求：storyTeller 作为真正的 systemPrompt，storySummarize 作为本次用户上下文指令；
-    // 破甲预设只插入 systemPrompt，避免角色提示词与总结指令重复发送。
+    // 生成分镜提示词请求：storyTeller 作为真正的 systemPrompt，storySummarize 作为本次用户上下文指令；
+    // 破甲预设只插入 systemPrompt，避免角色提示词与指令重复发送。
     const storyTellerPrompt = withArmorBreak(
       resolveBoardPrompt(props.board, props.prompts, 'storyTeller'),
       props.armorBreak,
@@ -805,17 +755,17 @@ export function StoryChat(props: {
     const request = beginRequest(sessionId, 'summarize');
     setAction('summarize');
     let acc = '';
-    setMsgs((m) => [...m, { who: 'user', text: '（请总结成稿）' }]);
+    setMsgs((m) => [...m, { who: 'user', text: '（生成分镜提示词）' }]);
     try {
       await client.storyChat(prompt, (chunk) => {
         if (!isCurrentRequest(request)) return;
         acc += chunk;
         appendStream(chunk, request);
-      }, props.agentModel || undefined, props.thinkingLevel || undefined, '（请总结成稿）', sessionId, storyTellerPrompt, boardId);
+      }, props.agentModel || undefined, props.thinkingLevel || undefined, '（生成分镜提示词）', sessionId, storyTellerPrompt, boardId);
       finalizeStream(request);
       if (isCurrentRequest(request)) {
         const answers = parseStoryAnswers(acc);
-        if (Object.keys(answers).length === 0) setError('未识别到答案格式，请重试');
+        if (Object.keys(answers).length === 0) setError('未识别到分镜提示词 YAML 格式，请重试');
         else props.onSummarized(answers);
       }
     } catch (err) {
@@ -828,7 +778,7 @@ export function StoryChat(props: {
       busyRef.current = false;
       setBusy(false);
       setAction(null);
-      refreshSessions(); // 总结也落盘消息：刷新列表同步标题/updatedAt
+      refreshSessions(); // 生成分镜提示词也落盘消息：刷新列表同步标题/updatedAt
     }
   };
 
@@ -968,7 +918,7 @@ export function StoryChat(props: {
                     ) : m.who === 'agent' ? (
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
-                        components={{ pre: CopyableCodeBlock }}
+                        components={{ pre: CollapsibleCodeBlock }}
                       >{parseChoiceBlock(m.text)?.prompt ?? m.text}</ReactMarkdown>
                     ) : (
                       <p>{m.text}</p>
@@ -1059,8 +1009,8 @@ export function StoryChat(props: {
             <button className="btn-primary" onClick={send} disabled={busy || (!input.trim() && attachments.length === 0 && assetRefs.length === 0)}>发送</button>
           </div>
           <div className="chat-actions">
-            <AiButton busy={busy && action === 'summarize'} onClick={summarize}><Icon name="sparkles" />总结成稿</AiButton>
-            <span className="chat-hint">总结成稿：对话 → 完整故事文档入库</span>
+            <AiButton busy={busy && action === 'summarize'} onClick={summarize}><Icon name="sparkles" />生成分镜提示词</AiButton>
+            <span className="chat-hint">生成分镜提示词：对话 → 提炼 MMH3 分镜提示词（YAML）并入库</span>
           </div>
         </div>
         {error && <ErrorBanner text={error} />}

@@ -104,7 +104,55 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('parseStoryAnswers', () => {
-  it('解析六步约定格式，忽略非法行', () => {
+  it('提取 YAML 代码块中的提示词（mmh3-storyboard-split 格式）', () => {
+    const text = [
+      '好的，这是为您总结的分镜提示词：',
+      '```yaml',
+      'version: 1',
+      'project: demo-adventure',
+      'mode: storyboard',
+      'segments:',
+      '  - shot: 1',
+      '    duration: 3.5',
+      '    prompt: |',
+      '      integrated_multimodal_description: [Shot 1] Live-action, cinematic, a knight in misty forest...',
+      '      overall_soundscape: Wind howling',
+      '      non_diegetic_music: Orchestral strings',
+      '  - shot: 2',
+      '    duration: 3.5',
+      '    prompt: |',
+      '      integrated_multimodal_description: For this segment, <Picture 2> is the last generated frame of the previous segment. It serves as the scene reference for this segment: it contains the scene itself and all characters that have appeared so far. This segment keeps the scene and every character consistent with it. The segment opens directly from a new camera angle and framing, a different composition from the reference image: [Shot 2] Close up on knight facing glowing runes...',
+      '      overall_soundscape: Ambient hum',
+      '      non_diegetic_music: Epic drums',
+      '```',
+      '分镜说明对照完成。',
+    ].join('\n');
+    const res = parseStoryAnswers(text);
+    expect(res.yaml).toContain('version: 1');
+    expect(res.yaml).toContain('project: demo-adventure');
+    expect(res.yaml).toContain('segments:');
+    expect(res.yaml).toContain('integrated_multimodal_description:');
+    expect(res.project).toBe('demo-adventure');
+    expect(res.mode).toBe('storyboard');
+  });
+
+  it('支持直接输出纯 YAML 文本', () => {
+    const text = [
+      'version: 1',
+      'project: test-slug',
+      'mode: storyboard',
+      'segments:',
+      '  - shot: 1',
+      '    duration: 3.5',
+      '    prompt: |',
+      '      integrated_multimodal_description: [Shot 1] Cinematic scene...',
+    ].join('\n');
+    const res = parseStoryAnswers(text);
+    expect(res.yaml).toContain('version: 1');
+    expect(res.yaml).toContain('test-slug');
+  });
+
+  it('兼容解析六步约定格式，忽略非法行', () => {
     const text = [
       'theme: 战争与和解',
       'protagonist: 精灵骑士',
@@ -291,7 +339,7 @@ describe('StoryChat', () => {
     expect(composer).toContainElement(screen.getByTestId('chat-attach-btn'));
     expect(composer.querySelector('.chat-input-row')).toContainElement(screen.getByTestId('chat-attach-btn'));
     expect(composer).toContainElement(screen.getByRole('button', { name: '发送' }));
-    expect(composer).toContainElement(screen.getByText('总结成稿'));
+    expect(composer).toContainElement(screen.getByText('生成分镜提示词'));
   });
 
   it('首次加载后输入 @ 只保留一个字符并打开候选菜单', async () => {
@@ -504,7 +552,7 @@ describe('StoryChat', () => {
     expect(prevented.defaultPrevented).toBe(false);
   });
 
-  it('总结成稿：解析后回调 onSummarized 携带答案', async () => {
+  it('生成分镜提示词：解析后回调 onSummarized 携带答案', async () => {
     let summarized: Record<string, string> | null = null;
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       const u = String(url);
@@ -523,12 +571,12 @@ describe('StoryChat', () => {
       return new Response(JSON.stringify({}), { status: 404 });
     }));
     render(<StoryChat projectName="demo" onSummarized={(a) => { summarized = a; }} />);
-    await waitFor(() => expect(screen.getByText('总结成稿')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('总结成稿'));
+    await waitFor(() => expect(screen.getByText('生成分镜提示词')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('生成分镜提示词'));
     await waitFor(() => expect(summarized).toEqual({ theme: '战争与和解', protagonist: '精灵骑士' }));
   });
 
-  it('总结成稿连接失败：不显示格式错误（只提示连接失败）', async () => {
+  it('生成分镜提示词连接失败：不显示格式错误（只提示连接失败）', async () => {
     // mock POST /api/story/chat 返回 500：流式请求失败
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       const u = String(url);
@@ -544,15 +592,15 @@ describe('StoryChat', () => {
       return new Response(JSON.stringify({}), { status: 404 });
     }));
     render(<StoryChat projectName="demo" onSummarized={() => {}} />);
-    await waitFor(() => expect(screen.getByText('总结成稿')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('总结成稿'));
+    await waitFor(() => expect(screen.getByText('生成分镜提示词')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('生成分镜提示词'));
     // 出现连接失败提示
     await waitFor(() => expect(screen.getByText(/（agent 连接失败：story chat 请求失败: 500）/)).toBeInTheDocument());
     // 不出现格式错误提示（旧实现会同时显示两条矛盾提示）
-    expect(screen.queryByText('未识别到答案格式，请重试')).not.toBeInTheDocument();
+    expect(screen.queryByText('未识别到分镜提示词 YAML 格式，请重试')).not.toBeInTheDocument();
   });
 
-  it('总结成稿使用配置的 storyTeller + storySummarize 提示词', async () => {
+  it('生成分镜提示词使用配置的 storyTeller + storySummarize 提示词', async () => {
     const onSummarized = vi.fn();
     presetLegacySession();
     render(
@@ -563,7 +611,7 @@ describe('StoryChat', () => {
       />,
     );
     await waitFor(() => expect(screen.getByText('我想做精灵与哥布林的故事')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('总结成稿'));
+    fireEvent.click(screen.getByText('生成分镜提示词'));
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/story/chat'),
       expect.objectContaining({ method: 'POST' }),
@@ -605,7 +653,7 @@ describe('StoryChat', () => {
     expect(screen.queryByText('甲的历史')).not.toBeInTheDocument();
   });
 
-  it('发送/总结成稿携带当前 sessionId', async () => {
+  it('发送/生成分镜提示词携带当前 sessionId', async () => {
     SESSIONS = [{ id: 's9', title: '当前', createdAt: 1, updatedAt: 1 }];
     ACTIVE = 's9';
     render(
@@ -623,7 +671,7 @@ describe('StoryChat', () => {
     expect(CHAT_BODIES[0]!.sessionId).toBe('s9');
     // send 透传 systemPrompt=storyTeller（对话式统一角色提示词，经后端 systemPrompt 字段）
     expect(CHAT_BODIES.at(-1)!.systemPrompt).toContain('你是导演工作台的故事编剧');
-    fireEvent.click(screen.getByText('总结成稿'));
+    fireEvent.click(screen.getByText('生成分镜提示词'));
     await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(1));
     expect(CHAT_BODIES.at(-1)!.sessionId).toBe('s9');
   });
@@ -648,7 +696,7 @@ describe('StoryChat', () => {
     expect(CHAT_BODIES.at(-1)?.systemPrompt).toBe('项目专属故事编剧');
   });
 
-  it('发送与总结成稿携带设置的模型与思考强度（agentModel/thinkingLevel 透传）', async () => {
+  it('发送与生成分镜提示词携带设置的模型与思考强度（agentModel/thinkingLevel 透传）', async () => {
     SESSIONS = [{ id: 's9', title: '当前', createdAt: 1, updatedAt: 1 }];
     ACTIVE = 's9';
     render(
@@ -667,7 +715,7 @@ describe('StoryChat', () => {
     const sendBody = CHAT_BODIES[0] as { model?: string; thinking?: string };
     expect(sendBody.model).toBe('anthropic/claude-sonnet-4');
     expect(sendBody.thinking).toBe('high');
-    fireEvent.click(screen.getByText('总结成稿'));
+    fireEvent.click(screen.getByText('生成分镜提示词'));
     await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(1));
     const sumBody = CHAT_BODIES.at(-1) as { model?: string; thinking?: string };
     expect(sumBody.model).toBe('anthropic/claude-sonnet-4');
@@ -800,7 +848,7 @@ describe('StoryChat', () => {
     expect(gets().length).toBe(2);
   });
 
-  it('总结成稿完成后也刷新会话列表（标题同步）', async () => {
+  it('生成分镜提示词完成后也刷新会话列表（标题同步）', async () => {
     SESSIONS = [{ id: 's1', title: '新会话', createdAt: 1, updatedAt: 1 }];
     ACTIVE = 's1';
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -814,8 +862,8 @@ describe('StoryChat', () => {
       }
       if (u.includes('/api/story/chat')) {
         if (method === 'POST') {
-          // 模拟后端：总结成稿落盘后会话标题/updatedAt 变化
-          SESSIONS = SESSIONS.map((s) => (s.id === ACTIVE ? { ...s, title: '总结成稿会话', updatedAt: 9 } : s));
+          // 模拟后端：生成分镜提示词落盘后会话标题/updatedAt 变化
+          SESSIONS = SESSIONS.map((s) => (s.id === ACTIVE ? { ...s, title: '生成分镜提示词会话', updatedAt: 9 } : s));
           return new Response(
             'data: {"chunk":"theme: 战争与和解"}\n\ndata: [DONE]\n\n',
             { status: 200, headers: { 'content-type': 'text/event-stream' } },
@@ -830,13 +878,13 @@ describe('StoryChat', () => {
     const gets = () => (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => String(c[0]).includes('/api/story/chat/sessions') && (c[1] as RequestInit)?.method !== 'POST',
     );
-    fireEvent.click(screen.getByText('总结成稿'));
+    fireEvent.click(screen.getByText('生成分镜提示词'));
     // 总结完成 → 刷新列表：标题更新
-    await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('总结成稿会话'));
+    await waitFor(() => expect(screen.getByTestId('session-item-s1')).toHaveTextContent('生成分镜提示词会话'));
     expect(gets().length).toBe(2);
   });
 
-  it('破甲开启时总结成稿请求以预设文本开头', async () => {
+  it('破甲开启时生成分镜提示词请求以预设文本开头', async () => {
     render(
       <StoryChat
         projectName="demo" onSummarized={() => {}}
@@ -844,18 +892,24 @@ describe('StoryChat', () => {
       />,
     );
     await waitFor(() => expect(screen.getByTestId('session-item-s1')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('总结成稿'));
+    fireEvent.click(screen.getByText('生成分镜提示词'));
     await waitFor(() => expect(CHAT_BODIES.length).toBeGreaterThan(0));
     expect(CHAT_BODIES.at(-1)!.systemPrompt).toMatch(/^破甲预设文本\n\n/);
-    expect(CHAT_BODIES.at(-1)!.message).toContain('theme: 一句话主题');
+    expect(CHAT_BODIES.at(-1)!.message).toContain('mmh3-storyboard-split');
   });
 
   describe('代码块换行切换与消息修改/删除', () => {
-    it('代码块工具栏提供换行切换按钮（默认开启 wrap）', async () => {
+    it('代码块默认折叠，换行/复制按钮始终可见，展开后显示代码', async () => {
       presetLegacySession();
       HISTORY = [{ who: 'agent', text: '```typescript\nconst a = 1;\n```', at: 100 }];
       render(<StoryChat projectName="demo" onSummarized={() => {}} />);
-      await waitFor(() => expect(screen.getByTestId('toggle-wrap-btn')).toBeInTheDocument());
+      // 代码块默认折叠：折叠按钮在右侧，换行/复制按钮不受折叠影响始终可见
+      await waitFor(() => expect(screen.getByTestId('toggle-collapse-btn')).toBeInTheDocument());
+      expect(screen.getByTestId('toggle-wrap-btn')).toBeInTheDocument();
+      expect(screen.queryByText('const a = 1;')).not.toBeInTheDocument();
+      // 展开代码块：代码内容出现
+      fireEvent.click(screen.getByTestId('toggle-collapse-btn'));
+      await waitFor(() => expect(screen.getByText('const a = 1;')).toBeInTheDocument());
       const btn = screen.getByTestId('toggle-wrap-btn');
       expect(btn).toHaveAttribute('title', '取消自动换行');
       const pre = screen.getByText('const a = 1;').closest('pre');
