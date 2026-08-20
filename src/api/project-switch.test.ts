@@ -116,17 +116,20 @@ describe('API 项目注册表与热切换', () => {
     expect(again.json().projects).toHaveLength(1);
   });
 
-  it('PATCH /api/projects/rename 更新项目显示名称', async () => {
+  it('PATCH /api/projects/rename 更新项目显示名称及磁盘目录', async () => {
     await b.inject({ method: 'POST', url: '/api/projects/add', payload: { path: projA } });
     const renamed = await b.inject({
       method: 'PATCH', url: '/api/projects/rename',
       payload: { path: projA, name: '精灵与哥布林' },
     });
     expect(renamed.statusCode).toBe(200);
-    expect(renamed.json().projects.find((p: { path: string }) => p.path === projA).name).toBe('精灵与哥布林');
-    expect(loadGraph(projA).projectName).toBe('精灵与哥布林');
+    const newProjA = join(root, '精灵与哥布林');
+    expect(existsSync(projA)).toBe(false);
+    expect(existsSync(newProjA)).toBe(true);
+    expect(renamed.json().projects.find((p: { path: string }) => p.path === newProjA).name).toBe('精灵与哥布林');
+    expect(loadGraph(newProjA).projectName).toBe('精灵与哥布林');
     const listed = await b.inject({ method: 'GET', url: '/api/projects' });
-    expect(listed.json().projects.find((p: { path: string }) => p.path === projA).name).toBe('精灵与哥布林');
+    expect(listed.json().projects.find((p: { path: string }) => p.path === newProjA).name).toBe('精灵与哥布林');
   });
 
   it('DELETE /api/projects 删除注册记录并删除磁盘目录', async () => {
@@ -181,6 +184,21 @@ describe('API 项目注册表与热切换', () => {
     const res = await b.inject({ method: 'POST', url: '/api/project/switch', payload: { path: '/nonexistent-xyz' } });
     expect(res.statusCode).toBe(400);
     expect(res.json().code).toBe('PROJECT_NOT_FOUND');
+  });
+
+  it('PATCH /api/projects/rename 重命名项目同步修改磁盘目录和注册表', async () => {
+    await b.inject({ method: 'POST', url: '/api/projects/add', payload: { path: projA } });
+    const rename = await b.inject({
+      method: 'PATCH',
+      url: '/api/projects/rename',
+      payload: { path: projA, name: 'renamed-proj-a' },
+    });
+    expect(rename.statusCode).toBe(200);
+    const newDir = join(root, 'renamed-proj-a');
+    expect(existsSync(projA)).toBe(false);
+    expect(existsSync(newDir)).toBe(true);
+    expect(rename.json().newPath).toBe(newDir);
+    expect(rename.json().projects.some((p: { name: string; path: string }) => p.name === 'renamed-proj-a' && p.path === newDir)).toBe(true);
   });
 
   it('项目列表保持固定顺序：切换只更新 current 高亮，不把当前项目挪到最上方', async () => {

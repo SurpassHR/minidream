@@ -10,6 +10,7 @@ import { TaskQueue } from './queue.js';
 import { registerTaskHandlers } from './handlers.js';
 
 let home: string;
+let projDir: string;
 let imageId: string;
 let ollama: ReturnType<typeof Fastify>;
 let ollamaUrl: string;
@@ -19,6 +20,7 @@ let queueDir: string;
 beforeEach(async () => {
   home = mkdtempSync(join(tmpdir(), 'director-home-task-handler-'));
   vi.stubEnv('HOME', home);
+  projDir = mkdtempSync(join(tmpdir(), 'director-proj-task-handler-'));
   queueDir = mkdtempSync(join(tmpdir(), 'director-task-handler-'));
   ollama = Fastify({ logger: false });
   ollama.post('/api/chat', async () => ({ message: { content: '银发精灵骑士，身着墨绿斗篷' } }));
@@ -33,7 +35,7 @@ beforeEach(async () => {
   const imageDir = mkdtempSync(join(tmpdir(), 'director-task-image-'));
   const imagePath = join(imageDir, 'ref.png');
   writeFileSync(imagePath, 'fake image bytes');
-  imageId = importAssetFile(imagePath).id;
+  imageId = importAssetFile(projDir, imagePath).id;
   rmSync(imageDir, { recursive: true, force: true });
   queue = new TaskQueue({ filePath: join(queueDir, 'tasks.json') });
   registerTaskHandlers(queue);
@@ -43,6 +45,7 @@ afterEach(async () => {
   await ollama.close();
   vi.unstubAllEnvs();
   rmSync(home, { recursive: true, force: true });
+  rmSync(projDir, { recursive: true, force: true });
   rmSync(queueDir, { recursive: true, force: true });
 });
 
@@ -50,23 +53,26 @@ describe('Task handlers', () => {
   it('Ollama vision 任务返回 prompt，caption 任务写回图片 caption 和文本素材', async () => {
     const prompt = queue.submit({
       kind: 'ollama-vision', label: '图像转描述',
+      projectDir: projDir,
       payload: { operation: 'image-to-prompt', assetId: imageId },
     });
     expect((await prompt.completion).result?.prompt).toContain('银发精灵骑士');
 
     const caption = queue.submit({
       kind: 'ollama-vision', label: '生成 caption',
+      projectDir: projDir,
       payload: { operation: 'caption', assetId: imageId },
     });
     const done = await caption.completion;
     expect(done.result?.caption).toContain('银发精灵骑士');
-    expect(listAssets().find((asset) => asset.id === imageId)?.caption).toContain('银发精灵骑士');
-    expect(listAssets().some((asset) => asset.kind === 'txt' && asset.name === 'ref.txt')).toBe(true);
+    expect(listAssets(projDir).find((asset) => asset.id === imageId)?.caption).toContain('银发精灵骑士');
+    expect(listAssets(projDir).some((asset) => asset.kind === 'txt' && asset.name === 'ref.txt')).toBe(true);
   });
 
   it('Ollama embedding 任务返回与输入数量一致的向量', async () => {
     const task = queue.submit({
       kind: 'ollama-embedding', label: '知识库检索',
+      projectDir: projDir,
       payload: { model: 'embed', texts: ['北境', '冬季'] },
     });
     const done = await task.completion;

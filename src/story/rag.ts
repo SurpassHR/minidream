@@ -92,7 +92,7 @@ export async function ragSearch(
   if (!ollamaUrl || !ollamaEmbedModel) return { hits: [], status: 'unconfigured' };
   const q = query.trim();
   if (!q) return { hits: [], status: 'ok' };
-  const assets = listAssets();
+  const assets = listAssets(projectDir);
   const rags = board.ragAssets
     .map((id) => assets.find((a) => a.id === id))
     .filter((a): a is NonNullable<typeof a> => a !== undefined && a.kind === 'txt');
@@ -106,7 +106,7 @@ export async function ragSearch(
       const key = cacheKey(projectDir, board.id, asset.id, asset.size);
       let c = cache.get(key);
       if (!c) {
-        const chunks = chunkText(readAssetText(asset.id));
+        const chunks = chunkText(readAssetText(projectDir, asset.id));
         const vectors = await embed(chunks);
         c = { chunks, vectors };
         cache.set(key, c);

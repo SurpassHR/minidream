@@ -18,7 +18,7 @@ import { GenerationQueue } from '../generation/queue.js';
 import { TaskQueue } from '../tasks/queue.js';
 import { ComfyUIClient } from '../comfy/client.js';
 import {
-  assetDirectoryPath, listAssets, importAssetFile, importAssetText, migrateAssetDirectory, upsertAssetText, setAssetCaption, deleteAsset, readAssetText, assetFilePath,
+  assetDirectoryPath, listAssets, importAssetFile, importAssetText, upsertAssetText, setAssetCaption, deleteAsset, readAssetText, assetFilePath,
   updateAsset, replaceAssetFile,
 } from '../assets/assets-store.js';
 import { OllamaClient } from '../ollama/client.js';
@@ -62,7 +62,7 @@ export interface ProjectContext {
 const PROJECT_SCOPED_PREFIXES = [
   '/api/graph', '/api/yaml/export', '/api/nodes', '/api/edges', '/api/import',
   '/api/snapshots', '/api/workspace', '/api/generation', '/api/comfy/config',
-  '/api/agent', '/api/story', '/api/designs',
+  '/api/agent', '/api/story', '/api/designs', '/api/assets',
 ];
 
 function isProjectScopedPath(pathname: string): boolean {
@@ -228,21 +228,21 @@ async function describeStoryImages(files: string[], taskQueue: TaskQueue): Promi
 }
 
 // 对素材库图片做视觉 fallback，并把每条描述写回图片 caption，后续 @ 引用直接复用。
-async function describeAssetImages(assetIds: string[], taskQueue: TaskQueue): Promise<string> {
+async function describeAssetImages(projectDir: string, assetIds: string[], taskQueue: TaskQueue): Promise<string> {
   const assets = assetIds
-    .map((id) => listAssets().find((asset) => asset.id === id))
+    .map((id) => listAssets(projectDir).find((asset) => asset.id === id))
     .filter((asset) => asset?.kind === 'img' && !asset.caption) as Array<{ id: string; kind: 'img'; name: string }>;
   if (assets.length === 0) return '';
   const parts: string[] = [];
   for (const asset of assets) {
     const submitted = submitVisionTask(taskQueue, {
-      operation: 'image-to-prompt', assetId: asset.id, instruction: STORY_VISION_INSTRUCTION,
+      operation: 'image-to-prompt', projectDir, assetId: asset.id, instruction: STORY_VISION_INSTRUCTION,
     });
     const done = await submitted.completion;
     if (done.status !== 'success') throw new DirectorError('INVALID_PATCH', done.error ?? '视觉任务失败');
     const caption = typeof done.result?.prompt === 'string' ? done.result.prompt : '';
     if (!caption) continue;
-    setAssetCaption(asset.id, caption);
+    setAssetCaption(projectDir, asset.id, caption);
     parts.push(`图像素材「${asset.name}」的描述：${caption}`);
   }
   return parts.length > 0 ? `用户引用的图像素材描述（由本地 Ollama 生成）：\n${parts.join('\n')}` : '';
@@ -261,15 +261,15 @@ async function embedThroughQueue(taskQueue: TaskQueue, projectDir: string, texts
 
 // 故事对话拖入的非图像素材：文本读取内容，视频保留可识别的素材引用。
 // 内容设置上限，避免单个大型知识文件撑爆对话上下文；视频不伪造视觉描述。
-export function buildStoryAssetContext(refs: Array<{ id?: string; name?: string; kind?: string }>): string {
+export function buildStoryAssetContext(projectDir: string, refs: Array<{ id?: string; name?: string; kind?: string }>): string {
   const parts: string[] = [];
   for (const ref of refs) {
     if (typeof ref?.id !== 'string') continue;
-    const asset = listAssets().find((item) => item.id === ref.id);
+    const asset = listAssets(projectDir).find((item) => item.id === ref.id);
     if (!asset) continue;
     if (asset.kind === 'txt') {
       try {
-        const content = readAssetText(asset.id).slice(0, 12_000);
+        const content = readAssetText(projectDir, asset.id).slice(0, 12_000);
         parts.push(`文本素材「${asset.name}」：\n${content}`);
       } catch {
         parts.push(`文本素材「${asset.name}」：内容读取失败`);
@@ -286,31 +286,31 @@ export function buildStoryAssetContext(refs: Array<{ id?: string; name?: string;
   return parts.length > 0 ? `用户引用的素材上下文：\n${parts.join('\n\n')}` : '';
 }
 
-export function buildStoryAssetImageFiles(refs: Array<{ id?: string; kind?: string }>): { ids: string[]; files: string[] } {
+export function buildStoryAssetImageFiles(projectDir: string, refs: Array<{ id?: string; kind?: string }>): { ids: string[]; files: string[] } {
   const assets = refs
     .filter((ref) => typeof ref.id === 'string')
-    .map((ref) => listAssets().find((asset) => asset.id === ref.id))
+    .map((ref) => listAssets(projectDir).find((asset) => asset.id === ref.id))
     .filter((asset) => asset?.kind === 'img' && !asset.caption) as Array<{ id: string; kind: 'img' }>;
-  return { ids: assets.map((asset) => asset.id), files: assets.map((asset) => assetFilePath(asset.id)) };
+  return { ids: assets.map((asset) => asset.id), files: assets.map((asset) => assetFilePath(projectDir, asset.id)) };
 }
 
 // AGENT 面板的 @ 素材上下文：文本直接注入，图片同时以 @ 文件参数交给 pi，视频保留元信息。
-export function buildAgentAssetContext(refs: Array<{ id?: string; name?: string; kind?: string }>): { context: string; imageFiles: string[]; imageAssetIds: string[] } {
+export function buildAgentAssetContext(projectDir: string, refs: Array<{ id?: string; name?: string; kind?: string }>): { context: string; imageFiles: string[]; imageAssetIds: string[] } {
   const parts: string[] = [];
   const imageFiles: string[] = [];
   for (const ref of refs) {
     if (typeof ref?.id !== 'string') continue;
-    const asset = listAssets().find((item) => item.id === ref.id);
+    const asset = listAssets(projectDir).find((item) => item.id === ref.id);
     if (!asset) continue;
     if (asset.kind === 'txt') {
       try {
-        parts.push(`文本素材「${asset.name}」：\n${readAssetText(asset.id).slice(0, 12_000)}`);
+        parts.push(`文本素材「${asset.name}」：\n${readAssetText(projectDir, asset.id).slice(0, 12_000)}`);
       } catch {
         parts.push(`文本素材「${asset.name}」：内容读取失败`);
       }
     } else if (asset.kind === 'img') {
       const caption = asset.caption ? `\n图像描述：${asset.caption}` : '';
-      if (!asset.caption) imageFiles.push(assetFilePath(asset.id));
+      if (!asset.caption) imageFiles.push(assetFilePath(projectDir, asset.id));
       parts.push(`图像素材「${asset.name}」${asset.caption ? '的描述已直接注入提示词' : '已作为图像附件提供给模型'}。${caption}`);
     } else {
       const meta = asset.meta ? `（${asset.meta}）` : '';
@@ -322,7 +322,7 @@ export function buildAgentAssetContext(refs: Array<{ id?: string; name?: string;
     imageFiles,
     imageAssetIds: refs
       .filter((ref) => typeof ref.id === 'string')
-      .map((ref) => listAssets().find((asset) => asset.id === ref.id))
+      .map((ref) => listAssets(projectDir).find((asset) => asset.id === ref.id))
       .filter((asset) => asset?.kind === 'img' && !asset.caption)
       .map((asset) => asset!.id),
   };
@@ -371,21 +371,29 @@ export function mountRoutes(
     projects: addProject(ctx.projectDir, (req.body as { path?: string }).path ?? ''),
   }));
 
-  // 更新项目显示名称（不改磁盘目录）
+  // 重命名项目：同步重命名磁盘目录及项目注册表
   app.patch('/api/projects/rename', async (req, reply) => {
     const body = req.body as { path?: string; name?: string };
     try {
-      const projects = renameProject(ctx.projectDir, body.path ?? '', body.name ?? '');
       const target = resolveSwitchTarget(ctx.projectDir, body.path ?? '');
-      if (target) {
-        const graph = loadGraph(target);
-        graph.projectName = body.name!.trim();
-        saveGraph(target, graph);
+      const renamingCurrent = ctx.projectOpen && target === ctx.projectDir;
+      const { projects, newPath } = renameProject(ctx.projectDir, body.path ?? '', body.name ?? '');
+
+      if (renamingCurrent) {
+        ctx.projectDir = newPath;
+        ctx.comfy = new ComfyUIClient(resolveComfyUrl(ctx.projectDir));
+        ctx.queue = new GenerationQueue(ctx.projectDir, ctx.comfy, ctx.taskQueue);
+        await ws.switchDir(ctx.projectDir);
       }
-      return { projects };
+
+      return {
+        projects: projects.filter((p) => ctx.projectOpen ? true : !p.current),
+        newPath,
+      };
     } catch (err) {
       if (err instanceof DirectorError) {
-        return reply.code(err.code === 'PROJECT_NOT_FOUND' ? 404 : 400).send({ code: err.code, message: err.message });
+        const status = err.code === 'PROJECT_NOT_FOUND' ? 404 : err.code === 'FILE_CONFLICT' ? 409 : 400;
+        return reply.code(status).send({ code: err.code, message: err.message });
       }
       throw err;
     }
@@ -660,23 +668,9 @@ export function mountRoutes(
       comfyUrl?: string; agentModel?: string; agentThinking?: string;
       prompts?: Record<string, string>;
       armorBreak?: string; armorBreakEnabled?: boolean;
-      ollamaUrl?: string; ollamaModel?: string; ollamaEmbedModel?: string; assetsDir?: string;
+      ollamaUrl?: string; ollamaModel?: string; ollamaEmbedModel?: string;
       theme?: 'dark' | 'light';
     };
-    const requestedAssetsDir = typeof body.assetsDir === 'string' ? body.assetsDir.trim() : undefined;
-    if (requestedAssetsDir !== undefined) {
-      if (requestedAssetsDir && !isAbsolute(requestedAssetsDir)) {
-        return reply.code(400).send({ code: 'INVALID_PATCH', message: '素材库目录必须是绝对路径' });
-      }
-      try {
-        migrateAssetDirectory(requestedAssetsDir);
-      } catch (err) {
-        if (err instanceof DirectorError) {
-          return reply.code(400).send({ code: err.code, message: err.message });
-        }
-        throw err;
-      }
-    }
     const settings = saveSettings({
       comfyUrl: typeof body.comfyUrl === 'string' ? body.comfyUrl : undefined,
       agentModel: typeof body.agentModel === 'string' ? body.agentModel : undefined,
@@ -687,7 +681,6 @@ export function mountRoutes(
       ollamaUrl: typeof body.ollamaUrl === 'string' ? body.ollamaUrl : undefined,
       ollamaModel: typeof body.ollamaModel === 'string' ? body.ollamaModel : undefined,
       ollamaEmbedModel: typeof body.ollamaEmbedModel === 'string' ? body.ollamaEmbedModel : undefined,
-      assetsDir: requestedAssetsDir,
       theme: body.theme === 'dark' || body.theme === 'light' ? body.theme : undefined,
     });
     // ComfyUI 地址变化 → 写回当前项目节点 + 热切换（复用 comfy/config 行为）
@@ -761,10 +754,10 @@ export function mountRoutes(
     return { ok };
   });
 
-  // —— 素材库：全局素材（~/.director/assets） ——
+  // —— 素材库：项目级素材（<projectDir>/.director/assets） ——
   app.post('/api/assets/open-directory', async (_, reply) => {
     try {
-      openDirectory(assetDirectoryPath());
+      openDirectory(assetDirectoryPath(ctx.projectDir));
       return { ok: true };
     } catch (err) {
       if (err instanceof DirectorError) {
@@ -774,18 +767,18 @@ export function mountRoutes(
     }
   });
 
-  app.get('/api/assets', async () => ({ assets: listAssets() }));
+  app.get('/api/assets', async () => ({ assets: listAssets(ctx.projectDir) }));
 
   app.post('/api/assets/import', async (req, reply) => {
     const { sourcePath } = req.body as { sourcePath: string };
-    const rec = importAssetFile(sourcePath);
+    const rec = importAssetFile(ctx.projectDir, sourcePath);
     reply.code(201);
     return { asset: rec };
   });
 
   app.post('/api/assets/import-text', async (req, reply) => {
     const { name, content } = req.body as { name: string; content: string };
-    const rec = importAssetText(name, content);
+    const rec = importAssetText(ctx.projectDir, name, content);
     reply.code(201);
     return { asset: rec };
   });
@@ -806,7 +799,7 @@ export function mountRoutes(
     const tmpPath = join(tmpDir, file.filename || `upload-${randomUUID()}.bin`);
     try {
       await pipeline(file.file, createWriteStream(tmpPath));
-      const asset = importAssetFile(tmpPath);
+      const asset = importAssetFile(ctx.projectDir, tmpPath);
       reply.code(201);
       return { asset };
     } finally {
@@ -818,7 +811,7 @@ export function mountRoutes(
     const { id } = req.params as { id: string };
     const body = req.body as { name?: string; content?: string };
     try {
-      return { asset: updateAsset(id, {
+      return { asset: updateAsset(ctx.projectDir, id, {
         name: typeof body.name === 'string' ? body.name : undefined,
         content: typeof body.content === 'string' ? body.content : undefined,
       }) };
@@ -843,7 +836,7 @@ export function mountRoutes(
     const tmpPath = join(tmpDir, file.filename || `replace-${randomUUID()}.bin`);
     try {
       await pipeline(file.file, createWriteStream(tmpPath));
-      return { asset: replaceAssetFile(id, tmpPath) };
+      return { asset: replaceAssetFile(ctx.projectDir, id, tmpPath) };
     } catch (err) {
       if (err instanceof DirectorError) {
         return reply.code(err.code === 'NODE_NOT_FOUND' ? 404 : 400).send({ code: err.code, message: err.message });
@@ -859,20 +852,20 @@ export function mountRoutes(
     if (!confirmOf(req.query)) {
       return reply.code(400).send({ code: 'CONFIRM_REQUIRED', message: '删除素材需 confirm=true' });
     }
-    deleteAsset(id);
+    deleteAsset(ctx.projectDir, id);
     return { ok: true };
   });
 
   app.get('/api/assets/:id/content', async (req) => {
     const { id } = req.params as { id: string };
-    return { content: readAssetText(id) };
+    return { content: readAssetText(ctx.projectDir, id) };
   });
 
   // 图像 captioning：Ollama 视觉模型描述图片 → 在图像同一位置生成同名 .txt 素材
   // （preview.png → preview.txt；重复执行按同名覆盖更新，不产生重复素材）
   app.post('/api/assets/:id/caption', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const asset = listAssets().find((x) => x.id === id);
+    const asset = listAssets(ctx.projectDir).find((x) => x.id === id);
     if (!asset) {
       return reply.code(404).send({ code: 'NODE_NOT_FOUND', message: `素材不存在: ${id}` });
     }
@@ -884,17 +877,12 @@ export function mountRoutes(
       return reply.code(400).send({ code: 'INVALID_PATCH', message: '请先在设置中配置 Ollama 地址与视觉模型' });
     }
     try {
-      const submitted = submitVisionTask(ctx.taskQueue, { operation: 'caption', assetId: id });
+      const submitted = submitVisionTask(ctx.taskQueue, { operation: 'caption', projectDir: ctx.projectDir, assetId: id });
       const done = await submitted.completion;
       if (done.status !== 'success') {
-        return reply.code(400).send({ code: 'INVALID_PATCH', message: done.error ?? 'caption 任务失败' });
+        return reply.code(400).send({ code: 'INVALID_PATCH', message: done.error ?? '生成 caption 任务失败' });
       }
-      const caption = typeof done.result?.caption === 'string' ? done.result.caption : '';
-      const rec = done.result?.asset;
-      if (!caption || !rec) {
-        return reply.code(400).send({ code: 'INVALID_PATCH', message: 'caption 任务返回空结果' });
-      }
-      return { caption, asset: rec };
+      return { caption: done.result?.caption, asset: done.result?.asset };
     } catch (err) {
       if (err instanceof DirectorError) {
         return reply.code(400).send({ code: err.code, message: err.message });
@@ -956,7 +944,7 @@ app.post('/api/story/complete', async (req, reply) => {
   }
   const projectName = loadGraph(ctx.projectDir).projectName || '未命名项目';
   const md = buildStoryMarkdown(projectName, story.answers);
-  const asset = importAssetText(`story_${projectName}.md`, md);
+  const asset = importAssetText(ctx.projectDir, `story_${projectName}.md`, md);
   completeStory(ctx.projectDir, new Date().toISOString());
   reply.code(201);
   return { asset, story: readStory(ctx.projectDir), md };
@@ -1099,8 +1087,8 @@ app.post('/api/story/chat', async (req, reply) => {
     );
     if (r.status === 'ok' && r.hits.length > 0) ragContext = formatRagHits(r.hits);
   }
-  const assetContext = buildStoryAssetContext(assetRefs);
-  const assetImageInput = buildStoryAssetImageFiles(assetRefs);
+  const assetContext = buildStoryAssetContext(ctx.projectDir, assetRefs);
+  const assetImageInput = buildStoryAssetImageFiles(ctx.projectDir, assetRefs);
   const mode = body.persistAs === '（请总结成稿）' ? 'system' : 'chat';
   const buildPrompt = (visionContext = '') => {
     const context = [assetContext, visionContext].filter((part) => part.trim()).join('\n\n');
@@ -1187,12 +1175,12 @@ app.post('/api/story/chat', async (req, reply) => {
   try {
     const idleMs = Number(process.env.DIRECTOR_AGENT_IDLE_MS) || 45_000;
     const imageFiles = imageFilesForPi;
-    const describeFallbackImages = async (): Promise<string> => {
-      const contexts: string[] = [];
-      if (assetImageInput.ids.length > 0) contexts.push(await describeAssetImages(assetImageInput.ids, ctx.taskQueue));
-      if (imgAttach && imgAttach.files.length > 0) contexts.push(await describeStoryImages(imgAttach.files, ctx.taskQueue));
-      return contexts.filter((context) => context.trim()).join('\\n\\n');
-    };
+      const describeFallbackImages = async (): Promise<string> => {
+        const contexts: string[] = [];
+        if (assetImageInput.ids.length > 0) contexts.push(await describeAssetImages(ctx.projectDir, assetImageInput.ids, ctx.taskQueue));
+        if (imgAttach && imgAttach.files.length > 0) contexts.push(await describeStoryImages(imgAttach.files, ctx.taskQueue));
+        return contexts.filter((context) => context.trim()).join('\n\n');
+      };
     let runPrompt = prompt.userPrompt;
     let runCmd = imageCmd;
     let runSystemPrompt = prompt.systemPrompt;
@@ -1413,7 +1401,7 @@ app.post('/api/ollama/image-to-prompt', async (req, reply) => {
     return reply.code(400).send({ code: 'INVALID_PATCH', message: '缺少 assetId' });
   }
   // 素材必须是图片（assetFilePath 对未知 id 抛 NODE_NOT_FOUND）
-  const asset = listAssets().find((x) => x.id === assetId);
+  const asset = listAssets(ctx.projectDir).find((x) => x.id === assetId);
   if (!asset) {
     return reply.code(404).send({ code: 'NODE_NOT_FOUND', message: `素材不存在: ${assetId}` });
   }
@@ -1429,7 +1417,7 @@ app.post('/api/ollama/image-to-prompt', async (req, reply) => {
     '请用中文描述这张图片中主体（人物/场景/物品）的外观：外貌、材质、颜色、光影、构图要点。输出一段可直接作为文生图提示词的外观描述，只输出描述本身，不要解释、不要引号。';
   try {
     const submitted = submitVisionTask(ctx.taskQueue, {
-      operation: 'image-to-prompt', assetId, instruction,
+      operation: 'image-to-prompt', projectDir: ctx.projectDir, assetId, instruction,
     });
     const done = await submitted.completion;
     if (done.status !== 'success') {
@@ -1450,7 +1438,7 @@ app.post('/api/ollama/image-to-prompt', async (req, reply) => {
 app.get('/api/assets/:id/file', async (req, reply) => {
   const { id } = req.params as { id: string };
   // 一次查找取记录（不存在直接 404，不重复手抛 DirectorError；文件读取复用 store 的 assetFilePath）
-  const rec = listAssets().find((x) => x.id === id);
+  const rec = listAssets(ctx.projectDir).find((x) => x.id === id);
   if (!rec) {
     return reply.code(404).send({ code: 'NODE_NOT_FOUND', message: `素材不存在: ${id}` });
   }
@@ -1464,7 +1452,7 @@ app.get('/api/assets/:id/file', async (req, reply) => {
     : ext === '.mov' ? 'video/quicktime'
     : 'text/plain; charset=utf-8';
   reply.header('content-type', type);
-  return reply.send(readFileSync(assetFilePath(id)));
+  return reply.send(readFileSync(assetFilePath(ctx.projectDir, id)));
 });
 
 // —— 计划 4 Task 3：pi 桥 SSE 流式对话 ——
@@ -1497,7 +1485,7 @@ app.get('/api/assets/:id/file', async (req, reply) => {
     if (body.thinking && THINKING_LEVELS.includes(body.thinking)) {
       cmd.push('--thinking', body.thinking);
     }
-    const assetInput = buildAgentAssetContext(body.assetRefs ?? []);
+    const assetInput = buildAgentAssetContext(ctx.projectDir, body.assetRefs ?? []);
     const prompt = buildAgentPrompt({
       message: body.message,
       chips: body.chips ?? [],
@@ -1581,7 +1569,7 @@ app.get('/api/assets/:id/file', async (req, reply) => {
       if (assetInput.imageFiles.length > 0 && !idleKilled
         && agentText.trim().length === 0 && isVisionUnsupportedError(modelError)) {
         try {
-          const visionContext = await describeAssetImages(assetInput.imageAssetIds, ctx.taskQueue);
+          const visionContext = await describeAssetImages(ctx.projectDir, assetInput.imageAssetIds, ctx.taskQueue);
           const retryPrompt = buildAgentPrompt({
             message: body.message,
             chips: body.chips ?? [],

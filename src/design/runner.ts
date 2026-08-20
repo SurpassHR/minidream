@@ -48,7 +48,7 @@ export async function runDesignGenerationTask(
   const tmpPath = join(tmpDir, `design-${designId}${ext}`);
   try {
     await comfy.download(output.media[0]!, tmpPath);
-    const asset = importAssetFile(tmpPath);
+    const asset = importAssetFile(projectDir, tmpPath);
     const done = updateDesign(projectDir, designId, { status: 'done', assetId: asset.id, error: '' });
     return { design: done, promptId, workflow: template.workflowName };
   } catch (err) {

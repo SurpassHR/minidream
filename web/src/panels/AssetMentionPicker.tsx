@@ -31,7 +31,7 @@ export function insertAssetMention(value: string, item: MentionAsset): string {
 }
 
 // 素材库变更全局信号：App 在 refreshAssets 成功后广播，@ 引用菜单监听后重拉素材。
-// 素材库是全局的（~/.director/assets），变更点汇聚在 App.refreshAssets（AssetLibrary 的
+// 素材库是项目级的（<projectDir>/.director/assets），变更点汇聚在 App.refreshAssets（AssetLibrary 的
 // 导入/编辑/删除/caption 都经 onAssetsChanged 触发它），在此广播可让所有 @ 引用输入框
 // （StoryChat / AgentPanel）即时拿到新素材，无需改动组件 props 契约。
 const ASSETS_CHANGED_EVENT = 'director:assets-changed';

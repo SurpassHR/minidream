@@ -268,11 +268,14 @@ export default function App() {
     setRenameBusy(true);
     setRenameError('');
     try {
-      const next = await client.renameProject(renameTarget.path, name);
-      setProjects(next);
+      const res = await client.renameProject(renameTarget.path, name);
+      setProjects(res.projects);
       if (projects.find((p) => p.current)?.path === renameTarget.path) {
         const currentGraph = useGraphStore.getState().graph;
         if (currentGraph) applyGraph({ ...currentGraph, projectName: name });
+        if (res.newPath) {
+          void refreshAssets();
+        }
       }
       setRenameTarget(null);
     } catch (err) {
@@ -280,7 +283,7 @@ export default function App() {
     } finally {
       setRenameBusy(false);
     }
-  }, [applyGraph, projects, renameTarget]);
+  }, [applyGraph, projects, refreshAssets, renameTarget]);
 
   // 删除项目：确认后删除磁盘目录及项目注册记录
   const askRemoveProject = useCallback((path: string, name: string) => {

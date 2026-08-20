@@ -148,8 +148,6 @@ export interface AppSettings {
   ollamaModel?: string;
   // Ollama embedding 模型（项目 RAG 向量检索）；空 = 未配置
   ollamaEmbedModel?: string;
-  // 全局素材库目录；空 = 使用默认 ~/.director/assets
-  assetsDir?: string;
   // 工作台主题；未配置时前端使用深色默认
   theme?: ThemeMode;
 }

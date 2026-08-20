@@ -151,7 +151,7 @@ describe('API designs generate', () => {
     expect(design.status).toBe('done');
     expect(design.assetId).toBeTruthy();
     // 素材已入库且为 img
-    const assets = listAssets();
+    const assets = listAssets(dir2);
     const asset = assets.find((x) => x.id === design.assetId);
     expect(asset?.kind).toBe('img');
     expect(asset?.name).toMatch(/^design-.*\.png$/);
@@ -281,10 +281,10 @@ describe('API designs generate', () => {
 
 describe('API 素材文件端点', () => {
   it('GET /api/assets/:id/file 返回图片字节流', async () => {
-    // 先入库一张图（HOME 已隔离到 fakeHome）
+    // 先入库一张图
     const src = join(fakeHome, 'src.png');
     writeFileSync(src, Buffer.from([0x89, 0x50, 0x4e, 0x47]), 'utf8');
-    const rec = importAssetFile(src);
+    const rec = importAssetFile(dir, src);
     const res = await a.inject({ method: 'GET', url: `/api/assets/${rec.id}/file` });
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('image/png');
@@ -299,7 +299,7 @@ describe('API 素材文件端点', () => {
   it('GET /api/assets/:id/file 返回 .mov 视频字节流（content-type 映射不漂移）', async () => {
     const src = join(fakeHome, 'clip.mov');
     writeFileSync(src, Buffer.from([0x00, 0x00, 0x00, 0x18]));
-    const rec = importAssetFile(src);
+    const rec = importAssetFile(dir, src);
     expect(rec.kind).toBe('vid');
     const res = await a.inject({ method: 'GET', url: `/api/assets/${rec.id}/file` });
     expect(res.statusCode).toBe(200);

@@ -249,17 +249,17 @@ function createMcpServer(
     return { content: [{ type: 'text', text: JSON.stringify(graph) }] };
   });
 
-  server.registerTool('assets.list', { description: '列出全局素材库' }, async () => ({
-    content: [{ type: 'text', text: JSON.stringify(listAssets()) }],
+  server.registerTool('assets.list', { description: '列出项目素材库' }, async () => ({
+    content: [{ type: 'text', text: JSON.stringify(listAssets(ctx.projectDir)) }],
   }));
 
   server.registerTool('assets.import', {
-    description: '导入文件到全局素材库（txt/md/png/jpg/webp/mp4/webm/mov）',
+    description: '导入文件到项目素材库（txt/md/png/jpg/webp/mp4/webm/mov）',
     inputSchema: {
       sourcePath: z.string(),
     },
   }, async (args) => ({
-    content: [{ type: 'text', text: JSON.stringify(importAssetFile(String(args.sourcePath))) }],
+    content: [{ type: 'text', text: JSON.stringify(importAssetFile(ctx.projectDir, String(args.sourcePath))) }],
   }));
 
   server.registerTool('assets.import_text', {
@@ -269,7 +269,7 @@ function createMcpServer(
       content: z.string(),
     },
   }, async (args) => ({
-    content: [{ type: 'text', text: JSON.stringify(importAssetText(String(args.name), String(args.content))) }],
+    content: [{ type: 'text', text: JSON.stringify(importAssetText(ctx.projectDir, String(args.name), String(args.content))) }],
   }));
 
   return server;

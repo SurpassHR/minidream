@@ -226,12 +226,12 @@ export const client = {
     return r.projects;
   },
 
-  // 更新项目显示名称（不改磁盘目录）
-  async renameProject(path: string, name: string): Promise<ProjectInfo[]> {
-    const r = await req<{ projects: ProjectInfo[] }>('/api/projects/rename', {
+  // 更新项目显示名称及磁盘目录路径
+  async renameProject(path: string, name: string): Promise<{ projects: ProjectInfo[]; newPath?: string }> {
+    const r = await req<{ projects: ProjectInfo[]; newPath?: string }>('/api/projects/rename', {
       method: 'PATCH', body: JSON.stringify({ path, name }),
     });
-    return r.projects;
+    return r;
   },
 
   // 删除项目目录及其注册记录（后端再次确认并递归删除磁盘文件）

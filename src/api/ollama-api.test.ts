@@ -39,7 +39,7 @@ beforeEach(async () => {
   const imgDir = mkdtempSync(join(tmpdir(), 'director-ollama-img-'));
   const imgPath = join(imgDir, 'ref.png');
   writeFileSync(imgPath, 'fake-png-bytes');
-  importAssetFile(imgPath);
+  importAssetFile(dir, imgPath);
   rmSync(imgDir, { recursive: true, force: true });
 });
 afterEach(async () => {
@@ -108,7 +108,7 @@ describe('API Ollama 图像转提示词', () => {
     const txtDir = mkdtempSync(join(tmpdir(), 'director-ollama-txt-'));
     const txtPath = join(txtDir, 'note.txt');
     writeFileSync(txtPath, 'hello', 'utf8');
-    const asset = importAssetFile(txtPath);
+    const asset = importAssetFile(dir, txtPath);
     rmSync(txtDir, { recursive: true, force: true });
     const res = await a.inject({
       method: 'POST', url: '/api/ollama/image-to-prompt',
@@ -163,8 +163,8 @@ describe('API Ollama 图像转提示词', () => {
   });
 
   it('AGENT 引用已有 caption 时直接注入描述，不发送图片文件', async () => {
-    const img = listAssets().find((asset) => asset.kind === 'img')!;
-    setAssetCaption(img.id, '银发精灵骑士站在雾林中，冷绿色调。');
+    const img = listAssets(dir).find((asset) => asset.kind === 'img')!;
+    setAssetCaption(dir, img.id, '银发精灵骑士站在雾林中，冷绿色调。');
     vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
     vi.stubEnv('MOCK_ECHO_STDIN', '1');
     const res = await a.inject({
@@ -177,7 +177,7 @@ describe('API Ollama 图像转提示词', () => {
   });
 
   it('AGENT 图片视觉失败时回退 Ollama，并把描述写回 caption', async () => {
-    const img = listAssets().find((asset) => asset.kind === 'img')!;
+    const img = listAssets(dir).find((asset) => asset.kind === 'img')!;
     const marker = join(home, 'agent-vision-fallback-once');
     vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
     vi.stubEnv('MOCK_VISION_ERROR_ONCE', marker);
@@ -188,13 +188,13 @@ describe('API Ollama 图像转提示词', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(lastChatBody?.model).toBe('llava:13b');
-    expect(listAssets().find((asset) => asset.id === img.id)?.caption).toContain('银发精灵骑士');
+    expect(listAssets(dir).find((asset) => asset.id === img.id)?.caption).toContain('银发精灵骑士');
     expect(res.body).toContain('银发精灵骑士');
   });
 
   it('故事对话引用已有 caption 时直接注入描述，不发送图片文件', async () => {
-    const img = listAssets().find((asset) => asset.kind === 'img')!;
-    setAssetCaption(img.id, '银发精灵骑士站在雾林中，冷绿色调。');
+    const img = listAssets(dir).find((asset) => asset.kind === 'img')!;
+    setAssetCaption(dir, img.id, '银发精灵骑士站在雾林中，冷绿色调。');
     vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
     vi.stubEnv('MOCK_ECHO_STDIN', '1');
     const res = await a.inject({
@@ -207,7 +207,7 @@ describe('API Ollama 图像转提示词', () => {
   });
 
   it('故事对话图片视觉失败时回退 Ollama，并把描述写回 caption', async () => {
-    const img = listAssets().find((asset) => asset.kind === 'img')!;
+    const img = listAssets(dir).find((asset) => asset.kind === 'img')!;
     const marker = join(home, 'story-asset-vision-fallback-once');
     vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
     vi.stubEnv('MOCK_VISION_ERROR_ONCE', marker);
@@ -218,7 +218,7 @@ describe('API Ollama 图像转提示词', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(lastChatBody?.model).toBe('llava:13b');
-    expect(listAssets().find((asset) => asset.id === img.id)?.caption).toContain('银发精灵骑士');
+    expect(listAssets(dir).find((asset) => asset.id === img.id)?.caption).toContain('银发精灵骑士');
     expect(res.body).toContain('银发精灵骑士');
   });
 
@@ -293,7 +293,7 @@ describe('API 素材图像 captioning', () => {
     const txtDir = mkdtempSync(join(tmpdir(), 'director-caption-txt-'));
     const txtPath = join(txtDir, 'note.txt');
     writeFileSync(txtPath, 'hello', 'utf8');
-    const asset = importAssetFile(txtPath);
+    const asset = importAssetFile(dir, txtPath);
     rmSync(txtDir, { recursive: true, force: true });
     const res = await a.inject({ method: 'POST', url: `/api/assets/${asset.id}/caption` });
     expect(res.statusCode).toBe(400);

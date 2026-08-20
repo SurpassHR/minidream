@@ -344,31 +344,7 @@ describe('API 素材上传', () => {
     expect(res.json().code).toBe('INVALID_PATCH');
   });
 
-  it('设置 assetsDir 时迁移素材，目标非空则拒绝并保持原目录', async () => {
-    const created = await a.inject({
-      method: 'POST', url: '/api/assets/import-text',
-      payload: { name: 'migrate.md', content: '迁移内容' },
-    });
-    const id = created.json().asset.id as string;
-    const target = join(fakeHome, 'migrated-assets');
 
-    const moved = await a.inject({
-      method: 'PUT', url: '/api/settings',
-      payload: { assetsDir: target },
-    });
-    expect(moved.statusCode).toBe(200);
-    expect(moved.json().settings.assetsDir).toBe(target);
-    expect((await a.inject({ method: 'GET', url: `/api/assets/${id}/content` })).json().content).toBe('迁移内容');
-
-    mkdirSync(join(fakeHome, 'occupied-assets'), { recursive: true });
-    writeFileSync(join(fakeHome, 'occupied-assets', 'keep.txt'), 'keep');
-    const denied = await a.inject({
-      method: 'PUT', url: '/api/settings',
-      payload: { assetsDir: join(fakeHome, 'occupied-assets') },
-    });
-    expect(denied.statusCode).toBe(400);
-    expect((await a.inject({ method: 'GET', url: `/api/assets/${id}/content` })).json().content).toBe('迁移内容');
-  });
 
   it('素材 CRUD：编辑文本、替换文件、确认删除', async () => {
     const created = await a.inject({

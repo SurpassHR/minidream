@@ -73,7 +73,7 @@ describe('API 故事向导', () => {
     expect(asset.kind).toBe('txt');
     expect(story.completedAt).toBeTruthy();
     // 素材已入库
-    const assets = listAssets();
+    const assets = listAssets(dir);
     expect(assets.some((x) => x.id === asset.id)).toBe(true);
   });
 
@@ -114,7 +114,7 @@ describe('API 故事向导', () => {
     const res2 = await a.inject({ method: 'POST', url: '/api/story/complete', payload: {} });
     expect(res2.statusCode).toBe(409);
     expect(res2.json().code).toBe('STORY_ALREADY_COMPLETED');
-    expect(listAssets()).toHaveLength(1);
+    expect(listAssets(dir)).toHaveLength(1);
   });
 
   it('完成后 PUT /api/story 带 answers 返回 409（STORY_ALREADY_COMPLETED）且不写入', async () => {
@@ -276,10 +276,10 @@ describe('API 故事对话', () => {
   it('POST /api/story/chat 文本与视频素材引用：读取文本并注入素材上下文', async () => {
     vi.stubEnv('DIRECTOR_PI_CMD', `node ${join(process.cwd(), 'src/agent/mock-agent.mjs')}`);
     vi.stubEnv('MOCK_ECHO_STDIN', '1');
-    const text = importAssetText('世界观.md', '这是一个被雾笼罩的边境城镇。');
+    const text = importAssetText(dir, '世界观.md', '这是一个被雾笼罩的边境城镇。');
     const videoPath = join(dir, '参考视频.mp4');
     writeFileSync(videoPath, new Uint8Array([0, 1, 2]));
-    const video = importAssetFile(videoPath);
+    const video = importAssetFile(dir, videoPath);
     const res = await a.inject({
       method: 'POST', url: '/api/story/chat',
       payload: {
@@ -374,7 +374,7 @@ describe('API 全局设置', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().settings).toEqual({
       comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false,
-      ollamaUrl: '', ollamaModel: '', ollamaEmbedModel: '', assetsDir: '',
+      ollamaUrl: '', ollamaModel: '', ollamaEmbedModel: '',
     });
   });
 
@@ -529,7 +529,7 @@ describe('API 剧本项目（boards：项目级提示词 + RAG）', () => {
     });
     expect(prompts.json().board.systemPrompts).toEqual({ storyTeller: '你是星尘历险记的专属编剧' });
     // RAG 开关 + 添加资产（txt 素材）
-    const asset = importAssetText('故事设定', '星尘历险记世界观：2890 年，人类殖民 12 个星系。');
+    const asset = importAssetText(dir, '故事设定', '星尘历险记世界观：2890 年，人类殖民 12 个星系。');
     const on = await a.inject({ method: 'POST', url: `/api/story/boards/${id}/rag/toggle`, payload: { enabled: true } });
     expect(on.json().board.ragEnabled).toBe(true);
     const added = await a.inject({ method: 'POST', url: `/api/story/boards/${id}/rag/assets`, payload: { assetId: asset.id } });
@@ -553,7 +553,7 @@ describe('API 剧本项目（boards：项目级提示词 + RAG）', () => {
 
   it('RAG 检索：Ollama embedding 命中片段（mock /api/embed）', async () => {
     saveSettings({ ollamaUrl: 'http://127.0.0.1:59999', ollamaEmbedModel: 'nomic-embed-text' });
-    const asset = importAssetText('设定.md', '第一段：星尘历险记发生在 2890 年，人类殖民 12 个星系，主角是失忆的星图测绘员。'.repeat(10) + '\n\n' + '第二段：空间站回声是叛军母港，主角在废弃空间站醒来。'.repeat(10));
+    const asset = importAssetText(dir, '设定.md', '第一段：星尘历险记发生在 2890 年，人类殖民 12 个星系，主角是失忆的星图测绘员。'.repeat(10) + '\n\n' + '第二段：空间站回声是叛军母港，主角在废弃空间站醒来。'.repeat(10));
     const boards = (await a.inject({ method: 'GET', url: '/api/story/boards' })).json().boards;
     const id = boards[0].id;
     await a.inject({ method: 'POST', url: `/api/story/boards/${id}/rag/toggle`, payload: { enabled: true } });

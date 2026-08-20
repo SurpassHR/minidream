@@ -31,6 +31,7 @@ type DesignPayload = {
 
 export function submitVisionTask(queue: TaskQueue, input: {
   operation: 'image-to-prompt' | 'caption';
+  projectDir?: string;
   assetId?: string;
   imagePath?: string;
   instruction?: string;
@@ -41,6 +42,7 @@ export function submitVisionTask(queue: TaskQueue, input: {
   return queue.submit({
     kind: 'ollama-vision',
     label: input.operation === 'caption' ? '生成图像 caption' : '图像转提示词',
+    projectDir: input.projectDir,
     payload: input,
     dedupeKey,
   });
@@ -75,9 +77,10 @@ async function runDesignTask(task: TaskRecord): Promise<Record<string, unknown>>
 
 async function runVisionTask(task: TaskRecord): Promise<Record<string, unknown>> {
   const payload = task.payload as VisionPayload;
+  const projectDir = task.projectDir ?? '';
   const assetId = typeof payload.assetId === 'string' ? payload.assetId : '';
   const imagePath = typeof payload.imagePath === 'string' ? payload.imagePath : '';
-  const asset = assetId ? listAssets().find((item) => item.id === assetId) : undefined;
+  const asset = assetId ? listAssets(projectDir).find((item) => item.id === assetId) : undefined;
   if (payload.operation === 'caption' && !assetId) throw new DirectorError('INVALID_PATCH', 'caption 任务缺少图片素材');
   if (assetId && !asset) throw new DirectorError('NODE_NOT_FOUND', `素材不存在: ${assetId}`);
   if (asset && asset.kind !== 'img') throw new DirectorError('INVALID_PATCH', '该素材不是图片，无法调用视觉模型');
@@ -92,13 +95,13 @@ async function runVisionTask(task: TaskRecord): Promise<Record<string, unknown>>
     : (payload.instruction?.trim() || DEFAULT_VISION_INSTRUCTION);
   const text = await new OllamaClient(ollamaUrl).imageToPrompt(
     ollamaModel,
-    asset ? assetFilePath(asset.id) : imagePath,
+    asset ? assetFilePath(projectDir, asset.id) : imagePath,
     instruction,
   );
   if (payload.operation === 'caption') {
     const txtName = `${basename(asset!.name, extname(asset!.name))}.txt`;
-    const textAsset = upsertAssetText(txtName, text);
-    setAssetCaption(asset!.id, text);
+    const textAsset = upsertAssetText(projectDir, txtName, text);
+    setAssetCaption(projectDir, asset!.id, text);
     return { caption: text, asset: textAsset };
   }
   return { prompt: text, ...(assetId ? { assetId } : {}) };

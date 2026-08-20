@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import fg from 'fast-glob';
-import { loadGraph } from '../graph/graph-store.js';
+import { loadGraph, saveGraph } from '../graph/graph-store.js';
 import { DirectorError } from '../types.js';
 
 // —— 项目注册表（手动添加，持久化 ~/.director/projects.json） ——
@@ -196,18 +196,60 @@ export function addProject(projectDir: string, path: string): ProjectInfo[] {
   return listProjects(projectDir);
 }
 
-// 更新项目显示名称：不改磁盘目录，只更新项目注册表中的 name 字段。
-export function renameProject(projectDir: string, path: string, name: string): ProjectInfo[] {
+// 重命名项目：同步修改磁盘目录名，更新注册表路径及项目图 projectName
+export function renameProject(
+  projectDir: string,
+  path: string,
+  name: string,
+): { projects: ProjectInfo[]; newPath: string } {
   const abs = resolveDir(projectDir, path);
   if (!abs) throw new DirectorError('PROJECT_NOT_FOUND', `项目目录不存在: ${path}`);
   const nextName = name.trim();
   if (!nextName) throw new DirectorError('INVALID_PATCH', '项目名称不能为空');
+  if (nextName.includes('/') || nextName.includes('\\')) {
+    throw new DirectorError('INVALID_PATCH', '项目名称不能包含路径分隔符');
+  }
+
+  const parentDir = dirname(abs);
+  const newAbs = join(parentDir, nextName);
+
   const registry = readRegistry();
   const entry = registry.find((item) => item.path === abs);
   if (!entry) throw new DirectorError('PROJECT_NOT_FOUND', `项目未添加到项目栏: ${path}`);
+
+  const lastSavedProject = readLastProject();
+
+  // 如果目标目录不是原目录且已存在，抛出冲突
+  if (newAbs !== abs && existsSync(newAbs)) {
+    throw new DirectorError('FILE_CONFLICT', `目标目录已存在: ${newAbs}`);
+  }
+
+  // 1. 重命名磁盘目录
+  if (newAbs !== abs) {
+    renameSync(abs, newAbs);
+  }
+
+  // 2. 更新注册表
+  entry.path = newAbs;
   entry.name = nextName;
   writeRegistry(registry);
-  return listProjects(projectDir);
+
+  // 3. 更新 last-project 记录（如果重命名的是当前记录的项目）
+  if (lastSavedProject === abs) {
+    rememberLastProject(newAbs);
+  }
+
+  // 4. 更新项目图中的 projectName
+  try {
+    const graph = loadGraph(newAbs);
+    graph.projectName = nextName;
+    saveGraph(newAbs, graph);
+  } catch {
+    // 允许空目录或尚未生成 project.json 的项目
+  }
+
+  const nextActiveProjectDir = projectDir === abs ? newAbs : projectDir;
+  return { projects: listProjects(nextActiveProjectDir), newPath: newAbs };
 }
 
 // 删除项目：从注册表移除，并递归删除对应磁盘目录；调用方必须先经过确认门。

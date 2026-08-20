@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { readLastProject, rememberLastProject } from './projects-store.js';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { addProject, listProjects, readLastProject, rememberLastProject, renameProject } from './projects-store.js';
 
 let home: string;
 let projectDir: string;
@@ -38,5 +38,25 @@ describe('最近打开项目', () => {
     rememberLastProject(join(projectDir, '.'));
 
     expect(readLastProject()).toBe(projectDir);
+  });
+});
+
+describe('项目重命名', () => {
+  it('重命名项目会同步修改磁盘目录名与注册表', () => {
+    const sub = join(projectDir, 'project-a');
+    mkdirSync(sub);
+    mkdirSync(join(sub, 'prompts'));
+
+    addProject(projectDir, sub);
+    rememberLastProject(sub);
+
+    const res = renameProject(projectDir, sub, 'project-b');
+    const newDir = join(projectDir, 'project-b');
+
+    expect(existsSync(sub)).toBe(false);
+    expect(existsSync(newDir)).toBe(true);
+    expect(res.newPath).toBe(newDir);
+    expect(readLastProject()).toBe(newDir);
+    expect(listProjects(projectDir).some((p) => p.name === 'project-b' && p.path === newDir)).toBe(true);
   });
 });

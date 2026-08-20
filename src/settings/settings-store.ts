@@ -18,13 +18,12 @@ export interface AppSettings {
   ollamaUrl: string;     // Ollama 地址（http://...；空串 = 未配置）
   ollamaModel: string;   // Ollama 本地视觉模型名（图像转提示词用；空串 = 未配置）
   ollamaEmbedModel: string; // Ollama embedding 模型名（项目 RAG 向量检索用；空串 = 未配置）
-  assetsDir: string;      // 全局素材库目录；空串 = ~/.director/assets
   theme?: ThemeMode;        // 工作台主题；缺失 = 深色默认
 }
 
 const DEFAULTS: AppSettings = {
   comfyUrl: '', agentModel: '', agentThinking: '', armorBreak: '', armorBreakEnabled: false,
-  ollamaUrl: '', ollamaModel: '', ollamaEmbedModel: '', assetsDir: '',
+  ollamaUrl: '', ollamaModel: '', ollamaEmbedModel: '',
 };
 
 function settingsFile(): string {
@@ -56,11 +55,8 @@ export function readSettings(): AppSettings {
       ollamaUrl: typeof data.ollamaUrl === 'string' ? data.ollamaUrl : DEFAULTS.ollamaUrl,
       ollamaModel: typeof data.ollamaModel === 'string' ? data.ollamaModel : DEFAULTS.ollamaModel,
       ollamaEmbedModel: typeof data.ollamaEmbedModel === 'string' ? data.ollamaEmbedModel : DEFAULTS.ollamaEmbedModel,
-      assetsDir: typeof data.assetsDir === 'string' ? data.assetsDir : DEFAULTS.assetsDir,
     };
     if (data.theme === 'dark' || data.theme === 'light') out.theme = data.theme;
-    // 键缺失（undefined）= 从未自定义，保持 out 无 prompts 键；
-    // 已存在（含 {}）= 已保存过，原样过滤返回（删除的条目不复活）
     if (data.prompts !== undefined) {
       out.prompts = filterPrompts(data.prompts);
     }
@@ -71,7 +67,6 @@ export function readSettings(): AppSettings {
 }
 
 // 保存设置：只更新传入字段（白名单），未传字段保持现值；原子写（tmp + rename）
-// prompts 为整体替换语义：传入对象则过滤后整体替换并总是写入（含空对象），未传则保持现值
 export function saveSettings(patch: Partial<AppSettings>): AppSettings {
   const current = readSettings();
   const next: AppSettings = {
@@ -83,7 +78,6 @@ export function saveSettings(patch: Partial<AppSettings>): AppSettings {
     ollamaUrl: typeof patch.ollamaUrl === 'string' ? patch.ollamaUrl : current.ollamaUrl,
     ollamaModel: typeof patch.ollamaModel === 'string' ? patch.ollamaModel : current.ollamaModel,
     ollamaEmbedModel: typeof patch.ollamaEmbedModel === 'string' ? patch.ollamaEmbedModel : current.ollamaEmbedModel,
-    assetsDir: typeof patch.assetsDir === 'string' ? patch.assetsDir : current.assetsDir,
   };
   if (patch.prompts !== undefined) {
     next.prompts = (typeof patch.prompts === 'object' && patch.prompts !== null && !Array.isArray(patch.prompts))

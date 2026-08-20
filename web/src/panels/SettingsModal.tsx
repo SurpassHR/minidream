@@ -35,7 +35,7 @@ const THINKING_LEVELS = [
 // 左侧导航定义：分组 + 条目（id 对应右侧 section，点击切换）。
 // 对话 Provider 与 Ollama 本地同属「模型 + API 地址」配置，合并为一个入口（参考 LLM 配置面板），
 // 区内再用子导航 master-detail 切换两个模型源。
-type SectionId = 'comfy' | 'llm' | 'assets' | 'prompts';
+type SectionId = 'comfy' | 'llm' | 'prompts';
 const NAV_GROUPS: Array<{ title: string; items: Array<{ id: SectionId; icon: IconName; label: string; desc: string }> }> = [
   {
     title: '服务连接',
@@ -47,7 +47,6 @@ const NAV_GROUPS: Array<{ title: string; items: Array<{ id: SectionId; icon: Ico
   {
     title: '内容',
     items: [
-      { id: 'assets', icon: 'file', label: '素材库', desc: '素材存储位置' },
       { id: 'prompts', icon: 'book', label: '提示词库', desc: '角色系统提示词' },
     ],
   },
@@ -78,8 +77,6 @@ export function SettingsModal(props: {
   const [ollamaModel, setOllamaModel] = useState(props.settings.ollamaModel ?? '');
   // Ollama embedding 模型（项目 RAG 向量检索用）
   const [ollamaEmbedModel, setOllamaEmbedModel] = useState(props.settings.ollamaEmbedModel ?? '');
-  // 素材库目录：空值恢复默认 ~/.director/assets；保存新目录时后端自动迁移现有素材
-  const [assetsDir, setAssetsDir] = useState(props.settings.assetsDir ?? '');
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [ollamaStatus, setOllamaStatus] = useState('');
@@ -134,7 +131,6 @@ export function SettingsModal(props: {
       setOllamaUrl(props.settings.ollamaUrl ?? '');
       setOllamaModel(props.settings.ollamaModel ?? '');
       setOllamaEmbedModel(props.settings.ollamaEmbedModel ?? '');
-      setAssetsDir(props.settings.assetsDir ?? '');
       // 打开时自动拉取已安装模型（下拉数据源；地址为空则跳过）
       setOllamaModels([]);
       setOllamaStatus('');
@@ -176,7 +172,6 @@ export function SettingsModal(props: {
       ollamaUrl: ollamaUrl.trim(),
       ollamaModel: ollamaModel.trim(),
       ollamaEmbedModel: ollamaEmbedModel.trim(),
-      assetsDir: assetsDir.trim(),
     }).then((s) => {
       props.onSaved(s);
       props.onClose();
@@ -361,29 +356,10 @@ export function SettingsModal(props: {
               </div>
             </section>
 
-            {/* —— 素材库 —— */}
-            <section className={`settings-sec${activeSec === 'assets' ? ' active' : ''}`} data-testid="sec-assets">
-              <div className="settings-sec-head">
-                <div className="sec-eyebrow">Assets · 03</div>
-                <div className="sec-title">素材库存储位置</div>
-                <div className="sec-desc">修改后会自动迁移当前素材库中的索引和文件；目标目录必须不存在或为空。</div>
-              </div>
-              <label className="role-field">
-                <span className="role-field-label">素材库目录</span>
-                <input
-                  className="ne-input" data-testid="assets-dir"
-                  placeholder="默认：~/.director/assets"
-                  value={assetsDir}
-                  onChange={(e) => setAssetsDir(e.target.value)}
-                />
-                <span className="role-field-hint">请输入绝对路径；留空恢复默认目录。保存时目标目录若非空会拒绝迁移，不会覆盖文件。</span>
-              </label>
-            </section>
-
             {/* —— 提示词库 —— */}
             <section className={`settings-sec${activeSec === 'prompts' ? ' active' : ''}`} data-testid="sec-prompts">
               <div className="settings-sec-head">
-                <div className="sec-eyebrow">Prompts · 04</div>
+                <div className="sec-eyebrow">Prompts · 03</div>
                 <div className="sec-title">提示词库 · 全局角色提示词</div>
                 <div className="sec-desc">storyTeller / storySummarize 已下沉到「剧本项目」的项目级系统提示词（每个项目完全自定义）；此处仅保留全局 objectDesigner。留空即回退内置默认</div>
               </div>
