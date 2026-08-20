@@ -31,18 +31,92 @@ export interface ChatMsg {
 // 待发送的图像附件（预览 + 随消息发送）
 export interface ChatAttachment { id: string; name: string; dataUrl: string; assetId?: string; fromMention?: boolean }
 
-// 六步答案约定格式解析：按行匹配 `stepId: 内容`，非法行忽略（导出便于测试）
+// 六步答案约定格式解析：支持英文 key、中文键名（主题/主角等）、Markdown 列表与标题格式
 export function parseStoryAnswers(text: string): Record<string, string> {
-  const STEP_IDS = ['theme', 'protagonist', 'support', 'antagonist', 'scenes', 'ending'];
+  const KEY_MAP: Record<string, string> = {
+    theme: 'theme',
+    protagonist: 'protagonist',
+    support: 'support',
+    antagonist: 'antagonist',
+    scenes: 'scenes',
+    ending: 'ending',
+    主题: 'theme',
+    故事主题: 'theme',
+    主角: 'protagonist',
+    主角设定: 'protagonist',
+    配角: 'support',
+    配角列表: 'support',
+    配角设定: 'support',
+    冲突: 'antagonist',
+    冲突来源: 'antagonist',
+    场景: 'scenes',
+    场景列表: 'scenes',
+    场景设定: 'scenes',
+    结局: 'ending',
+    结局设定: 'ending',
+  };
+
   const out: Record<string, string> = {};
-  for (const line of text.split('\n')) {
-    const m = /^(theme|protagonist|support|antagonist|scenes|ending):\s*(.+)$/.exec(line.trim());
-    if (m && STEP_IDS.includes(m[1]!)) {
-      out[m[1]!] = m[2]!.trim();
+  const lines = text.split('\n');
+
+  let currentKey: string | null = null;
+  const currentLines: string[] = [];
+
+  const flush = () => {
+    if (currentKey && currentLines.length > 0) {
+      const val = currentLines.join('\n').trim();
+      if (val && val !== '（待定）' && val !== '(待定)' && val !== '待定') {
+        out[currentKey] = val;
+      }
+    }
+    currentLines.length = 0;
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    // 优先匹配标准的 key: value 格式（英文 key 或中文 key）
+    const colonMatch = /^(?:#{1,6}\s+|[-*•]\s+|\d+[.、]\s*)?(?:\*\*|__)?([a-zA-Z\u4e00-\u9fa5]+)(?:\*\*|__)?\s*[:：]\s*(.*)$/.exec(line);
+    if (colonMatch) {
+      const candidateKey = colonMatch[1].trim().toLowerCase();
+      const mapped = KEY_MAP[candidateKey];
+      if (mapped) {
+        flush();
+        currentKey = mapped;
+        const rest = colonMatch[2].trim();
+        if (rest) {
+          currentLines.push(rest);
+        }
+        continue;
+      }
+    }
+
+    // 匹配标题行格式（如 "## 主题"、"### 1. 主角"）
+    const headerOnlyMatch = /^#{1,6}\s+(?:\d+[.、]\s*)?(?:\*\*|__)?([a-zA-Z\u4e00-\u9fa5]+)(?:\*\*|__)?$/.exec(line);
+    if (headerOnlyMatch) {
+      const candidateKey = headerOnlyMatch[1].trim().toLowerCase();
+      const mapped = KEY_MAP[candidateKey];
+      if (mapped) {
+        flush();
+        currentKey = mapped;
+        continue;
+      }
+    }
+
+    if (currentKey) {
+      // 遇到纯无关段落或非法格式不再盲目收集，但列表/续行继续追加
+      if (/^[-*•]\s+/.test(line) || /^\d+[.、]\s+/.test(line) || !currentLines.length) {
+        currentLines.push(line);
+      }
     }
   }
+  flush();
+
   return out;
 }
+
+
 
 // 会话更新时间 → 短日期：当天显示 HH:mm，否则 MM-DD（同 AGENT 面板）
 function fmtSessionDate(at: number): string {

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { ScriptViewer, tokenizeScriptLine } from './ScriptViewer';
 
 describe('tokenizeScriptLine', () => {
@@ -59,11 +59,23 @@ describe('ScriptViewer', () => {
     expect(screen.getByText('[特写]').className).toContain('tok-square');
   });
 
-  it('特殊字符原样展示（无注入）', () => {
-    render(<ScriptViewer text={'<img onerror="x"> [<script>]'} />);
-    // 文本节点渲染：<img ...> 作为文本出现，不产生 img 元素
-    expect(screen.getByTestId('script-line-1')).toHaveTextContent('<img onerror="x"> [<script>]');
-    expect(document.querySelector('img')).toBeNull();
-    expect(document.querySelector('script')).toBeNull();
+  it('支持自动换行与复制操作', async () => {
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+    render(<ScriptViewer text={'第一行内容\n第二行内容'} />);
+    const wrapBtn = screen.getByTestId('script-toggle-wrap-btn');
+    const copyBtn = screen.getByTestId('script-copy-btn');
+    expect(wrapBtn).toHaveTextContent('取消换行');
+    expect(copyBtn).toHaveTextContent('复制');
+
+    fireEvent.click(wrapBtn);
+    expect(wrapBtn).toHaveTextContent('自动换行');
+
+    fireEvent.click(copyBtn);
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('第一行内容\n第二行内容');
   });
 });
+

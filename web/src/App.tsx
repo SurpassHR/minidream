@@ -463,8 +463,8 @@ export default function App() {
           title="设置：ComfyUI 地址 / 默认模型 / 思考强度"
           onClick={() => setSettingsOpen(true)}
         ><Icon name="gear" />设置</button>
-        <button className="btn-ghost" onClick={() => setImportOpen(true)} disabled={!projectOpen}>＋ 导入</button>
-        <button className="run-btn" disabled={!projectOpen}><span className="tri">▶</span>运行流水线</button>
+        <button className="btn-ghost" onClick={() => setImportOpen(true)} disabled={!projectOpen}><Icon name="plus" />导入</button>
+        <button className="run-btn" disabled={!projectOpen}><Icon name="play" />运行流水线</button>
       </header>
       {route === 'canvas' ? (
         <>

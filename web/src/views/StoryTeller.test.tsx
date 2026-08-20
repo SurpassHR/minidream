@@ -197,4 +197,18 @@ describe('StoryTellerView 对话式', () => {
     expect(screen.queryByTestId('script-viewer')).not.toBeInTheDocument();
     expect(screen.getByTestId('script-sidebar')).toHaveTextContent('剧本将在这里展示');
   });
+
+  it('两侧边栏分割条存在并支持拖动调整宽度', async () => {
+    render(<StoryTellerView projectName="demo" />);
+    await waitFor(() => expect(screen.getByTestId('story-left-splitter')).toBeInTheDocument());
+    expect(screen.getByTestId('story-right-splitter')).toBeInTheDocument();
+
+    const leftSplitter = screen.getByTestId('story-left-splitter');
+    fireEvent.mouseDown(leftSplitter, { clientX: 240 });
+    fireEvent.mouseMove(window, { clientX: 300 });
+    fireEvent.mouseUp(window);
+
+    expect(screen.getByTestId('board-sidebar')).toHaveStyle({ width: '300px' });
+  });
 });
+

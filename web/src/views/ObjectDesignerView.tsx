@@ -5,7 +5,7 @@ import { ConfirmDialog } from '../panels/ConfirmDialog';
 import type { DesignKind, DesignObject } from '../types';
 import { agentChat } from '../api/agent';
 import { resolvePrompt, withArmorBreak } from './roles';
-import { AiButton, EmptyState, ErrorBanner, Field, LoadingState, RoleCard, RoleHeader, StatusBadge } from './role-ui';
+import { AiButton, EmptyState, ErrorBanner, Field, LoadingState, RoleCard, StatusBadge } from './role-ui';
 
 const KIND_LABEL: Record<DesignKind, string> = {
   character: '人物', scene: '场景', prop: '物品',
@@ -186,11 +186,6 @@ export function ObjectDesignerView(props: { projectName: string; prompts?: Recor
 
   return (
     <div className="role-view designer-view" data-testid="object-designer-view">
-      <RoleHeader
-        eyebrow="OBJECT DESIGNER"
-        title="物体设计器"
-        meta={<span className="designer-meta">{designs.length} 个设计 · {doneCount} 张参考图</span>}
-      />
       <div className="designer-body">
         {/* 左列：三类对象分组（人物/场景/物品） */}
         <div className="designer-list">

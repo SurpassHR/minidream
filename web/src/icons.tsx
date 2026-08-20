@@ -9,7 +9,7 @@ export type IconName =
   | 'user' | 'landscape' | 'package' | 'loader'
   | 'check-circle' | 'x-circle' | 'sparkles' | 'chat' | 'scroll' | 'file'
   | 'paperclip' | 'sun' | 'moon'
-  | 'frame' | 'text-lines' | 'wrap-text' | 'sliders' | 'play';
+  | 'frame' | 'text-lines' | 'wrap-text' | 'sliders' | 'play' | 'plus';
 
 const PATHS: Record<IconName, ReactNode> = {
   gear: (
@@ -97,6 +97,12 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   play: <polygon points="8 5 19 12 8 19 8 5" />,
+  plus: (
+    <>
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </>
+  ),
   'file-text': (
     <>
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />

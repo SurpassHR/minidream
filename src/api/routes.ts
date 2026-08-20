@@ -944,7 +944,7 @@ app.post('/api/story/complete', async (req, reply) => {
   }
   const projectName = loadGraph(ctx.projectDir).projectName || '未命名项目';
   const md = buildStoryMarkdown(projectName, story.answers);
-  const asset = importAssetText(ctx.projectDir, `story_${projectName}.md`, md);
+  const asset = upsertAssetText(ctx.projectDir, `story_${projectName}.md`, md);
   completeStory(ctx.projectDir, new Date().toISOString());
   reply.code(201);
   return { asset, story: readStory(ctx.projectDir), md };

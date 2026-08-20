@@ -123,20 +123,13 @@ describe('AssetLibrary', () => {
     expect(screen.queryByText('segment_01.mp4')).not.toBeInTheDocument();
   });
 
-  it('导入按钮弹出类型菜单，点文字后触发文件选择（真实导入）', () => {
+  it('导入按钮点击直接触发文件选择（真实导入）', () => {
     render(<AssetLibrary items={items} onDropToCanvas={() => {}} />);
-    fireEvent.click(screen.getByText('＋ 导入'));
-    expect(screen.getByText('文字 / 提示词')).toBeInTheDocument();
-    fireEvent.click(screen.getByText('文字 / 提示词'));
-    expect(document.querySelector('input[type=file]')).not.toBeNull();
-  });
-
-  it('导入菜单选择文字类型触发文件选择', () => {
-    render(<AssetLibrary items={[]} onDropToCanvas={() => {}} />);
-    fireEvent.click(screen.getByText('＋ 导入'));
-    fireEvent.click(screen.getByText('文字 / 提示词'));
-    const fileInput = document.querySelector('input[type=file]');
+    const fileInput = document.querySelector('input[type=file]') as HTMLInputElement;
     expect(fileInput).not.toBeNull();
+    const clickSpy = vi.spyOn(fileInput, 'click');
+    fireEvent.click(screen.getByText('＋ 导入'));
+    expect(clickSpy).toHaveBeenCalled();
   });
 
   it('空素材列表渲染空态卡片（标题 + 导入引导按钮）', () => {
@@ -144,9 +137,10 @@ describe('AssetLibrary', () => {
     expect(screen.getByTestId('asset-empty')).toBeInTheDocument();
     expect(screen.getByText('素材库是空的')).toBeInTheDocument();
     expect(screen.getByText(/Ctrl\+V 粘贴剪贴板图像/)).toBeInTheDocument();
-    // 空态按钮可直接打开导入菜单
+    const fileInput = document.querySelector('input[type=file]') as HTMLInputElement;
+    const clickSpy = vi.spyOn(fileInput, 'click');
     fireEvent.click(screen.getByText('＋ 导入素材'));
-    expect(screen.getByText('文字 / 提示词')).toBeInTheDocument();
+    expect(clickSpy).toHaveBeenCalled();
   });
 
   it('搜索无结果时显示无匹配空态并可清除搜索', () => {
@@ -340,9 +334,6 @@ describe('AssetLibrary 导入失败反馈', () => {
 
   it('导入失败时面板内显示错误提示（不静默）', async () => {
     render(<AssetLibrary items={[]} onDropToCanvas={() => {}} />);
-    // 打开导入菜单并选文字类型（设置 pendingKind=txt）
-    fireEvent.click(screen.getByText('＋ 导入'));
-    fireEvent.click(screen.getByText('文字 / 提示词'));
     // 触发隐藏 file input 的 change：选中一个 txt 文件
     const fileInput = document.querySelector('input[type=file]');
     expect(fileInput).not.toBeNull();

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { client } from '../api/client';
 import { Icon } from '../icons';
 import type { RagHit, StoryBoard, StoryProgress } from '../types';
-import { ErrorBanner, LoadingState, RoleHeader } from './role-ui';
+import { ErrorBanner, LoadingState } from './role-ui';
 import { StoryChat } from './StoryChat';
 import { ScriptViewer } from './ScriptViewer';
 import { ConfirmDialog } from '../panels/ConfirmDialog';
@@ -41,6 +41,71 @@ export function StoryTellerView(props: {
   // 剧本项目：列表 + 当前激活（加载失败 → 空列表 + 虚拟默认板兜底）
   const [boards, setBoards] = useState<StoryBoard[]>([]);
   const [activeBoardId, setActiveBoardId] = useState<string | null>(null);
+
+  // 两侧边栏宽度记忆与拖拽调节
+  const [leftWidth, setLeftWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('dw_story_left_width');
+    const n = saved ? Number(saved) : 240;
+    return Number.isFinite(n) && n >= 160 && n <= 500 ? n : 240;
+  });
+  const [rightWidth, setRightWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('dw_story_right_width');
+    const n = saved ? Number(saved) : 380;
+    return Number.isFinite(n) && n >= 220 && n <= 700 ? n : 380;
+  });
+  const [dragging, setDragging] = useState<'left' | 'right' | null>(null);
+  const dragRef = useRef<{ kind: 'left' | 'right'; startX: number; startW: number } | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem('dw_story_left_width', String(leftWidth));
+  }, [leftWidth]);
+
+  useEffect(() => {
+    localStorage.setItem('dw_story_right_width', String(rightWidth));
+  }, [rightWidth]);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const onMouseMove = (e: MouseEvent) => {
+      if (!dragRef.current) return;
+      const { kind, startX, startW } = dragRef.current;
+      const delta = e.clientX - startX;
+      if (kind === 'left') {
+        const next = Math.max(160, Math.min(500, startW + delta));
+        setLeftWidth(next);
+      } else if (kind === 'right') {
+        const next = Math.max(220, Math.min(700, startW - delta));
+        setRightWidth(next);
+      }
+    };
+    const onMouseUp = () => {
+      setDragging(null);
+      dragRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [dragging]);
+
+  const onSplitterDown = (kind: 'left' | 'right') => (e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = { kind, startX: e.clientX, startW: kind === 'left' ? leftWidth : rightWidth };
+    setDragging(kind);
+  };
+
+  const onSplitterReset = (kind: 'left' | 'right') => () => {
+    if (kind === 'left') setLeftWidth(240);
+    else if (kind === 'right') setRightWidth(380);
+  };
   // 中栏 tab（对话 / 系统提示词 / 知识库 RAG）
   const [midTab, setMidTab] = useState<'chat' | 'prompts' | 'rag'>('chat');
   // 右栏 tab（生效上下文 / 剧本）
@@ -107,16 +172,21 @@ export function StoryTellerView(props: {
     return () => { disposed = true; };
   }, [props.projectName]);
 
-  // 对话式总结成稿：解析答案 → 写入 story.json → complete 入库 → 刷新完成状态
-  const handleSummarized = (answers: Record<string, string>) => {
-    void client.saveStory({ answers })
-      .then(() => client.completeStory())
-      .then((r) => {
-        setStory(r.story);
-        setMd(r.md);
-        setError('');
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : '总结入库失败'));
+  // 对话式总结成稿：重置（若已完成）/保存答案 → complete 入库 → 刷新完成状态
+  const handleSummarized = async (answers: Record<string, string>) => {
+    try {
+      if (story?.completedAt) {
+        await client.resetStory();
+      }
+      await client.saveStory({ answers });
+      const r = await client.completeStory();
+      setStory(r.story);
+      setMd(r.md);
+      setRightTab('script');
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '总结入库失败');
+    }
   };
 
   // 重新生成：清空进度与完成标记，回到未完成态（确认门防误触）
@@ -210,14 +280,18 @@ export function StoryTellerView(props: {
   return (
     // 仅对话式：chat-mode 布局常驻（高度受限，仅消息区滚动）
     <div className="role-view story-view chat-mode" data-testid="story-teller-view">
-      <RoleHeader
-        eyebrow="STORY TELLER"
-        title="故事向导"
-        meta={<span className="story-step-meta">项目级提示词 + RAG · 自由对话</span>}
-      />
-      <div className="story-layout story-v3">
+      <div
+        className="story-layout story-v3"
+        style={{
+          gridTemplateColumns: `${leftWidth}px 5px minmax(360px, 1fr) 5px ${rightWidth}px`,
+        }}
+      >
         {/* 左栏：剧本项目（项目 = 系统提示词 + RAG 容器） */}
-        <aside className="board-sidebar" data-testid="board-sidebar">
+        <aside
+          className="board-sidebar"
+          data-testid="board-sidebar"
+          style={{ width: leftWidth }}
+        >
           <div className="panel-title">剧本项目 <span className="mini">提示词 + RAG</span></div>
           <div className="board-list">
             {boards.map((b) => (
@@ -269,6 +343,15 @@ export function StoryTellerView(props: {
             <div className="bc-row"><span className={`bc-dot ${activeBoard.ragEnabled && activeBoard.ragAssets.length > 0 ? 'bc-on' : 'bc-off'}`} />RAG {activeBoard.ragEnabled && activeBoard.ragAssets.length > 0 ? `${activeBoard.ragAssets.length} 文件 · 已启用` : '未配置'}</div>
           </div>
         </aside>
+
+        {/* 左侧可拖拽分割条 */}
+        <div
+          className={`splitter splitter-v${dragging === 'left' ? ' active' : ''}`}
+          data-testid="story-left-splitter"
+          title="拖动调整剧本项目栏宽度，双击恢复默认"
+          onMouseDown={onSplitterDown('left')}
+          onDoubleClick={onSplitterReset('left')}
+        />
 
         {/* 中栏：对话 / 系统提示词 / 知识库 RAG */}
         <div className="story-main mid-col">
@@ -324,8 +407,22 @@ export function StoryTellerView(props: {
           </div>
         </div>
 
+        {/* 右侧可拖拽分割条 */}
+        <div
+          className={`splitter splitter-v${dragging === 'right' ? ' active' : ''}`}
+          data-testid="story-right-splitter"
+          title="拖动调整剧本/上下文栏宽度，双击恢复默认"
+          onMouseDown={onSplitterDown('right')}
+          onDoubleClick={onSplitterReset('right')}
+        />
+
         {/* 右栏：生效上下文 / 剧本栏 */}
-        <aside className="script-sidebar" data-testid="script-sidebar">
+        <aside
+          className="script-sidebar"
+          data-testid="script-sidebar"
+          style={{ width: rightWidth }}
+        >
+
           <div className="ctx-tabs">
             <button className={`ctx-tab${rightTab === 'ctx' ? ' on' : ''}`} onClick={() => setRightTab('ctx')}>上下文</button>
             <button className={`ctx-tab${rightTab === 'script' ? ' on' : ''}`} onClick={() => setRightTab('script')}>剧本</button>

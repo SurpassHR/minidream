@@ -52,16 +52,14 @@ export function AssetLibrary(props: {
   onAssetsChanged?: () => void;
 }) {
   const [query, setQuery] = useState('');
-  const [menuOpen, setMenuOpen] = useState(false);
   const [importError, setImportError] = useState(''); // 导入失败提示（透传后端错误消息）
   const [items, setItems] = useState(props.items);
   // 拖入文件悬停高亮
   const [dragging, setDragging] = useState(false);
   // 父组件数据源变化（导入后 onAssetsChanged 刷新）时同步内部列表，使新素材立即可见
   useEffect(() => { setItems(props.items); }, [props.items]);
-  // 真实导入：隐藏 file input + 待导入类型（决定 accept 与入库方式）
+  // 真实导入：隐藏 file input
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [pendingKind, setPendingKind] = useState<'txt' | 'img' | 'vid' | null>(null);
   const [editTarget, setEditTarget] = useState<AssetItem | null>(null);
   const [editName, setEditName] = useState('');
   const [editContent, setEditContent] = useState('');
@@ -208,31 +206,18 @@ export function AssetLibrary(props: {
     }
   };
 
-  const pickFile = (kind: 'txt' | 'img' | 'vid') => {
-    setPendingKind(kind);
-    setMenuOpen(false);
+  const pickFile = () => {
     fileInputRef.current?.click();
   };
 
   const onFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const files = e.target.files;
     e.target.value = ''; // 允许重复选择同一文件
-    if (!file) return;
-    try {
-      if (pendingKind === 'txt') {
-        const content = await file.text();
-        await client.importText(file.name, content);
-      } else {
-        await client.uploadAsset(file);
-      }
-      setImportError('');
-      props.onAssetsChanged?.();
-    } catch (err) {
-      // 导入失败：透传后端错误消息，避免静默失败
-      setImportError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setPendingKind(null);
-    }
+    if (!files || files.length === 0) return;
+    await importFiles(files, {
+      onOk: () => { setImportError(''); props.onAssetsChanged?.(); },
+      onError: setImportError,
+    });
   };
 
   // Ctrl+V 粘贴导入：剪贴板含图像文件 → 直接入库；
@@ -291,22 +276,15 @@ export function AssetLibrary(props: {
           disabled={directoryBusy}
           onClick={() => { void openAssetDirectory(); }}
         ><Icon name="file" />{directoryBusy ? '打开中…' : '打开目录'}</button>
-        <button className="import-btn" onClick={() => setMenuOpen((v) => !v)}>＋ 导入</button>
+        <button className="import-btn" onClick={pickFile}>＋ 导入</button>
       </div>
       <div className="import-hint">Ctrl+V 粘贴或拖入图片 / .txt 文件，自动入库</div>
-      {menuOpen && (
-        <div className="import-pop">
-          <h4>导入到素材库</h4>
-          <div className="ipt-row" onClick={() => pickFile('txt')}><span className="ic"><Icon name="file-text" /></span>文字 / 提示词</div>
-          <div className="ipt-row" onClick={() => pickFile('img')}><span className="ic"><Icon name="image" /></span>图像 / 参考图</div>
-          <div className="ipt-row" onClick={() => pickFile('vid')}><span className="ic"><Icon name="video" /></span>视频 / 参考视频</div>
-        </div>
-      )}
       <input
         ref={fileInputRef}
         type="file"
+        multiple
         style={{ display: 'none' }}
-        accept={pendingKind === 'txt' ? '.txt,.md' : pendingKind === 'img' ? '.png,.jpg,.jpeg,.webp' : '.mp4,.webm,.mov'}
+        accept=".png,.jpg,.jpeg,.webp,.gif,.mp4,.webm,.mov,.txt,.md"
         onChange={(e) => void onFileChosen(e)}
       />
       {importError && <div className="ne-error import-error">导入失败：{importError}</div>}
@@ -389,7 +367,7 @@ export function AssetLibrary(props: {
             <div className="ae-frame"><span className="ae-icon"><Icon name="image" /></span></div>
             <div className="ae-title">素材库是空的</div>
             <div className="ae-sub">Ctrl+V 粘贴剪贴板图像，或把图片 / .txt 文件拖进这里，自动入库</div>
-            <button className="import-btn" onClick={() => setMenuOpen(true)}>＋ 导入素材</button>
+            <button className="import-btn" onClick={pickFile}>＋ 导入素材</button>
           </div>
         ) : (
           <div className="asset-empty slim">
