@@ -8,6 +8,7 @@ export default defineConfig({
     proxy: {
       '/api': 'http://127.0.0.1:4777',
       '/assets': 'http://127.0.0.1:4777',
+      '/comfyui': 'http://127.0.0.1:4777',
     },
   },
 });

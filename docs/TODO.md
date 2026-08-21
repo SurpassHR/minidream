@@ -1,13 +1,13 @@
 # 导演工作台 v2 — 进行中任务
 
-> 更新：2026-08-21
+> 更新：2026-08-22
 > 背景：v2 复刻即梦「生成」页（https://jimeng.jianying.com/ai-tool/generate）为创作对话工作台。
 > 已登录 playwright 浏览器（persistent profile: `~/.cache/ms-playwright/daemon/f238a65447b5103a/ud-orig-chrome`），
 > 有一个「女孩森林遇发光鹿」视频生成任务曾在排队/生成中。
 
 ## 当前状态
 
-✅ 已完成并提交（`57a9f16`，工作树干净）：
+✅ 已完成（本次 ComfyUI 对接改动尚未提交）：
 
 1. **v1 封存**：`v1` 分支保存全部旧代码（117 提交）；`main` 分支从零重建
 2. **页面复刻**（生成页）：Rail 76px / Sidebar 240px / 空状态标题 / 3 张热门技能卡 / Composer 994px 贴底
@@ -18,35 +18,33 @@
 7. **真实技能卡数据**：叙事短片导演分镜 / 系列套图生成 / 爆款电商短视频题材创意
 8. **中间态聊天流程**：思考日志逐条 → 任务卡片(进度/排队/取消) → 完成态(积分/AI标识/建议按钮/重新生成)
 9. **抓取数据存档**：`docs/scraped-generate-page.md`
+10. **ComfyUI 对接（通用 workflow 运行器）**：直连本地/远程 ComfyUI 原生 API（零第三方 SDK），
+    workflow introspection 自动适配输入（文字/图像/视频）、参数、输出（图片/视频/文本），
+    SSE 实时进度 + 取消 + `/comfyui/view` 代理。详见 `docs/comfyui-integration.md`
+11. **官方模板接入**：从 Comfy-Org/workflow_templates 拉取并跑通
+    Krea 2（t2i / 风格参考）与 MiniMax H3（t2v / r2v / flf2v）5 个工作流，
+    支持 UI 格式（LiteGraph）运行时转 API 格式（基于 /object_info），
+    LoadImage 占位文件自动探测 → 缺失标记「必传」
+12. **真实 ComfyUI 验证**（0.33.0 @ 127.0.0.1:55554）：SDXL 文生图真实出图
+    （1024×1024，SSE 进度 + done 输出 + `/comfyui/view` 渲染）；Krea2 / MiniMax H3
+    云端节点提交格式跑通（动态 combo 点号键 + `extra_data` 凭证注入，请求日志证实
+    `X-API-KEY` 已发出），配置 `COMFY_API_KEY` 即可出图；无凭证时报友好错误
 
-## 下一步（唯一阻塞项）
+## 下一步
 
-- [ ] **抓生成完成后的最终结果界面**：浏览器里那个视频生成任务完成后，
-      抓取结果卡片结构（视频播放器/图片墙/下载/收藏/编辑按钮）、完成态消息流布局，
-      复刻到 ChatView 的 done 阶段
+- [ ] 配置 `COMFY_API_KEY` 后跑通 Krea 2 / MiniMax H3 云端模板的真实生成
 - [ ] 复刻「资产库」页面结构（rail 菜单跳转）
-
-## 待抓数据（见 docs/scraped-generate-page.md 末尾）
-
-- 视频/图片生成完成后的结果卡片（播放器、图片墙、操作按钮）
-- 完成态消息流布局
-- 资产库页面结构
-
-## 复刻技术要点（从原页抓取）
-
-- 页面底色 #F8F9FA、卡片圆角 24px、品牌色 `#00cae0`、内容区 1000px 居中
-- 技能卡：图片 + 左上「热门技能」tag + 底部黑渐变 overlay（标题+试一试）+ 描述
-- Composer：输入框 72px 高 + 底部工具行（Agent 模式 ▾ / 自动 ▾ / 使用技能 ▾ / 上传 / 添加主体 / 圆形发送键）
-- 上传按钮 = 触发系统文件选择器；添加主体 = 弹出「可能@的内容」菜单
-- 中间态：任务响应中… → 思考日志 → (0/1) 任务卡 + 排队中 + 取消生成 → 完成态
+- [ ] 抓生成完成后的最终结果界面（播放器/图片墙/下载/收藏/编辑按钮）对照打磨结果卡片
 
 ## 运行方式
 
 ```bash
-pnpm dev        # 前后端一起（server 4777 + web 5173）
-pnpm run build  # 生产构建
+COMFYUI_BASE_URL=http://127.0.0.1:8188 pnpm dev   # 前后端一起（server 4777 + web 5173）
+pnpm run build    # 生产构建
+cd server && pnpm test   # workflow introspection 单测
 ```
 
 ## 已抓原页数据参考
 
 - `docs/scraped-generate-page.md` — 完整抓取数据
+- `docs/comfyui-integration.md` — ComfyUI 对接架构与自动适配机制说明
