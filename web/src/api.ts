@@ -185,13 +185,70 @@ export interface SendChatOptions {
   params?: Record<string, unknown>;
   images?: { name?: string; dataUrl: string }[];
   videos?: { name?: string; dataUrl: string }[];
+  sessionId?: string | null;
 }
 
-export async function sendChat(message: string, opts: SendChatOptions = {}): Promise<ChatReply> {
+export interface ChatReplyWithSession extends ChatReply {
+  /** 本次消息所属会话 id（无会话时后端自动创建） */
+  sessionId?: string;
+}
+
+export async function sendChat(message: string, opts: SendChatOptions = {}): Promise<ChatReplyWithSession> {
   return http('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, ...opts }),
+  });
+}
+
+/* ---------------- 会话（服务端 JSON 文件持久化） ---------------- */
+
+export interface SessionMeta {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SessionsResponse {
+  sessions: SessionMeta[];
+  activeId: string | null;
+}
+
+export async function fetchSessions(): Promise<SessionsResponse> {
+  return http('/api/sessions');
+}
+
+export async function createSession(): Promise<SessionsResponse> {
+  return http('/api/sessions', { method: 'POST' });
+}
+
+export async function renameSession(id: string, title: string): Promise<SessionsResponse> {
+  return http(`/api/sessions/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  });
+}
+
+export async function deleteSession(id: string): Promise<SessionsResponse> {
+  return http(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function selectSession(id: string): Promise<{ ok: boolean; activeId: string | null }> {
+  return http(`/api/sessions/${encodeURIComponent(id)}/select`, { method: 'POST' });
+}
+
+export async function fetchSessionMessages(id: string): Promise<ChatMessage[]> {
+  return http(`/api/sessions/${encodeURIComponent(id)}/messages`);
+}
+
+/** SSE 终态落库：更新会话最后一条消息（done/error/cancelled 时调用） */
+export async function updateLastMessage(id: string, msg: ChatMessage): Promise<{ ok: boolean }> {
+  return http(`/api/sessions/${encodeURIComponent(id)}/messages/last`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(msg),
   });
 }
 

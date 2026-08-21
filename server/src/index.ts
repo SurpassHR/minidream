@@ -19,6 +19,18 @@ import {
   type WorkflowSpec,
 } from './workflow.js';
 import { startJob, cancelJob, subscribeJob, getJob, jobSnapshot } from './jobs.js';
+import {
+  SessionError,
+  appendMessage,
+  createSession,
+  deleteSession,
+  renameSession,
+  selectSession,
+  sessionList,
+  sessionMessages,
+  updateLastMessage,
+  type StoredMessage,
+} from './sessions.js';
 import type { ChatReply } from './data.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,6 +41,89 @@ app.use(express.json({ limit: '50mb' }));
 
 // Static assets (downloaded images)
 app.use('/assets', express.static(path.resolve(__dirname, '../assets')));
+
+/* ---------------- 会话（JSON 文件持久化，照搬 v1 方案） ---------------- */
+
+const SESSIONS_FILE = path.resolve(__dirname, '../data/sessions.json');
+
+/** 会话元信息列表 + 当前会话 id */
+app.get('/api/sessions', (_req, res) => {
+  res.json(sessionList(SESSIONS_FILE));
+});
+
+/** 新建会话 */
+app.post('/api/sessions', (_req, res) => {
+  const f = createSession(SESSIONS_FILE);
+  res.json({
+    sessions: f.sessions.map(s => ({ id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt })),
+    activeId: f.activeId,
+  });
+});
+
+/** 重命名会话 */
+app.patch('/api/sessions/:id', (req, res) => {
+  try {
+    const title = typeof req.body?.title === 'string' ? req.body.title : '';
+    const f = renameSession(SESSIONS_FILE, req.params.id, title);
+    res.json({ ok: true, sessions: f.sessions.map(s => ({ id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt })), activeId: f.activeId });
+  } catch (e) {
+    if (e instanceof SessionError) { res.status(404).json({ error: e.message }); return; }
+    throw e;
+  }
+});
+
+/** 删除会话 */
+app.delete('/api/sessions/:id', (req, res) => {
+  try {
+    const f = deleteSession(SESSIONS_FILE, req.params.id);
+    res.json({
+      sessions: f.sessions.map(s => ({ id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt })),
+      activeId: f.activeId,
+    });
+  } catch (e) {
+    if (e instanceof SessionError) { res.status(404).json({ error: e.message }); return; }
+    throw e;
+  }
+});
+
+/** 切换当前会话 */
+app.post('/api/sessions/:id/select', (req, res) => {
+  try {
+    const f = selectSession(SESSIONS_FILE, req.params.id);
+    res.json({ ok: true, activeId: f.activeId });
+  } catch (e) {
+    if (e instanceof SessionError) { res.status(404).json({ error: e.message }); return; }
+    throw e;
+  }
+});
+
+/** 会话消息（刷新恢复历史） */
+app.get('/api/sessions/:id/messages', (req, res) => {
+  try {
+    res.json(sessionMessages(SESSIONS_FILE, req.params.id));
+  } catch (e) {
+    if (e instanceof SessionError) { res.status(404).json({ error: e.message }); return; }
+    throw e;
+  }
+});
+
+/** 更新会话最后一条消息（SSE 终态落库：done/error/cancelled） */
+app.post('/api/sessions/:id/messages/last', (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const msg: StoredMessage = {
+      role: body.role === 'user' ? 'user' : 'assistant',
+      content: typeof body.content === 'string' ? body.content : '',
+      stages: Array.isArray(body.stages) ? body.stages : undefined,
+      jobId: typeof body.jobId === 'string' ? body.jobId : undefined,
+    };
+    updateLastMessage(SESSIONS_FILE, req.params.id, msg);
+    res.json({ ok: true });
+  } catch (e) {
+    if (e instanceof SessionError) { res.status(404).json({ error: e.message }); return; }
+    throw e;
+  }
+});
 
 /* ---------------- 页面数据 ---------------- */
 
@@ -360,13 +455,32 @@ app.post('/api/chat', async (req, res) => {
     res.status(400).json({ error: 'message is required' });
     return;
   }
+  const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : null;
+
+  // 1. 用户消息落库（会话不存在时自动创建）
+  const append = appendMessage(SESSIONS_FILE, sessionId, { role: 'user', content: message.trim() });
+  const sid = append.sessionId;
+
+  // 2. 生成回复
   const reply = await generateReply(message.trim(), {
     workflowId: typeof req.body?.workflowId === 'string' ? req.body.workflowId : undefined,
     params: req.body?.params && typeof req.body.params === 'object' ? req.body.params : undefined,
     images: Array.isArray(req.body?.images) ? req.body.images : undefined,
     videos: Array.isArray(req.body?.videos) ? req.body.videos : undefined,
   });
-  res.json(reply);
+
+  // 3. 助手消息落库；本次新建的会话用回复标题命名
+  appendMessage(SESSIONS_FILE, sid, {
+    role: 'assistant',
+    content: reply.reply ?? '',
+    stages: reply.stages,
+    jobId: reply.jobId,
+  });
+  if (append.created && reply.title) {
+    renameSession(SESSIONS_FILE, sid, reply.title);
+  }
+
+  res.json({ ...reply, sessionId: sid });
 });
 
 // 兼容旧 mock（保留，前端不再使用）

@@ -6,6 +6,13 @@ import {
   fetchComfyStatus,
   cancelJob,
   openJobEvents,
+  createSession,
+  deleteSession as apiDeleteSession,
+  fetchSessions,
+  fetchSessionMessages,
+  renameSession as apiRenameSession,
+  selectSession as apiSelectSession,
+  updateLastMessage,
   type ChatMessage,
   type ChatStage,
   type ComfyStatus,
@@ -126,6 +133,25 @@ export default function App() {
   }, [refreshComfyStatus, refreshWorkflows]);
 
   useEffect(() => {
+    let alive = true;
+    fetchSessions()
+      .then(r => {
+        if (!alive) return;
+        setConversations(r.sessions);
+        if (r.activeId) {
+          setActiveConv(r.activeId);
+          return fetchSessionMessages(r.activeId).then(msgs => {
+            if (alive) setMessages(msgs);
+          });
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
     chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight });
   }, [messages]);
 
@@ -137,24 +163,33 @@ export default function App() {
     setInput('');
     setSending(true);
     try {
-      const { reply, title, stages, jobId } = await sendChat(content, opts);
+      const { reply, title, stages, jobId, sessionId } = await sendChat(content, { ...opts, sessionId: activeConv });
+      const sid = sessionId ?? activeConv;
+      // 会话列表同步：新会话加入 / 已有会话更新时间
+      setConversations(prev => {
+        const now = Date.now();
+        const exists = prev.some(c => c.id === sid);
+        if (!exists) return [...prev, { id: sid ?? '', title: title ?? '', updatedAt: now }];
+        return prev.map(c => (c.id === sid ? { ...c, title: title ?? c.title, updatedAt: now } : c));
+      });
+      if (sid) setActiveConv(sid);
       setMessages(prev => [...prev, { role: 'assistant', content: reply ?? '', stages, jobId }]);
-      if (jobId) {
+      if (jobId && sid) {
         openJobEvents(jobId, evt => {
           setMessages(prev => {
             const idx = [...prev].reverse().findIndex(m => m.role === 'assistant' && m.jobId === jobId);
             if (idx < 0) return prev;
             const realIdx = prev.length - 1 - idx;
-            return prev.map((m, i) => (i === realIdx ? mergeJobEvent(m, evt) : m));
+            const updated = prev.map((m, i) => (i === realIdx ? mergeJobEvent(m, evt) : m));
+            // SSE 终态（完成/失败/取消）把最终消息落库，刷新后可还原结果
+            if (evt.type === 'done' || evt.type === 'error' || evt.type === 'cancelled') {
+              const finalMsg = updated[realIdx];
+              if (finalMsg) void updateLastMessage(sid, finalMsg).catch(() => undefined);
+            }
+            return updated;
           });
         });
       }
-      const id = `c${Date.now()}`;
-      setConversations(prev => {
-        const exists = prev.some(c => c.title === title);
-        return exists ? prev : [...prev, { id, title }];
-      });
-      setActiveConv(id);
     } catch {
       setMessages(prev => [
         ...prev,
@@ -187,10 +222,57 @@ export default function App() {
     setInput(`使用技能：${skill.title}。${skill.desc}`);
   };
 
-  const handleNewChat = () => {
+  const handleNewChat = async () => {
+    try {
+      const r = await createSession();
+      setConversations(r.sessions);
+      setActiveConv(r.activeId);
+      setMessages([]);
+      setInput('');
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handleSelectConversation = (id: string) => {
+    if (id === activeConv) return;
+    setActiveConv(id);
     setMessages([]);
-    setInput('');
-    setActiveConv(null);
+    void apiSelectSession(id).catch(() => undefined);
+    fetchSessionMessages(id)
+      .then(setMessages)
+      .catch(() => undefined);
+  };
+
+  const handleRenameConversation = async (id: string) => {
+    const conv = conversations.find(c => c.id === id);
+    const title = window.prompt('重命名会话', conv?.title ?? '');
+    if (title == null) return;
+    try {
+      const r = await apiRenameSession(id, title.trim());
+      setConversations(r.sessions);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handleDeleteConversation = async (id: string) => {
+    if (!window.confirm('删除该会话？此操作不可恢复。')) return;
+    try {
+      const r = await apiDeleteSession(id);
+      setConversations(r.sessions);
+      if (r.activeId) {
+        setActiveConv(r.activeId);
+        fetchSessionMessages(r.activeId)
+          .then(setMessages)
+          .catch(() => undefined);
+      } else {
+        setActiveConv(null);
+        setMessages([]);
+      }
+    } catch {
+      /* ignore */
+    }
   };
 
   if (error) {
@@ -224,8 +306,10 @@ export default function App() {
           newChatLabel={data.sidebar.newChatLabel}
           conversations={conversations}
           activeId={activeConv}
-          onNewChat={handleNewChat}
-          onSelect={id => setActiveConv(id)}
+          onNewChat={() => void handleNewChat()}
+          onSelect={handleSelectConversation}
+          onRename={id => void handleRenameConversation(id)}
+          onDelete={id => void handleDeleteConversation(id)}
         />
         <main className="main">
           {isEmpty ? (

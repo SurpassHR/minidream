@@ -146,6 +146,10 @@
   overflow-y: auto;
 }
 
+.sidebar-chats li {
+  position: relative;
+}
+
 .sidebar-chat {
   width: 100%;
   height: 36px;
@@ -165,10 +169,18 @@
   color: var(--text-secondary);
 }
 
-.sidebar-chat span {
+.sidebar-chat-title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sidebar-chat-date {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
 }
 
 .sidebar-chat:hover {
@@ -177,6 +189,45 @@
 
 .sidebar-chat.active {
   background: var(--brand-soft);
+}
+
+/* 悬浮操作：重命名 / 删除（v1 会话交互照搬） */
+.sidebar-chat-acts {
+  position: absolute;
+  top: 0;
+  right: 6px;
+  height: 36px;
+  display: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.sidebar-chats li:hover .sidebar-chat-acts {
+  display: flex;
+}
+
+.sidebar-chats li:hover .sidebar-chat-date {
+  visibility: hidden;
+}
+
+.sidebar-chat-act {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--text-secondary);
+}
+
+.sidebar-chat-act:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.sidebar-chat-act.danger:hover {
+  color: #e5484d;
+  background: color-mix(in srgb, #e5484d 12%, transparent);
 }
 
 .sidebar-chat-empty {

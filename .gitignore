@@ -6,3 +6,4 @@ dist/
 *.tsbuildinfo
 .playwright-cli/
 output/
+server/data/
