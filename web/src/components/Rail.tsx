@@ -48,10 +48,14 @@ export default function Rail({
   items,
   activeId,
   onSelect,
+  theme,
+  onToggleTheme,
 }: {
   items: RailItem[];
   activeId: string;
   onSelect: (id: string) => void;
+  theme: 'light' | 'dark';
+  onToggleTheme: () => void;
 }) {
   return (
     <nav className="rail" aria-label="主导航">
@@ -78,6 +82,28 @@ export default function Rail({
           </li>
         ))}
       </ul>
+      <button
+        className="rail-theme"
+        onClick={onToggleTheme}
+        title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+        aria-label={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+      >
+        {theme === 'dark' ? (
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <circle cx="10" cy="10" r="3.2" stroke="currentColor" strokeWidth="1.4" />
+            <path
+              d="M10 2.5v1.8M10 15.7v1.8M4.2 5.4 5.5 6.7M14.5 13.3l1.3 1.3M2.5 10h1.8M15.7 10h1.8M4.2 14.6l1.3-1.3M14.5 6.7l1.3-1.3"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+            />
+          </svg>
+        ) : (
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M17 11.5A7 7 0 0 1 8.5 3a7 7 0 1 0 8.5 8.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+          </svg>
+        )}
+      </button>
     </nav>
   );
 }

@@ -1,19 +1,70 @@
 :root {
+  color-scheme: light;
   --bg-page: #f8f9fa;
   --bg-card: #ffffff;
-  --text-primary: #1f2329;
-  --text-secondary: #8a919f;
-  --text-tertiary: #b6bcc7;
+  --bg-hover: #f2f3f5;
+  --bg-hover-strong: #e6e8ec;
+  --bg-active: #f8fafb;
+  --bg-progress: #eef0f3;
+  --bg-code: rgba(0, 0, 0, 0.04);
+  --bg-disabled: #e9ebef;
+  --bg-composer: rgba(255, 255, 255, 0.92);
+  --text-primary: #0f1419;
+  --text-secondary: #536471;
+  --text-tertiary: #939ca5;
+  --text-muted: #b6bcc7;
+  --text-placeholder: rgba(83, 100, 113, 0.64);
+  --border: rgba(0, 0, 0, 0.06);
+  --border-strong: rgba(0, 0, 0, 0.1);
   --brand: #00cae0;
   --brand-deep: #00a1c2;
   --brand-soft: rgba(0, 202, 224, 0.12);
-  --border: #e9ebef;
+  --brand-soft-strong: #d8f4f8;
+  --error-fg: #c0392b;
+  --error-bg: #fff4f4;
+  --error-border: rgba(224, 72, 72, 0.2);
+  --badge-purple-fg: #7a5af5;
+  --badge-purple-bg: #f1edfe;
+  --badge-orange-fg: #d97b1e;
+  --badge-orange-bg: #fdf0e0;
+  --badge-pink-fg: #b0327a;
+  --badge-pink-bg: #fbe7f2;
   --radius-lg: 24px;
   --radius-md: 14px;
   --radius-sm: 10px;
   --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.04);
   --shadow-float: 0 12px 40px rgba(0, 0, 0, 0.12);
   --font-family: 'CapCut Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --bg-page: #0e1113;
+  --bg-card: #161a1e;
+  --bg-hover: #20262c;
+  --bg-hover-strong: #2a3138;
+  --bg-active: #1b2126;
+  --bg-progress: #232a31;
+  --bg-code: rgba(255, 255, 255, 0.06);
+  --bg-disabled: #2a3138;
+  --bg-composer: rgba(22, 26, 30, 0.92);
+  --text-primary: #e8eaed;
+  --text-secondary: #9aa4b2;
+  --text-tertiary: #6f7a88;
+  --text-muted: #555e6a;
+  --text-placeholder: rgba(154, 164, 178, 0.6);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --brand-soft: rgba(0, 202, 224, 0.16);
+  --brand-soft-strong: rgba(0, 202, 224, 0.26);
+  --error-fg: #ff8a80;
+  --error-bg: rgba(255, 77, 79, 0.12);
+  --error-border: rgba(255, 77, 79, 0.3);
+  --badge-purple-bg: rgba(122, 90, 245, 0.18);
+  --badge-orange-bg: rgba(217, 123, 30, 0.18);
+  --badge-pink-bg: rgba(176, 50, 122, 0.18);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-float: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
 
 * {

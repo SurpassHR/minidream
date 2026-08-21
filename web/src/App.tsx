@@ -85,7 +85,23 @@ export default function App() {
   const [workflows, setWorkflows] = useState<WorkflowSpec[]>([]);
   const [comfyStatus, setComfyStatus] = useState<ComfyStatus | null>(null);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('theme');
+    const t: 'light' | 'dark' =
+      saved === 'dark' || saved === 'light'
+        ? saved
+        : window.matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark'
+          : 'light';
+    document.documentElement.dataset.theme = t;
+    return t;
+  });
   const chatRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     fetchGenerateData()
@@ -184,7 +200,13 @@ export default function App() {
 
   return (
     <div className="app">
-      <Rail items={data.rail.items} activeId={activeNav} onSelect={setActiveNav} />
+      <Rail
+        items={data.rail.items}
+        activeId={activeNav}
+        onSelect={setActiveNav}
+        theme={theme}
+        onToggleTheme={() => setTheme(t => (t === 'dark' ? 'light' : 'dark'))}
+      />
       <div className="workbench">
         <Sidebar
           createLabel={data.sidebar.createLabel}
