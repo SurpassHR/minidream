@@ -33,13 +33,12 @@ introspection（`server/src/workflow.ts`），支持两种 workflow 格式：
 | 节点类 | 识别为 | 前端表现 | 注入目标 |
 |---|---|---|---|
 | `CLIPTextEncode` 系列 | 文字 | 用户消息即提示词 | 注入到「正向」节点（标题含 positive/正向/prompt 或占位文本较长者，负向节点跳过） |
-| 自定义节点上的 prompt 类 STRING 字段（如 `Krea2ImageNode` / MiniMax H3 节点） | 文字 | 同上 | 注入到该节点的 prompt 字段 |
+| 自定义节点上的 prompt 类 STRING 字段 | 文字 | 同上 | 注入到该节点的 prompt 字段 |
 | `LoadImage` / `LoadImageMask` | 图像 | 上传按钮 → 附件 chip | 上传到 `/upload/image`，把返回文件名写进 `inputs.image` |
 | `LoadVideo` / `VHS_VideoUpload` | 视频 | 上传按钮（视频文件） | 上传到 `/upload/video`，写进 `inputs.video` |
 
-> **必传探测**：模板里 `LoadImage` 的占位文件名（如 `krea_style_reference_image1.png`）
-> 在用户机器上不存在——spec 构建时探测 `/view?type=input`，缺失则标记「必传」，
-> 前端显示 `输入·图片·必传` badge 并强制用户上传。
+> **必传探测**：`LoadImage` 的占位文件名在用户机器上不存在——spec 构建时探测
+> `/view?type=input`，缺失则标记「必传」，前端显示 `输入·图片·必传` badge 并强制用户上传。
 
 ### 参数识别（前端动态生成控件）
 
@@ -92,11 +91,9 @@ server/src/index.ts         新路由：/api/workflows、/api/comfyui/status、
                             /api/generate/:id/cancel、/comfyui/view 代理
 server/workflows/txt2img.json       示例：文生图（文字输入 → 图片输出）
 server/workflows/img2img.json       示例：图生图（图像输入 → 图片输出）
-server/workflows/krea2-t2i.json     官方模板：Krea 2 文生图（需 ComfyUI 内置 Krea2 节点）
-server/workflows/krea2-style-reference.json  官方模板：Krea 2 风格参考（2 张参考图必传）
-server/workflows/minimax-h3-t2v.json  官方模板：MiniMax H3 文生视频
-server/workflows/minimax-h3-r2v.json  官方模板：MiniMax H3 参考图生视频
-server/workflows/minimax-h3-flf2v.json 官方模板：MiniMax H3 首尾帧生视频
+server/workflows/video-minimax-h3-t2v.json  本地：MiniMax H3 文生视频（t2v，子图模板）
+server/workflows/video-minimax-h3-i2v.json  本地：MiniMax H3 图生视频（i2v，子图模板）
+server/workflows/video-minimax-h3-r2v.json  本地：MiniMax H3 参考图生视频（r2v，非子图）
 web/src/api.ts              类型与接口（WorkflowSpec / JobEvent / cancel / SSE）
 web/src/components/Composer.tsx  工作流选择、动态参数控件、上传附件、必传 badge
 web/src/components/ChatView.tsx  实时模式 + 结果渲染（图片墙/视频/文本）
@@ -109,47 +106,32 @@ web/vite.config.ts          proxy 增加 /comfyui
 ```bash
 # ComfyUI 地址：本地默认 127.0.0.1:8188；远程服务器可指向任意 http(s) 地址
 COMFYUI_BASE_URL=http://127.0.0.1:8188 pnpm dev
-
-# 云端 API 节点（Krea2 / MiniMax H3）凭证（可选，仅当用到官方模板时）
-# Comfy 账号的 API Key：登录 https://comfy.org → 账户设置生成
-COMFY_API_KEY=comfy_xxxx pnpm dev
-# 或浏览器登录 ComfyUI 后前端持有的 token（二选一）
-COMFY_AUTH_TOKEN=xxxxx pnpm dev
 ```
+
+> 本项目**仅使用本地 ComfyUI**，不依赖 Comfy 云端账号（不注入 `COMFY_API_KEY` /
+> `COMFY_AUTH_TOKEN` 等云端凭证）。
 
 - 任意 workflow：把 `workflow_api.json` 放进 `server/workflows/`（30s 内自动生效），
   界面的「自动 → 生成偏好」面板会自动列出它的输入/输出 badge 与参数控件。
+- 新式官方模板（`templates/` 下）使用 `definitions.subgraphs` 子图：转换时自动展开
+  （子图输入按名称解析为外链/实例 widget 值，输出重定向到内部产出节点），
+  `PrimitiveString(Multiline)` 承载的提示词同样识别为文字输入。
+- MiniMax H3 本地模板需本地安装 `comfyui-minimax-h3` 节点并下载 H3 模型权重
+  （diffusion model / qwen3vl text encoder / 视频+音频 VAE / 可选 turbo LoRA，见模板内 Model Links）。
 - 图片经 `/comfyui/view` 由服务端代理返回，远程 ComfyUI 也不存在 CORS 问题。
-- 视频 workflow（Wan/Hunyuan/H3 等）同样支持：识别 `VHS_VideoCombine` 输出即可，
+- 视频 workflow（Wan/Hunyuan 等）同样支持：识别 `VHS_VideoCombine` 输出即可，
   只需你有对应的 workflow 文件与模型。
-
-## 云端 API 节点（Krea2 / MiniMax H3）说明
-
-官方模板仓库的 5 个模板（`krea2-t2i` / `krea2-style-reference` / `minimax-h3-t2v` /
-`minimax-h3-r2v` / `minimax-h3-flf2v`）走的是 Comfy 的**云端 API 节点**（`comfy_api_nodes`，
-`is_api_node=true`），生成在 Comfy 云端完成、按量计费，需要：
-
-1. Comfy 账号登录 / API Key（`COMFY_API_KEY` 环境变量）
-2. 服务端提交时把凭证放进 `/prompt` 的 `extra_data`（`api_key_comfy_org` /
-   `auth_token_comfy_org`），ComfyUI 自动转成 `X-API-KEY` / `Authorization` 请求头
-   转发给 api.comfy.org —— 已在真实 ComfyUI 的请求日志中验证（header 实际发出）。
-3. 未配置凭证时任务以友好错误结束，提示设置环境变量。
-
-**纯本地工作流（txt2img / img2img）不需要任何凭证**，直接用自己的 SDXL 等 checkpoint 生成。
 
 ## 测试
 
 ```bash
-cd server && pnpm test     # workflow 引擎单测（11 个：API/UI 格式、官方模板 introspection、探测、注入）
+cd server && pnpm test     # workflow 引擎单测（9 个：API/UI 格式转换、introspection、探测、注入）
 cd web && pnpm build       # 前端 tsc + vite 构建
 ```
 
-端到端已用 mock ComfyUI 验证：官方模板（Krea2 出图 / MiniMax H3 出视频 / 首尾帧双图必传）
+端到端已用 mock ComfyUI 验证：本地工作流（txt2img 出图 / img2img 参考图必传）
 提交 → 实时进度 → done 输出 → /view 取图/取视频 → 取消。
 
 **真实 ComfyUI 验证（2026-08-22，0.33.0 @ 55554）**：
 - SDXL 文生图真实出图：`director_workbench_00001.png`（1024×1024），SSE 进度 5%→100%，
   done 事件带图片输出，浏览器 `<figure><img>` 经 `/comfyui/view` 正常加载；
-- Krea2 / MiniMax H3 云端节点：提交格式已跑通（`model` 动态 combo 用主键 + 点号子键
-  `model.aspect_ratio` 等；`extra_data` 注入的 `X-API-KEY` header 已被真实转发到
-  api.comfy.org），因无有效 Comfy API Key 停在鉴权，配置 `COMFY_API_KEY` 即可出图。

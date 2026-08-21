@@ -97,24 +97,16 @@ export interface SubmitResult {
   node_errors?: Record<string, { errors?: { message?: string; details?: string }[] }>;
 }
 
-/**
- * Comfy 云端 API 节点（Krea2 / MiniMax H3 等）的凭证。
- * - COMFY_API_KEY：Comfy 账号生成的 API Key（comfy.org 账户设置页），提交时随 extra_data 注入，
- *   节点自动转为 X-API-KEY 请求头。
- * - COMFY_AUTH_TOKEN：浏览器登录 ComfyUI 后前端持有的 token，同样随 extra_data 注入。
- */
-export const COMFY_API_KEY = process.env.COMFY_API_KEY || '';
-export const COMFY_AUTH_TOKEN = process.env.COMFY_AUTH_TOKEN || '';
-
-/** POST /prompt — 提交 API 格式工作流 */
+/** POST /prompt — 提交 API 格式工作流（仅本地 ComfyUI，不注入任何云端凭证） */
 export async function submitPrompt(prompt: Record<string, unknown>, clientId: string): Promise<SubmitResult> {
-  const extraData: Record<string, unknown> = { comfy_usage_source: 'director-workbench' };
-  if (COMFY_API_KEY) extraData.api_key_comfy_org = COMFY_API_KEY;
-  if (COMFY_AUTH_TOKEN) extraData.auth_token_comfy_org = COMFY_AUTH_TOKEN;
   const res = await request<SubmitResult>('/prompt', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, client_id: clientId, extra_data: extraData }),
+    body: JSON.stringify({
+      prompt,
+      client_id: clientId,
+      extra_data: { comfy_usage_source: 'director-workbench' },
+    }),
   });
   if (res.node_errors && Object.keys(res.node_errors).length > 0) {
     const first = Object.values(res.node_errors)[0] as { errors?: { message?: string }[] };

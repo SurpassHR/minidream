@@ -21,18 +21,15 @@
 10. **ComfyUI 对接（通用 workflow 运行器）**：直连本地/远程 ComfyUI 原生 API（零第三方 SDK），
     workflow introspection 自动适配输入（文字/图像/视频）、参数、输出（图片/视频/文本），
     SSE 实时进度 + 取消 + `/comfyui/view` 代理。详见 `docs/comfyui-integration.md`
-11. **官方模板接入**：从 Comfy-Org/workflow_templates 拉取并跑通
-    Krea 2（t2i / 风格参考）与 MiniMax H3（t2v / r2v / flf2v）5 个工作流，
-    支持 UI 格式（LiteGraph）运行时转 API 格式（基于 /object_info），
+11. **官方模板接入**：支持 UI 格式（LiteGraph）运行时转 API 格式（基于 /object_info），
     LoadImage 占位文件自动探测 → 缺失标记「必传」
 12. **真实 ComfyUI 验证**（0.33.0 @ 127.0.0.1:55554）：SDXL 文生图真实出图
-    （1024×1024，SSE 进度 + done 输出 + `/comfyui/view` 渲染）；Krea2 / MiniMax H3
-    云端节点提交格式跑通（动态 combo 点号键 + `extra_data` 凭证注入，请求日志证实
-    `X-API-KEY` 已发出），配置 `COMFY_API_KEY` 即可出图；无凭证时报友好错误
+    （1024×1024，SSE 进度 + done 输出 + `/comfyui/view` 渲染）
+13. **仅本地 ComfyUI**：移除云端凭证（`COMFY_API_KEY` / `COMFY_AUTH_TOKEN` 注入）与
+    Krea 2 / MiniMax H3 云端工作流，只保留 txt2img / img2img 等本地工作流
 
 ## 下一步
 
-- [ ] 配置 `COMFY_API_KEY` 后跑通 Krea 2 / MiniMax H3 云端模板的真实生成
 - [ ] 复刻「资产库」页面结构（rail 菜单跳转）
 - [ ] 抓生成完成后的最终结果界面（播放器/图片墙/下载/收藏/编辑按钮）对照打磨结果卡片
 

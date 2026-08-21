@@ -9,14 +9,83 @@ const readWf = (name: string) => JSON.parse(fs.readFileSync(path.join(wfDir, nam
 
 const txt2imgJson = readWf('txt2img.json');
 const img2imgJson = readWf('img2img.json');
-const krea2T2iJson = readWf('krea2-t2i.json');
-const h3T2vJson = readWf('minimax-h3-t2v.json');
-const h3Flf2vJson = readWf('minimax-h3-flf2v.json');
+const h3T2vJson = readWf('video-minimax-h3-t2v.json');
+const h3I2vJson = readWf('video-minimax-h3-i2v.json');
+const h3R2vJson = readWf('video-minimax-h3-r2v.json');
+
+/** 手写的最小 UI 格式（LiteGraph）工作流：全部是纯本地节点 */
+const uiFixtureJson = {
+  last_node_id: 6,
+  nodes: [
+    {
+      id: 1,
+      type: 'CheckpointLoaderSimple',
+      widgets_values: ['v1-5-pruned.safetensors'],
+      outputs: [
+        { name: 'MODEL', links: [1] },
+        { name: 'CLIP', links: [3, 5] },
+      ],
+    },
+    {
+      id: 2,
+      type: 'CLIPTextEncode',
+      title: 'positive',
+      widgets_values: ['a cute cat'],
+      inputs: [{ name: 'clip', link: 3 }],
+      outputs: [{ name: 'CONDITIONING', links: [2] }],
+    },
+    {
+      id: 3,
+      type: 'CLIPTextEncode',
+      title: 'negative',
+      widgets_values: ['lowres, blurry'],
+      inputs: [{ name: 'clip', link: 5 }],
+      outputs: [{ name: 'CONDITIONING', links: [4] }],
+    },
+    {
+      id: 4,
+      type: 'KSampler',
+      widgets_values: [42, 'randomize', 20, 7, 'euler', 'normal', 1],
+      inputs: [
+        { name: 'model', link: 1 },
+        { name: 'positive', link: 2 },
+        { name: 'negative', link: 4 },
+        { name: 'latent_image', link: 6 },
+      ],
+      outputs: [{ name: 'LATENT', links: [7] }],
+    },
+    {
+      id: 5,
+      type: 'EmptyLatentImage',
+      widgets_values: [512, 768, 1],
+      outputs: [{ name: 'LATENT', links: [6] }],
+    },
+    {
+      id: 6,
+      type: 'SaveImage',
+      widgets_values: ['director-wb'],
+      inputs: [{ name: 'images', link: 7 }],
+    },
+  ],
+  links: [
+    [1, 1, 0, 4, 0, 'MODEL'],
+    [2, 2, 0, 4, 1, 'CONDITIONING'],
+    [3, 1, 1, 2, 0, 'CLIP'],
+    [4, 3, 0, 4, 2, 'CONDITIONING'],
+    [5, 1, 1, 3, 0, 'CLIP'],
+    [6, 5, 0, 4, 3, 'LATENT'],
+    [7, 4, 0, 6, 0, 'LATENT'],
+  ],
+};
 
 const OBJECT_INFO: Record<string, any> = {
   CheckpointLoaderSimple: {
     input: { required: { ckpt_name: [['sd_xl_base.safetensors', 'v1-5-pruned.safetensors'], { default: 'sd_xl_base.safetensors' }] } },
     output: ['MODEL', 'CLIP', 'VAE'],
+  },
+  CLIPTextEncode: {
+    input: { required: { text: ['STRING', { multiline: true, default: '' }] } },
+    output: ['CONDITIONING'],
   },
   KSampler: {
     input: {
@@ -41,139 +110,123 @@ const OBJECT_INFO: Record<string, any> = {
     input: { required: { filename_prefix: ['STRING', { default: 'ComfyUI' }], images: ['IMAGE', {}] } },
     output: ['IMAGE'],
   },
-  SaveVideo: {
-    input: {
-      required: {
-        filename_prefix: ['STRING', { default: 'video' }],
-        format: [['auto', 'mp4', 'webm'], {}],
-        codec: [['auto', 'H264', 'H265'], {}],
-      },
-      optional: { video: ['VIDEO', {}] },
-    },
-    output: ['VIDEO'],
+  /* ---------- MiniMax H3 本地节点（comfyui-minimax-h3） ---------- */
+  ResolutionSelector: {
+    input: { required: { aspect_ratio: ['COMBO', {}], megapixels: ['FLOAT', {}], multiple: ['INT', {}] } },
+    output: ['INT', 'INT'],
   },
-  /** 新式动态 schema（COMFY_DYNAMICCOMBO_V3 + 嵌套 inputs，与真实 ComfyUI 0.33 一致） */
-  Krea2ImageNode: {
-    input: {
-      required: {
-        prompt: ['STRING', { multiline: true, default: '' }],
-        model: [
-          'COMFY_DYNAMICCOMBO_V3',
-          {
-            options: [
-              {
-                key: 'Krea 2 Medium',
-                inputs: {
-                  required: {
-                    aspect_ratio: ['COMBO', { options: ['1:1', '16:9', '4:3', '3:4', '9:16'] }],
-                    resolution: ['COMBO', { options: ['1K', '2K'] }],
-                    creativity: ['COMBO', { options: ['raw', 'low', 'medium', 'high'], default: 'medium' }],
-                  },
-                  optional: {
-                    moodboard_id: ['STRING', { default: '' }],
-                    moodboard_strength: ['FLOAT', { default: 0.35 }],
-                    style_reference: ['KREA_STYLE_REF', {}],
-                  },
-                },
-              },
-            ],
-          },
-        ],
-        seed: ['INT', { default: 0 }],
-      },
-    },
+  ImageScaleToTotalPixels: {
+    input: { required: { upscale_method: ['COMBO', {}], megapixels: ['FLOAT', {}], resolution_steps: ['INT', {}] }, optional: { image: ['IMAGE', {}] } },
     output: ['IMAGE'],
   },
-  Krea2StyleReferenceNode: {
-    input: {
-      required: { strength: ['FLOAT', { default: 1.0, min: 0, max: 2 }] },
-      optional: { image: ['IMAGE', {}], style_reference: ['KREA_STYLE_REF', {}] },
-    },
-    output: ['KREA_STYLE_REF'],
+  GetImageSize: {
+    input: { optional: { image: ['IMAGE', {}] } },
+    output: ['INT', 'INT', 'INT'],
   },
-  MinimaxHailuo03TextToVideoNode: {
+  VAELoader: {
+    input: { required: { vae_name: [['a.safetensors'], {}] } },
+    output: ['VAE'],
+  },
+  VAEDecode: {
+    input: { required: { samples: ['LATENT', {}] }, optional: { vae: ['VAE', {}] } },
+    output: ['IMAGE'],
+  },
+  VAEDecodeAudio: {
+    input: { required: { samples: ['LATENT', {}] }, optional: { vae: ['VAE', {}] } },
+    output: ['AUDIO'],
+  },
+  KSamplerSelect: {
+    input: { required: { sampler_name: [['res_multistep', 'euler'], {}] } },
+    output: ['SAMPLER'],
+  },
+  BasicScheduler: {
+    input: { required: { scheduler: ['COMBO', {}], steps: ['INT', {}], denoise: ['FLOAT', {}] }, optional: { model: ['MODEL', {}] } },
+    output: ['SIGMAS'],
+  },
+  BasicGuider: {
+    input: { optional: { model: ['MODEL', {}], conditioning: ['CONDITIONING', {}] } },
+    output: ['GUIDER'],
+  },
+  SamplerCustomAdvanced: {
+    input: { optional: { noise: ['NOISE', {}], guider: ['GUIDER', {}], sampler: ['SAMPLER', {}], sigmas: ['SIGMAS', {}], latent_image: ['LATENT', {}] } },
+    output: ['LATENT', 'LATENT'],
+  },
+  UNETLoader: {
+    input: { required: { unet_name: [['a.safetensors'], {}], weight_dtype: ['COMBO', {}] } },
+    output: ['MODEL'],
+  },
+  CLIPLoader: {
+    input: { required: { clip_name: [['a.safetensors'], {}], type: ['COMBO', {}], device: ['COMBO', {}] } },
+    output: ['CLIP'],
+  },
+  RandomNoise: {
+    input: { required: { noise_seed: ['INT', {}] } },
+    output: ['NOISE'],
+  },
+  CreateVideo: {
+    input: { required: { fps: ['INT', {}], bit_depth: ['INT', {}] }, optional: { images: ['IMAGE', {}], audio: ['AUDIO', {}] } },
+    output: ['VIDEO'],
+  },
+  ComfyMathExpression: {
+    input: { required: { expression: ['STRING', {}] }, optional: { 'values.a': ['FLOAT,INT,BOOLEAN', {}], 'values.b': ['FLOAT,INT,BOOLEAN', {}] } },
+    output: ['FLOAT', 'INT', 'BOOLEAN'],
+  },
+  PrimitiveFloat: {
+    input: { required: { value: ['FLOAT', {}] } },
+    output: ['FLOAT'],
+  },
+  PrimitiveInt: {
+    input: { required: { value: ['INT', {}] } },
+    output: ['INT'],
+  },
+  PrimitiveBoolean: {
+    input: { required: { value: ['BOOLEAN', {}] } },
+    output: ['BOOLEAN'],
+  },
+  PrimitiveStringMultiline: {
+    input: { required: { value: ['STRING', { multiline: true }] } },
+    output: ['STRING'],
+  },
+  ComfySwitchNode: {
+    input: { required: { switch: ['BOOLEAN', {}] }, optional: { on_false: ['*', {}], on_true: ['*', {}] } },
+    output: ['*'],
+  },
+  LoraLoaderModelOnly: {
+    input: { required: { lora_name: [['a.safetensors'], {}], strength_model: ['FLOAT', {}] }, optional: { model: ['MODEL', {}] } },
+    output: ['MODEL'],
+  },
+  MiniMaxH3ImageToVideo: {
+    input: {
+      required: { prompt: ['STRING', { multiline: true }], width: ['INT', {}], height: ['INT', {}], length: ['INT', {}] },
+      optional: { clip: ['CLIP', {}], vae: ['VAE', {}], first_frame: ['IMAGE', {}], last_frame: ['IMAGE', {}] },
+    },
+    output: ['CONDITIONING', 'LATENT'],
+  },
+  MiniMaxH3ReferenceToVideo: {
     input: {
       required: {
-        model: [
+        prompt: ['STRING', { multiline: true }],
+        width: ['INT', {}],
+        height: ['INT', {}],
+        length: ['INT', {}],
+        ref_images: [
           'COMFY_DYNAMICCOMBO_V3',
           {
             options: [
               {
-                key: 'MiniMax H3',
+                key: 'ref',
                 inputs: {
-                  required: {
-                    prompt: ['STRING', { multiline: true }],
-                    resolution: ['COMBO', { options: ['768P', '1080P'] }],
-                    ratio: ['COMBO', { options: ['16:9', '9:16', '1:1', 'adaptive'] }],
-                    duration: ['COMBO', { options: ['5', '10'] }],
-                  },
+                  required: { ref_image_0: ['IMAGE', {}], ref_image_1: ['IMAGE', {}] },
+                  optional: { ref_image_2: ['IMAGE', {}] },
                 },
               },
             ],
           },
         ],
-        seed: ['INT', { default: 0 }],
-        watermark: ['BOOLEAN', { default: false }],
       },
+      optional: { clip: ['CLIP', {}], vae: ['VAE', {}], audio_vae: ['VAE', {}] },
     },
-    output: ['VIDEO'],
-  },
-  MinimaxHailuo03ReferenceNode: {
-    input: {
-      required: {
-        model: [
-          'COMFY_DYNAMICCOMBO_V3',
-          {
-            options: [
-              {
-                key: 'MiniMax H3',
-                inputs: {
-                  required: {
-                    prompt: ['STRING', { multiline: true }],
-                    resolution: ['COMBO', { options: ['768P', '1080P'] }],
-                    ratio: ['COMBO', { options: ['16:9', '9:16', '1:1', 'adaptive'] }],
-                    duration: ['COMBO', { options: ['5', '10'] }],
-                    reference_images: ['IMAGE', {}],
-                    reference_videos: ['VIDEO', {}],
-                    reference_audios: ['AUDIO', {}],
-                  },
-                },
-              },
-            ],
-          },
-        ],
-        seed: ['INT', { default: 0 }],
-        watermark: ['BOOLEAN', { default: false }],
-      },
-    },
-    output: ['VIDEO'],
-  },
-  MinimaxHailuo03FirstLastFrameNode: {
-    input: {
-      required: {
-        model: [
-          'COMFY_DYNAMICCOMBO_V3',
-          {
-            options: [
-              {
-                key: 'MiniMax H3',
-                inputs: {
-                  required: {
-                    prompt: ['STRING', { multiline: true }],
-                    resolution: ['COMBO', { options: ['768P', '1080P'] }],
-                    duration: ['COMBO', { options: ['5', '10'] }],
-                  },
-                },
-              },
-            ],
-          },
-        ],
-        seed: ['INT', { default: 0 }],
-        watermark: ['BOOLEAN', { default: false }],
-      },
-      optional: { first_frame: ['IMAGE', {}], last_frame: ['IMAGE', {}] },
-    },
-    output: ['VIDEO'],
+    output: ['CONDITIONING', 'LATENT'],
   },
 };
 
@@ -244,91 +297,131 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(prompt['10'].inputs.image).toBe('ref.png');
   });
 
-  /* ---------- UI 格式（官方 workflow_templates） ---------- */
+  /* ---------- UI 格式（LiteGraph） ---------- */
 
-  it('UI 格式识别与转换：krea2-t2i 动态 combo 嵌套展平 + randomize 剔除', () => {
-    expect(workflow.isUiFormat(krea2T2iJson)).toBe(true);
+  it('UI 格式识别与转换：链接→输入、widget→字段、seed randomize 剔除', () => {
+    expect(workflow.isUiFormat(uiFixtureJson)).toBe(true);
     expect(workflow.isUiFormat(txt2imgJson)).toBe(false);
-    const api = workflow.convertUiToApi(krea2T2iJson, OBJECT_INFO);
-    expect(api['1'].class_type).toBe('Krea2ImageNode');
-    expect(api['1'].inputs.prompt).toContain('high fashion');
-    expect(api['1'].inputs.model).toBe('Krea 2 Medium');
-    // 动态 combo 嵌套输入用点号名
-    expect(api['1'].inputs['model.aspect_ratio']).toBe('1:1');
-    expect(api['1'].inputs['model.resolution']).toBe('1K');
-    expect(api['1'].inputs['model.creativity']).toBe('medium');
-    expect(api['1'].inputs.seed).toBe(1981045336);
-    expect(api['1'].inputs).not.toHaveProperty('randomize');
-    expect(api['2'].inputs.images).toEqual(['1', 0]);
-    expect(api['2'].inputs.filename_prefix).toBe('Krea2');
+    const api = workflow.convertUiToApi(uiFixtureJson, OBJECT_INFO);
+    expect(api['4'].class_type).toBe('KSampler');
+    expect(api['4'].inputs.model).toEqual(['1', 0]);
+    expect(api['4'].inputs.positive).toEqual(['2', 0]);
+    expect(api['4'].inputs.latent_image).toEqual(['5', 0]);
+    // widget 值按 object_info 顺序映射，seed 后的 randomize 额外值被跳过
+    expect(api['4'].inputs.seed).toBe(42);
+    expect(api['4'].inputs.steps).toBe(20);
+    expect(api['4'].inputs.cfg).toBe(7);
+    expect(api['4'].inputs.sampler_name).toBe('euler');
+    expect(api['4'].inputs.scheduler).toBe('normal');
+    expect(api['4'].inputs.denoise).toBe(1);
+    expect(api['4'].inputs).not.toHaveProperty('randomize');
+    expect(api['2'].inputs.text).toBe('a cute cat');
+    expect(api['5'].inputs.width).toBe(512);
+    expect(api['5'].inputs.height).toBe(768);
+    expect(api['6'].inputs.filename_prefix).toBe('director-wb');
+    expect(api['6'].inputs.images).toEqual(['4', 0]);
   });
 
-  it('UI 格式转换：minimax-h3-t2v 嵌套 prompt 与 seed 的 randomize 跳过', () => {
-    const api = workflow.convertUiToApi(h3T2vJson, OBJECT_INFO);
-    const inputs = api['23'].inputs;
-    expect(inputs.model).toBe('MiniMax H3');
-    expect(inputs['model.prompt']).toContain('Single continuous shot');
-    expect(inputs['model.resolution']).toBe('768P');
-    expect(inputs['model.ratio']).toBe('16:9');
-    expect(inputs['model.duration']).toBe(5); // 模板里 duration 为数字
-    // randomize 跳过；watermark 字符串转布尔
-    expect(inputs.seed).toBe(42);
-    expect(inputs.watermark).toBe(false);
-    expect(api['8'].inputs.filename_prefix).toBe('video/MiniMax_H3_t2v');
-    expect(api['8'].inputs.video).toEqual(['23', 0]);
-  });
-
-  it('introspect krea2-t2i：prompt 文字输入 + 图片输出 + seed 参数', async () => {
-    const spec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
+  it('UI 格式工作流 introspection：文字输入 + 图片输出 + 参数提取', async () => {
+    const spec = await workflow.introspectWorkflow(uiFixtureJson, OBJECT_INFO);
     const textInputs = spec.inputs.filter(i => i.kind === 'text');
-    expect(textInputs).toHaveLength(1);
-    expect(textInputs[0]?.field).toBe('prompt');
-    expect(textInputs[0]?.classType).toBe('Krea2ImageNode');
+    expect(textInputs).toHaveLength(2);
     expect(spec.outputs).toEqual([expect.objectContaining({ kind: 'image', classType: 'SaveImage' })]);
-    expect(spec.params.some(p => p.field === 'seed')).toBe(true);
+    const byField = Object.fromEntries(spec.params.map(p => [p.field, p]));
+    expect(byField.seed?.type).toBe('INT');
+    expect(byField.width?.default).toBe(512);
+    expect(byField.sampler_name?.options).toEqual(['euler', 'dpmpp_2m']);
   });
 
-  it('krea2 提示词注入自定义节点的 prompt 字段', async () => {
-    const spec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
-    const prompt = await workflow.buildPrompt(spec, krea2T2iJson, { prompt: '赛博朋克城市夜景' });
-    expect(prompt['1'].inputs.prompt).toBe('赛博朋克城市夜景');
-    expect(prompt['1'].inputs.seed).toBe(1981045336);
+  it('UI 格式提示词注入正向 CLIPTextEncode 节点', async () => {
+    const spec = await workflow.introspectWorkflow(uiFixtureJson, OBJECT_INFO);
+    const prompt = await workflow.buildPrompt(spec, uiFixtureJson, { prompt: '赛博朋克城市夜景' });
+    expect(prompt['2'].inputs.text).toBe('赛博朋克城市夜景');
   });
 
-  it('introspect minimax-h3-t2v：嵌套 prompt 文字输入 + 视频输出', async () => {
-    const spec = await workflow.introspectWorkflow(h3T2vJson, OBJECT_INFO);
-    const textInputs = spec.inputs.filter(i => i.kind === 'text');
-    expect(textInputs.map(i => i.field)).toEqual(['model.prompt']);
-    expect(textInputs[0]?.classType).toBe('MinimaxHailuo03TextToVideoNode');
-    expect(spec.outputs).toEqual([expect.objectContaining({ kind: 'video', classType: 'SaveVideo' })]);
-    expect(spec.params.some(p => p.field === 'seed')).toBe(true);
-  });
-
-  it('minimax-h3-t2v 提示词注入 model.prompt 字段', async () => {
-    const spec = await workflow.introspectWorkflow(h3T2vJson, OBJECT_INFO);
-    const prompt = await workflow.buildPrompt(spec, h3T2vJson, { prompt: '一只发光鹿在森林里奔跑' });
-    expect(prompt['23'].inputs['model.prompt']).toBe('一只发光鹿在森林里奔跑');
-    expect(prompt['23'].inputs.model).toBe('MiniMax H3');
-  });
-
-  it('minimax-h3-flf2v：首尾帧两个参考图输入 + 视频输出', async () => {
-    const spec = await workflow.introspectWorkflow(h3Flf2vJson, OBJECT_INFO);
-    const images = spec.inputs.filter(i => i.kind === 'image');
-    expect(images).toHaveLength(2);
-    expect(spec.outputs).toEqual([expect.objectContaining({ kind: 'video', classType: 'SaveVideo' })]);
-  });
-
-  it('buildSpecs 文件探测：模板占位素材缺失 → 标记必传', async () => {
+  it('buildSpecs 文件探测：占位素材缺失 → 标记必传', async () => {
     const specs = await workflow.buildSpecs();
-    const flf2v = specs.find(s => s.id === 'minimax-h3-flf2v');
-    expect(flf2v).toBeDefined();
-    const images = flf2v!.inputs.filter(i => i.kind === 'image');
-    expect(images).toHaveLength(2);
+    const img2img = specs.find(s => s.id === 'img2img');
+    expect(img2img).toBeDefined();
+    const images = img2img!.inputs.filter(i => i.kind === 'image');
+    expect(images).toHaveLength(1);
     for (const img of images) {
       expect(img.required).toBe(true);
-      expect(img.defaultValue).toBeUndefined();
+      expect(String(img.defaultValue ?? '').trim()).toBe('');
     }
-    const t2v = specs.find(s => s.id === 'minimax-h3-t2v');
-    expect(t2v!.inputs.some(i => i.kind === 'image')).toBe(false);
+    const txt2img = specs.find(s => s.id === 'txt2img');
+    expect(txt2img!.inputs.some(i => i.kind === 'image')).toBe(false);
+  });
+
+  /* ---------- MiniMax H3 本地模板（templates/video_minimax_h3_*） ---------- */
+
+  it('子图展开：t2v 实例替换为内部节点，提示词/分辨率/时长正确接线', () => {
+    const api = workflow.convertUiToApi(h3T2vJson, OBJECT_INFO);
+    const h3 = api['140_sg131'];
+    expect(h3.class_type).toBe('MiniMaxH3ImageToVideo');
+    expect(typeof h3.inputs.prompt).toBe('string');
+    expect(h3.inputs.prompt.length).toBeGreaterThan(10); // 实例 named 值注入
+    expect(h3.inputs.width).toEqual(['115', 0]);
+    expect(h3.inputs.height).toEqual(['115', 1]);
+    expect(h3.inputs.length).toEqual(['140_sg132', 1]); // ComfyMathExpression
+    expect(h3.inputs.clip).toEqual(['140_sg128', 0]);
+    expect(h3.inputs).not.toHaveProperty('first_frame');
+    expect(h3.inputs).not.toHaveProperty('last_frame');
+    // wi-skip：已连接字段跳过对应位置 widget 值 → type/device 映射正确
+    expect(api['140_sg128'].inputs.clip_name).toBe('qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors');
+    expect(api['140_sg128'].inputs.type).toBe('minimax');
+    expect(api['140_sg128'].inputs.device).toBe('default');
+    expect(api['140_sg127'].inputs.unet_name).toBe('minimax_h3_fl2va_pruned_int8_convrot.safetensors');
+    expect(api['92'].class_type).toBe('SaveVideo');
+    expect(api['92'].inputs.video).toEqual(['140_sg130', 0]);
+    // 无残留子图实例节点
+    expect(Object.values(api).some((n: any) => /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(n.class_type))).toBe(false);
+  });
+
+  it('子图展开：i2v 参考图链接到 LoadImage，宽度来自 ResolutionSelector', () => {
+    const api = workflow.convertUiToApi(h3I2vJson, OBJECT_INFO);
+    const h3 = api['105_sg104'];
+    expect(h3.class_type).toBe('MiniMaxH3ImageToVideo');
+    expect(h3.inputs.first_frame).toEqual(['114', 0]);
+    expect(h3.inputs.width).toEqual(['115', 0]);
+    expect(h3.inputs.height).toEqual(['115', 1]);
+    expect(api['114'].class_type).toBe('LoadImage');
+    expect(api['114'].inputs.image).toBe('transparent_rgb_gaming_mouse.png');
+  });
+
+  it('r2v（无子图）：参考图/提示词经链接接入 MiniMaxH3ReferenceToVideo', () => {
+    const api = workflow.convertUiToApi(h3R2vJson, OBJECT_INFO);
+    expect(api['136'].class_type).toBe('MiniMaxH3ReferenceToVideo');
+    expect(api['136'].inputs.prompt).toEqual(['138', 0]);
+    expect(api['138'].class_type).toBe('PrimitiveStringMultiline');
+    expect(api['136'].inputs['ref_images.ref_image_0']).toEqual(['137', 0]);
+    expect(api['136'].inputs['ref_images.ref_image_1']).toEqual(['139', 0]);
+  });
+
+  it('本地 H3 模板 introspection：文字/参考图输入 + 视频输出', async () => {
+    const t2v = await workflow.introspectWorkflow(h3T2vJson, OBJECT_INFO);
+    expect(t2v.inputs.filter(i => i.kind === 'text')).toHaveLength(1);
+    expect(t2v.inputs.some(i => i.kind === 'image')).toBe(false);
+    expect(t2v.outputs).toEqual([expect.objectContaining({ kind: 'video', classType: 'SaveVideo' })]);
+
+    const i2v = await workflow.introspectWorkflow(h3I2vJson, OBJECT_INFO);
+    expect(i2v.inputs.filter(i => i.kind === 'image')).toHaveLength(1);
+    expect(i2v.inputs.filter(i => i.kind === 'text')).toHaveLength(1);
+
+    const r2v = await workflow.introspectWorkflow(h3R2vJson, OBJECT_INFO);
+    expect(r2v.inputs.filter(i => i.kind === 'image')).toHaveLength(2);
+    expect(r2v.inputs.filter(i => i.kind === 'text')).toHaveLength(1);
+    expect(r2v.inputs.find(i => i.kind === 'text')?.classType).toBe('PrimitiveStringMultiline');
+  });
+
+  it('本地 H3 模板提示词注入：t2v 注入 H3 节点 prompt，r2v 注入 PrimitiveString 节点', async () => {
+    const t2vSpec = await workflow.introspectWorkflow(h3T2vJson, OBJECT_INFO);
+    const t2vPrompt = await workflow.buildPrompt(t2vSpec, h3T2vJson, { prompt: '一只发光鹿在森林里奔跑' });
+    expect(t2vPrompt['140_sg131'].inputs.prompt).toBe('一只发光鹿在森林里奔跑');
+
+    const r2vSpec = await workflow.introspectWorkflow(h3R2vJson, OBJECT_INFO);
+    const r2vPrompt = await workflow.buildPrompt(r2vSpec, h3R2vJson, { prompt: '参考图上的人物望向镜头' });
+    expect(r2vPrompt['138'].inputs.value).toBe('参考图上的人物望向镜头');
+    expect(r2vPrompt['136'].inputs.prompt).toEqual(['138', 0]);
   });
 });

@@ -118,12 +118,7 @@ function translateWs(job: GenerationJob, msg: WsMessage, spec: WorkflowSpec) {
       break;
     }
     case 'execution_error': {
-      let message = data?.exception_message || data?.error || '执行出错';
-      // 云端 API 节点（Krea2/MiniMax 等）鉴权失败：提示配置凭证
-      if (/Unauthorized|login first|No Authorization header/i.test(message)) {
-        message =
-          '云端生成节点需要 Comfy 账号凭证：请设置环境变量 COMFY_API_KEY（Comfy 账户设置页生成）或 COMFY_AUTH_TOKEN 后重启服务。';
-      }
+      const message = data?.exception_message || data?.error || '执行出错';
       job.status = 'error';
       job.error = message;
       pushEvent(job, { type: 'error', message });

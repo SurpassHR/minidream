@@ -7,12 +7,13 @@
  * - API 格式（workflow_api.json）：{ "3": { class_type, inputs } }
  * - UI 格式（LiteGraph，官方 workflow_templates 仓库即此格式）：
  *   { nodes: [{ id, type, widgets_values, inputs: [{name, link}] }], links }
- *   UI 格式在运行时用 /object_info 转成 API 格式（widget 值按节点输入定义顺序映射）。
+ *   UI 格式在运行时用 /object_info 转成 API 格式（widget 值按节点输入定义顺序映射），
+ *   新式模板（templates/ 下）的 `definitions.subgraphs` 子图实例会在转换前自动展开。
  *
  * 原理：
  * - /object_info 返回每个 class_type 的输入定义与类型
  * - 输入节点识别：CLIPTextEncode → 文字；LoadImage → 图像；LoadVideo → 视频；
- *   自定义节点上的 prompt 类 STRING 字段 → 文字（如 Krea2ImageNode / MiniMax H3 节点）
+ *   自定义节点上的 prompt 类 STRING 字段 → 文字
  * - 输出节点识别：SaveImage/PreviewImage → 图像，VHS_VideoCombine/SaveVideo → 视频，ShowText/SaveText → 文本
  * - 实际结果提取以 /history 的输出键（images/gifs/videos/text）为准，最权威
  */
@@ -181,92 +182,221 @@ function normalizeField(name: string): string {
 
 /**
  * 把 UI 格式（官方 workflow_templates 的 LiteGraph JSON）转成 API 格式。
+ * - 先展开 `definitions.subgraphs` 子图实例（新式官方模板，如 MiniMax H3 本地版）：
+ *   实例节点（type 为子图 UUID）被替换为子图内部节点（id 重映射为 `${instId}_sg${id}`），
+ *   子图输入槽位按名称解析：外部 link → 转发到消费节点；实例 widget 值 → 直接注入；
+ *   实例输出重定向到子图内部真正的产出节点。
  * - link 输入：inputs[name] = [originId, originSlot]
- * - widget 值：按 /object_info 的输入定义顺序（required+optional）映射到字段，
+ * - widget 值：按 /object_info 的输入定义顺序（required+optional）映射到字段；
+ *   已由 link/上游值提供的 widget 字段会跳过其对应位置的 widget 值；
  *   动态 combo（COMFY_DYNAMICCOMBO_V3）的值后面跟着其选中选项的嵌套输入
  *   （点号名，如 model.prompt / model.aspect_ratio），递归展平；
  *   seed 的 control_after_generate 额外值（randomize/fixed/...）自动跳过；
  *   BOOLEAN 字符串（'True'/'False'）转为布尔。
  */
-export function convertUiToApi(json: Record<string, any>, objectInfoData: Record<string, any>): Record<string, any> {
-  const links = new Map<number, UiLink>();
-  for (const l of json.links ?? []) {
-    if (Array.isArray(l) && l.length >= 3) links.set(l[0] as number, { originId: l[1] as number, originSlot: l[2] as number });
+
+/** 展开全部子图实例，返回扁平化后的 nodes + links（主格式 link 数组） */
+function expandSubgraphs(json: Record<string, any>): { nodes: any[]; links: any[] } {
+  const defs = (json.definitions?.subgraphs ?? []) as any[];
+  if (!defs.length) return { nodes: json.nodes ?? [], links: json.links ?? [] };
+  const defById = new Map(defs.map(d => [d.id, d]));
+
+  let nodes: any[] = (json.nodes ?? []).map((n: any) => ({ ...n }));
+  let links: any[] = (json.links ?? []).map((l: any) => [...l]);
+  let nextLinkId = links.reduce((m: number, l: any) => Math.max(m, Number(l[0]) || 0), 0) + 1;
+
+  let guard = 0;
+  while (guard++ < 10) {
+    const inst = nodes.find(n => defById.has(n.type));
+    if (!inst) break;
+    const def = defById.get(inst.type)!;
+
+    // 子图内部节点 id → 唯一新 id（实例 id 前缀，避免与主图冲突）
+    const idMap = new Map<number, string>();
+    for (const dn of def.nodes ?? []) idMap.set(dn.id, `${inst.id}_sg${dn.id}`);
+
+    const instInputs = inst.inputs ?? [];
+    const extIn = links.filter(l => l[3] === inst.id); // 指向实例的外链
+    const extOut = links.filter(l => l[1] === inst.id); // 从实例出发的外链
+
+    // 解析每个子图输入槽位：实例输入有外链 → 转发；否则取实例 widget 值（named 优先）
+    const sgiFeed = new Map<number, { kind: 'ext'; link: any } | { kind: 'value'; value: unknown }>();
+    for (const [slot, si] of (def.inputs ?? []).entries()) {
+      const idx = (instInputs as any[]).findIndex((i: any) => i.name === si.name);
+      const instIn = idx >= 0 ? instInputs[idx] : null;
+      if (instIn?.link != null) {
+        const ext = extIn.find((e: any) => e[0] === instIn.link);
+        if (ext) {
+          sgiFeed.set(slot, { kind: 'ext', link: ext });
+          continue;
+        }
+      }
+      // 优先取 widgets_values_named（官方模板按子图输入名给出全部值）；
+      // 仅当 named 缺失（旧模板）才用 widgets_values 位置回退。
+      const namedMap = inst.widgets_values_named;
+      const value =
+        namedMap && typeof namedMap === 'object'
+          ? namedMap[si.name]
+          : instIn
+            ? inst.widgets_values?.[idx]
+            : undefined;
+      sgiFeed.set(slot, { kind: 'value', value });
+    }
+
+    // 子图输出槽位 ← 真正产出它的子图内部节点（def 内指向 outputNode 的链路）
+    const outFeed = new Map<number, { originId: string; originSlot: number }>();
+    for (const dl of def.links ?? []) {
+      if (dl.target_id === def.outputNode?.id) {
+        outFeed.set(dl.target_slot, {
+          originId: idMap.get(dl.origin_id) ?? String(dl.origin_id),
+          originSlot: dl.origin_slot,
+        });
+      }
+    }
+
+    const newNodes: any[] = [];
+    const newLinks: any[] = [];
+    const keepLinks = links.filter(l => l[3] !== inst.id && l[1] !== inst.id);
+
+    for (const dn of def.nodes ?? []) {
+      if (!dn || typeof dn !== 'object') continue;
+      if (SKIP_NODE_TYPES.has(dn.type)) continue;
+      if (dn.mode === 2 || dn.mode === 4) continue; // bypass / mute
+      const mappedId = idMap.get(dn.id)!;
+      const inputs = (dn.inputs ?? []).map((inp: any) => ({ ...inp }));
+
+      for (const dl of def.links ?? []) {
+        if (dl.target_id !== dn.id) continue;
+        const inp = inputs.find((i: any) => i.link === dl.id);
+        if (!inp) continue;
+        if (dl.origin_id === def.inputNode?.id) {
+          // 子图输入槽位 → 实例外链转发 / 实例 widget 值注入
+          const feed = sgiFeed.get(dl.origin_slot);
+          if (feed?.kind === 'ext') {
+            const lid = nextLinkId++;
+            newLinks.push([lid, feed.link[1], feed.link[2], mappedId, 0, feed.link[5] ?? '']);
+            inp.link = lid;
+          } else if (feed?.kind === 'value' && feed.value !== undefined) {
+            inp.link = null;
+            inp._resolved = feed.value;
+          }
+        } else if (dl.origin_id !== def.outputNode?.id) {
+          // 子图内部节点间连线
+          const lid = nextLinkId++;
+          newLinks.push([lid, idMap.get(dl.origin_id) ?? String(dl.origin_id), dl.origin_slot, mappedId, 0, dl.type ?? '']);
+          inp.link = lid;
+        }
+      }
+      newNodes.push({ ...dn, id: mappedId, inputs });
+    }
+
+    // 实例输出重定向到子图内部产出节点
+    for (const l of extOut) {
+      const feed = outFeed.get(l[2]);
+      if (feed) keepLinks.push([l[0], feed.originId, feed.originSlot, l[3], l[4], l[5]]);
+    }
+
+    nodes = [...nodes.filter(n => n.id !== inst.id), ...newNodes];
+    links = [...keepLinks, ...newLinks];
   }
+  return { nodes, links };
+}
 
-  const out: Record<string, any> = {};
-  for (const node of json.nodes ?? []) {
-    if (!node || typeof node !== 'object') continue;
-    if (SKIP_NODE_TYPES.has(node.type)) continue;
-    if (node.mode === 2 || node.mode === 4) continue; // bypass / mute
-    const id = String(node.id);
-    const inputs: Record<string, unknown> = {};
-    const connected = new Set<string>();
+/** 单个 UI 节点 → API 节点；返回 null 表示跳过 */
+function convertUiNode(
+  node: any,
+  linksMap: Map<number, UiLink>,
+  objectInfoData: Record<string, any>,
+): { class_type: string; inputs: Record<string, unknown>; _meta: { title: string } } | null {
+  const inputs: Record<string, unknown> = {};
+  const connected = new Set<string>();
 
-    for (const inp of node.inputs ?? []) {
-      if (inp.link == null) continue;
-      const link = links.get(inp.link);
+  for (const inp of node.inputs ?? []) {
+    if (inp.link != null) {
+      const link = linksMap.get(inp.link);
       if (!link) continue;
       inputs[inp.name] = [String(link.originId), link.originSlot];
       connected.add(inp.name);
       connected.add(normalizeField(inp.name));
+    } else if (inp._resolved !== undefined) {
+      // 子图展开注入的上游值
+      inputs[inp.name] = inp._resolved;
+      connected.add(inp.name);
+      connected.add(normalizeField(inp.name));
     }
+  }
 
-    const widgets = Array.isArray(node.widgets_values) ? (node.widgets_values as unknown[]) : [];
-    const info = objectInfoData?.[node.type]?.input;
-    let wi = 0;
-    let lastField = '';
+  const widgets = Array.isArray(node.widgets_values) ? (node.widgets_values as unknown[]) : [];
+  const info = objectInfoData?.[node.type]?.input;
+  let wi = 0;
+  let lastField = '';
 
-    const visit = (required: Record<string, unknown> | undefined, optional: Record<string, unknown> | undefined, prefix: string) => {
-      for (const field of [...Object.keys(required ?? {}), ...Object.keys(optional ?? {})]) {
-        const full = prefix ? `${prefix}.${field}` : field;
-        if (connected.has(full) || connected.has(normalizeField(full))) continue; // 已由 link 提供
-        const def = required?.[field] ?? optional?.[field];
-        if (!isWidgetType(def)) continue; // link-only 类型没有 widget 值
-        // 跳过 seed 的 control_after_generate 额外值
-        if (lastField === 'seed' && wi < widgets.length && CONTROL_SET.has(String(widgets[wi]))) wi++;
-        if (wi >= widgets.length) break;
-        let value = widgets[wi];
+  const visit = (required: Record<string, unknown> | undefined, optional: Record<string, unknown> | undefined, prefix: string) => {
+    for (const field of [...Object.keys(required ?? {}), ...Object.keys(optional ?? {})]) {
+      const full = prefix ? `${prefix}.${field}` : field;
+      const def = required?.[field] ?? optional?.[field];
+      if (connected.has(full) || connected.has(normalizeField(full))) {
+        // 已由 link/上游值提供且属于 widget 类型的字段：跳过其对应位置的 widget 值
+        if (def && isWidgetType(def)) wi++;
+        continue;
+      }
+      if (!isWidgetType(def)) continue; // link-only 类型没有 widget 值
+      // 跳过 seed 的 control_after_generate 额外值
+      if (lastField === 'seed' && wi < widgets.length && CONTROL_SET.has(String(widgets[wi]))) wi++;
+      if (wi >= widgets.length) break;
+      let value = widgets[wi];
+      wi++;
+      const wtype = widgetTypeOf(def);
+      // BOOLEAN 字符串转布尔；INT/FLOAT 字符串转数字
+      if (wtype === 'BOOLEAN' && (value === 'True' || value === 'False')) value = value === 'True';
+      if ((wtype === 'INT' || wtype === 'FLOAT') && typeof value === 'string' && value.trim() !== '') value = Number(value);
+      inputs[full] = value;
+      lastField = normalizeField(full);
+      // 动态 combo：展平选中选项的嵌套输入
+      const option = dynamicComboOption(def, value);
+      if (option?.inputs) visit(option.inputs.required, option.inputs.optional, full);
+    }
+  };
+
+  if (info) {
+    visit(info.required, info.optional, '');
+  } else {
+    // 无 object_info 兜底：widget 值按序给到未连接的输入
+    const fields = (node.inputs ?? []).filter((i: any) => i.link == null).map((i: any) => i.name);
+    for (const f of fields) {
+      if (wi >= widgets.length) break;
+      const norm = normalizeField(f);
+      if (!connected.has(norm)) {
+        inputs[norm] = widgets[wi];
         wi++;
-        const wtype = widgetTypeOf(def);
-        // BOOLEAN 字符串转布尔；INT/FLOAT 字符串转数字
-        if (wtype === 'BOOLEAN' && (value === 'True' || value === 'False')) value = value === 'True';
-        if ((wtype === 'INT' || wtype === 'FLOAT') && typeof value === 'string' && value.trim() !== '') value = Number(value);
-        inputs[full] = value;
-        lastField = normalizeField(full);
-        // 动态 combo：展平选中选项的嵌套输入
-        const option = dynamicComboOption(def, value);
-        if (option?.inputs) visit(option.inputs.required, option.inputs.optional, full);
-      }
-    };
-
-    if (info) {
-      visit(info.required, info.optional, '');
-    } else {
-      // 无 object_info 兜底：widget 值按序给到未连接的输入
-      const fields = (node.inputs ?? []).filter((i: any) => i.link == null).map((i: any) => i.name);
-      for (const f of fields) {
-        if (wi >= widgets.length) break;
-        const norm = normalizeField(f);
-        if (!connected.has(norm)) {
-          inputs[norm] = widgets[wi];
-          wi++;
-        }
       }
     }
+  }
 
-    out[id] = {
-      class_type: node.type,
-      inputs,
-      _meta: { title: node.title ?? node.type },
-    };
+  return { class_type: node.type, inputs, _meta: { title: node.title ?? node.type } };
+}
+
+export function convertUiToApi(json: Record<string, any>, objectInfoData: Record<string, any>): Record<string, any> {
+  const { nodes, links } = expandSubgraphs(json);
+  const linksMap = new Map<number, UiLink>();
+  for (const l of links) {
+    if (Array.isArray(l) && l.length >= 3) linksMap.set(l[0] as number, { originId: l[1] as number, originSlot: l[2] as number });
+  }
+
+  const out: Record<string, any> = {};
+  for (const node of nodes) {
+    if (!node || typeof node !== 'object') continue;
+    if (SKIP_NODE_TYPES.has(node.type)) continue;
+    if (node.mode === 2 || node.mode === 4) continue; // bypass / mute
+    const converted = convertUiNode(node, linksMap, objectInfoData);
+    if (converted) out[String(node.id)] = converted;
   }
   return out;
 }
 
 /* ---------- 通用文本输入识别（自定义节点上的 prompt 类字段） ---------- */
 
-/** 自定义节点上像 prompt 的 STRING 字段（Krea2ImageNode / MiniMax H3 等，含 model.prompt 这类嵌套名） */
+/** 自定义节点上像 prompt 的 STRING 字段（含 model.prompt 这类嵌套名） */
 function genericTextInputFields(
   cls: string,
   nodeInputs: Record<string, unknown>,
@@ -313,6 +443,19 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
         field: 'text',
         classType: cls,
         defaultValue: typeof nodeInputs.text === 'string' ? nodeInputs.text : '',
+      });
+      continue;
+    }
+    // 官方模板常用 PrimitiveString / PrimitiveStringMultiline 承载提示词（经 link 注入到生成节点）
+    if (/^PrimitiveString/.test(cls)) {
+      inputs.push({
+        id: `text-${nodeId}`,
+        kind: 'text',
+        label: '提示词',
+        nodeId,
+        field: 'value',
+        classType: cls,
+        defaultValue: typeof nodeInputs.value === 'string' ? nodeInputs.value : '',
       });
       continue;
     }
@@ -603,7 +746,7 @@ async function resolveCheckpoints(
   const loaderNodes = Object.values(json).filter(
     (n: any) => n?.class_type === 'CheckpointLoaderSimple',
   ) as any[];
-  if (!loaderNodes.length) return; // 无 checkpoint 节点（如 Krea2 / MiniMax H3 模板）→ 无需处理
+  if (!loaderNodes.length) return; // 无 checkpoint 节点 → 无需处理
   const loader = objectInfoData.CheckpointLoaderSimple?.input?.required?.ckpt_name;
   const options: string[] = Array.isArray(loader) && Array.isArray(loader[0]) ? loader[0] : [];
   if (!options.length) {
