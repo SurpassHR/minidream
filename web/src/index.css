@@ -1,30 +1,58 @@
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html, body, #root { height: 100%; }
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--sans);
-  font-size: 13px;
-  overflow: hidden;
-  -webkit-font-smoothing: antialiased;
-  transition: background .22s ease, color .22s ease;
+:root {
+  --bg-page: #f8f9fa;
+  --bg-card: #ffffff;
+  --text-primary: #1f2329;
+  --text-secondary: #8a919f;
+  --text-tertiary: #b6bcc7;
+  --brand: #00cae0;
+  --brand-deep: #00a1c2;
+  --brand-soft: rgba(0, 202, 224, 0.12);
+  --border: #e9ebef;
+  --radius-lg: 24px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.04);
+  --shadow-float: 0 12px 40px rgba(0, 0, 0, 0.12);
+  --font-family: 'CapCut Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
 }
-button, input, textarea, select { font: inherit; }
-button, a, input, textarea, select { -webkit-tap-highlight-color: transparent; }
-/* 全局滚动条：保留滚动能力，统一为细窄、透明轨道、主题色滑块。 */
+
 * {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-2) transparent;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
-*::-webkit-scrollbar { width: 6px; height: 6px; }
-*::-webkit-scrollbar-thumb {
-  background: var(--border-2);
-  border: 1px solid transparent;
-  background-clip: padding-box;
-  border-radius: 999px;
+
+html,
+body {
+  font-family: var(--font-family);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
 }
-*::-webkit-scrollbar-thumb:hover {
-  background: var(--text-faint);
-  background-clip: padding-box;
+
+button {
+  font-family: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: inherit;
 }
-*::-webkit-scrollbar-track { background: transparent; }
+
+input,
+textarea {
+  font-family: inherit;
+  border: none;
+  outline: none;
+  background: none;
+  color: inherit;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+ul,
+ol {
+  list-style: none;
+}

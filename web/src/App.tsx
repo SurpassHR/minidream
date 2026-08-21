@@ -1,653 +1,146 @@
+import { useEffect, useRef, useState } from 'react';
+import { fetchGenerateData, sendChat, type ChatMessage, type GenerateData, type SkillCard } from './api';
+import Rail from './components/Rail';
+import Sidebar, { type Conversation } from './components/Sidebar';
+import SkillCards from './components/SkillCards';
+import Composer from './components/Composer';
+import ChatView from './components/ChatView';
 import './App.css';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import CanvasView from './canvas/CanvasView';
-import type { ProjectInfo, AppSettings, ThemeMode } from './types';
-import { SettingsModal } from './panels/SettingsModal';
-import { AssetLibrary, type AssetItem } from './panels/AssetLibrary';
-import { ProjectSwitcher } from './panels/ProjectSwitcher';
-import { AddProjectDialog } from './panels/AddProjectDialog';
-import { TextInputDialog } from './panels/TextInputDialog';
-import { ImportDialog } from './panels/ImportDialog';
-import { AgentPanel, type ChatMsg } from './panels/AgentPanel';
-import { ConfirmDialog } from './panels/ConfirmDialog';
-import { client, setOverwriteConfirmHandler } from './api/client';
-import { Timeline } from './panels/Timeline';
-import { VersionsList } from './panels/VersionsList';
-import { GenQueue } from './panels/GenQueue';
-import { Icon } from './icons';
-import { useGraphStore } from './store/graph';
-import { agentChat } from './api/agent';
-import { connectWs } from './api/ws';
-import { useHashRoute } from './router';
-import { StoryTellerView } from './views/StoryTellerView';
-import { ObjectDesignerView } from './views/ObjectDesignerView';
-import { broadcastAssetsChanged, type MentionAsset } from './panels/AssetMentionPicker';
-import type { TaskRecord } from './types';
-import { TaskQueue } from './panels/TaskQueue';
 
-// 工作区布局骨架：素材库为全局抽屉，画布右侧 AGENT 面板、底部时间线/版本/队列
 export default function App() {
-  const route = useHashRoute();
-  const tasks = useGraphStore((s) => s.tasks);
-  const taskRecords = useGraphStore((s) => s.taskRecords);
-  const graph = useGraphStore((s) => s.graph);
-  const chips = useGraphStore((s) => s.chips);
-  const removeChip = useGraphStore((s) => s.removeChip);
-  // 素材库三态：null=加载中/请求失败（显示空态，不误显 mock）；[]=真实空库（显示空态）；非空=真实数据
-  const [assets, setAssets] = useState<AssetItem[] | null>(null);
-  // 破坏性操作确认对话框状态：null=关闭；onCancel 可选（覆盖快照确认需回传结果）
-  const [confirm, setConfirm] = useState<{ title: string; body: string; action: () => void; onCancel?: () => void } | null>(null);
-  // 项目导入对话框开关
-  const [importOpen, setImportOpen] = useState(false);
-  // 项目栏添加对话框开关
-  const [addProjectOpen, setAddProjectOpen] = useState(false);
-  const [renameTarget, setRenameTarget] = useState<{ path: string; name: string } | null>(null);
-  const [renameBusy, setRenameBusy] = useState(false);
-  const [renameError, setRenameError] = useState('');
-  // 内置 agent 模型：空字符串 = pi 默认模型；列表来自 /api/agent/models
-  const [agentModels, setAgentModels] = useState<Array<{ id: string; provider: string; thinking: boolean; images: boolean }>>([]);
-  // agent 默认模型（全局设置 settings.json；AgentPanel 内可临时切换不回写）
-  const [agentModel, setAgentModel] = useState('');
-  // 思考强度（pi --thinking）：空字符串 = pi 默认；默认值来自全局设置
-  const [thinkingLevel, setThinkingLevel] = useState('');
-  // 全局设置（~/.director/settings.json）：comfyUrl / agentModel / agentThinking；设置弹窗读写
-  const [settings, setSettings] = useState<AppSettings>({ comfyUrl: '', agentModel: '', agentThinking: '' });
-  const [theme, setTheme] = useState<ThemeMode>('light');
-  // 设置弹窗开关（顶栏 COMFYUI 徽章点击打开）
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  // 全局素材抽屉：非模态侧栏，打开时不遮挡画布/对话
-  const [assetDrawerOpen, setAssetDrawerOpen] = useState(false);
-  const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
-  // 抽屉关闭动画期间保留最后显示的面板，避免内容先切回素材库再收起
-  const [drawerMode, setDrawerMode] = useState<'assets' | 'tasks'>('assets');
-  // agent 活动回传（MCP 工具调用 → WS agent-activity）：显示在 AGENT 面板顶部
-  const [agentActivity, setAgentActivity] = useState<{ text: string; at: number } | null>(null);
-
-  // —— 面板尺寸：分割条拖拽调整，localStorage 持久化；双击分割条恢复默认 ——
-  const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
-  const stored = (key: string, def: number, min: number, max: number) => {
-    const v = Number(localStorage.getItem(key));
-    return Number.isFinite(v) && v > 0 ? clamp(v, min, max) : def;
-  };
-  const PANEL_DEFAULTS = { right: 300, footer: 148 } as const;
-  const [rightW, setRightW] = useState(() => stored('dw:rightW', 300, 240, 520));
-  const [footerH, setFooterH] = useState(() => stored('dw:footerH', 148, 120, 360));
-  const [dragging, setDragging] = useState<'right' | 'footer' | null>(null);
-  const dragRef = useRef<{ kind: 'right' | 'footer'; start: number; val: number } | null>(null);
-
-  const onSplitterDown = (kind: 'right' | 'footer') => (e: React.MouseEvent) => {
-    e.preventDefault();
-    const val = kind === 'right' ? rightW : footerH;
-    dragRef.current = { kind, start: kind === 'footer' ? e.clientY : e.clientX, val };
-    setDragging(kind);
-  };
-
-  // 拖拽期间在 window 上监听移动/抬起：分割条只负责触发，避免鼠标移出元素后丢失
-  useEffect(() => {
-    const move = (e: MouseEvent) => {
-      const d = dragRef.current;
-      if (!d) return;
-      const delta = (d.kind === 'footer' ? e.clientY : e.clientX) - d.start;
-      if (d.kind === 'right') setRightW(clamp(d.val - delta, 240, 520));
-      else setFooterH(clamp(d.val - delta, 120, 360));
-    };
-    const up = () => {
-      const d = dragRef.current;
-      if (d) {
-        const v = d.kind === 'right' ? rightW : footerH;
-        localStorage.setItem(`dw:${d.kind}W`, String(v));
-      }
-      dragRef.current = null;
-      setDragging(null);
-    };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-    return () => {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
-    };
-  }, [rightW, footerH]);
-
-  const onSplitterReset = (kind: 'right' | 'footer') => () => {
-    const def = PANEL_DEFAULTS[kind];
-    if (kind === 'right') setRightW(def);
-    else setFooterH(def);
-    localStorage.removeItem(`dw:${kind}W`);
-  };
-
-  // 拉取 pi 可用模型列表 + 全局设置（设置弹窗数据源；settings 应用为默认模型/思考强度）
-  useEffect(() => {
-    void client.listAgentModels().then(setAgentModels).catch(() => setAgentModels([]));
-    void client.getSettings().then((s) => {
-      setSettings(s);
-      setTheme(s.theme ?? 'light');
-      if (s.agentModel) setAgentModel(s.agentModel);
-      if (s.agentThinking) setThinkingLevel(s.agentThinking);
-    }).catch(() => {});
-  }, []);
-
-  // —— 全局接线：启动时拉取图 + WS 事件同步（后端为唯一事实来源） ——
-  const applyGraph = useGraphStore((s) => s.applyGraph);
-  const setConnected = useGraphStore((s) => s.setConnected);
-  const upsertTask = useGraphStore((s) => s.upsertTask);
-  const replaceTaskRecords = useGraphStore((s) => s.replaceTaskRecords);
-  const upsertTaskRecord = useGraphStore((s) => s.upsertTaskRecord);
-  // ComfyUI 连接状态三态：null=检测中、true=已连接、false=未连接
-  const [comfyHealthy, setComfyHealthy] = useState<boolean | null>(null);
-  // 当前 ComfyUI 地址（来自健康检查/设置）
-  const [comfyUrl, setComfyUrl] = useState('');
-
-  // 保存设置回调：ComfyUI 地址已由后端热切换，这里同步健康状态
-  const handleSettingsSaved = (s: AppSettings) => {
-    setSettings(s);
-    setTheme(s.theme ?? 'light');
-    if (s.comfyUrl) {
-      setComfyUrl(s.comfyUrl);
-      void client.comfyHealth().then((r) => setComfyHealthy(r.healthy));
-    }
-  };
-
-  const handleSettingsError = (msg: string) => {
-    console.error('保存设置失败', msg);
-  };
-
-  const toggleTheme = () => {
-    const next: ThemeMode = theme === 'dark' ? 'light' : 'dark';
-    setTheme(next);
-    void client.saveSettings({ theme: next }).then((s) => {
-      setSettings(s);
-      setTheme(s.theme ?? next);
-    }).catch((err) => {
-      setTheme(theme);
-      handleSettingsError(err instanceof Error ? err.message : '保存主题失败');
-    });
-  };
-
-  const refreshTasks = useCallback(() => {
-    void client.listTasks().then((list) => replaceTaskRecords(Array.isArray(list) ? list : [])).catch(() => {});
-  }, [replaceTaskRecords]);
+  const [data, setData] = useState<GenerateData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [activeNav, setActiveNav] = useState('generate');
+  const [mode, setMode] = useState('Agent 模式');
+  const [input, setInput] = useState('');
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sending, setSending] = useState(false);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConv, setActiveConv] = useState<string | null>(null);
+  const chatRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void client.getGraph().then(applyGraph).catch(() => {});
-    refreshTasks();
-    const disconnect = connectWs((ev) => {
-      if (ev.type === 'graph') { applyGraph(ev.graph); setConnected(true); }
-      else if (ev.type === 'generation') { upsertTask(ev.task); }
-      else if (ev.type === 'task') { upsertTaskRecord(ev.task); }
-      else if (ev.type === 'agent-activity') { setAgentActivity({ text: ev.text, at: ev.at }); }
-      // file-changed：图已由后端回填，等下一个 graph 事件即可
-    }, {
-      onOpen: () => setConnected(true),
-      onClose: () => setConnected(false),
-      onResync: refreshTasks,
-    });
-    return disconnect;
-  }, [applyGraph, refreshTasks, setConnected, upsertTask, upsertTaskRecord]);
+    fetchGenerateData()
+      .then(d => {
+        setData(d);
+        setMode(d.composer.modes[0] ?? 'Agent 模式');
+      })
+      .catch(e => setError(String(e?.message ?? e)));
+  }, []);
 
-  // ComfyUI 健康检查：挂载时立即拉取 + 每 15 秒轮询刷新
   useEffect(() => {
-    let disposed = false;
-    const poll = () => {
-      void client.comfyHealth().then((r) => {
-        if (!disposed) {
-          setComfyHealthy(r.healthy);
-          if (r.baseUrl) setComfyUrl(r.baseUrl);
-        }
-      });
-    };
-    poll();
-    const timer = setInterval(poll, 15_000);
-    return () => { disposed = true; clearInterval(timer); };
-  }, []);
+    chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight });
+  }, [messages]);
 
-  // 素材库真实数据源：成功 → 真实列表（空数组即空态）；失败 → null（显示空态，不误显 mock 数据）。
-  // 刷新成功后广播 assets-changed，让 @ 引用输入框（StoryChat/AgentPanel 的 useAssetMentions）同步重拉。
-  const refreshAssets = useCallback(() => {
-    void client.listAssets().then((list) => {
-      setAssets(list.map((a) => ({
-        id: a.id, kind: a.kind, name: a.name, meta: a.meta, caption: a.caption,
-      })));
-      broadcastAssetsChanged();
-    }).catch(() => setAssets(null));
-  }, []);
-
-  useEffect(() => { refreshAssets(); }, [refreshAssets]);
-
-  // 项目列表与打开状态：未打开时不使用 graph.projectName 作为虚拟项目
-  const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [projectOpen, setProjectOpen] = useState(true);
-
-  const refreshProjects = useCallback(() => {
-    void client.listProjects().then((r) => {
-      setProjects(r.projects);
-      setProjectOpen(r.projectOpen);
-    }).catch(() => {
-      setProjects([]);
-      setProjectOpen(false);
-    });
-  }, []);
-
-  useEffect(() => { refreshProjects(); }, [refreshProjects]);
-
-  // 点击项目 → 后端热切换（重建图/生成队列/文件监视），前端应用新图并刷新素材。
-  // 列表保持原有顺序（仅更新 current 高亮），不把当前项目挪到最上方；
-  // 后端返回的新发现项目追加到末尾。
-  const handleProjectSelect = useCallback(async (path: string) => {
+  const handleSend = async (text?: string) => {
+    const content = (text ?? input).trim();
+    if (!content || sending) return;
+    const userMsg: ChatMessage = { role: 'user', content };
+    setMessages(prev => [...prev, userMsg]);
+    setInput('');
+    setSending(true);
     try {
-      const r = await client.switchProject(path);
-      applyGraph(r.graph);
-      setProjectOpen(true);
-      setProjects((prev) => {
-        const merged = prev.map((p) => ({ ...p, current: p.path === path }));
-        for (const p of r.projects) {
-          if (!merged.some((m) => m.path === p.path)) {
-            merged.push({ ...p, current: p.path === path });
-          }
-        }
-        return merged;
+      const { reply, title } = await sendChat(content);
+      setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+      const id = `c${Date.now()}`;
+      setConversations(prev => {
+        const exists = prev.some(c => c.title === title);
+        return exists ? prev : [...prev, { id, title }];
       });
-      refreshAssets();
-    } catch (err) {
-      console.error('切换项目失败', err);
-    }
-  }, [applyGraph, refreshAssets]);
-
-  // 手动添加项目：后端校验（剧本项目或空目录）→ 持久化注册表 → 用返回的新列表替换
-  const handleAddProject = useCallback((projects: ProjectInfo[]) => {
-    setProjects(projects);
-  }, []);
-
-  // 重命名项目：只更新项目栏显示名称，不改磁盘目录路径
-  const askRenameProject = useCallback((path: string, name: string) => {
-    setRenameError('');
-    setRenameTarget({ path, name });
-  }, []);
-
-  const saveProjectName = useCallback(async (name: string) => {
-    if (!renameTarget) return;
-    setRenameBusy(true);
-    setRenameError('');
-    try {
-      const res = await client.renameProject(renameTarget.path, name);
-      setProjects(res.projects);
-      if (projects.find((p) => p.current)?.path === renameTarget.path) {
-        const currentGraph = useGraphStore.getState().graph;
-        if (currentGraph) applyGraph({ ...currentGraph, projectName: name });
-        if (res.newPath) {
-          void refreshAssets();
-        }
-      }
-      setRenameTarget(null);
-    } catch (err) {
-      setRenameError(err instanceof Error ? err.message : '更新项目名称失败');
+      setActiveConv(id);
+    } catch {
+      setMessages(prev => [...prev, { role: 'assistant', content: '（生成失败：请确认后端服务已启动）' }]);
     } finally {
-      setRenameBusy(false);
+      setSending(false);
     }
-  }, [applyGraph, projects, refreshAssets, renameTarget]);
-
-  // 删除项目：确认后删除磁盘目录及项目注册记录
-  const askRemoveProject = useCallback((path: string, name: string) => {
-    setConfirm({
-      title: '删除项目文件',
-      body: `将永久删除「${name}」及其磁盘目录中的全部文件，且无法撤销。确认继续？`,
-      action: () => {
-        void client.deleteProject(path).then((r) => {
-          setProjects(r.projects);
-          setProjectOpen(r.projectOpen);
-        }).catch(() => {});
-      },
-    });
-  }, []);
-
-  // 真实 agent 流式发送：chips 是显示名（@xxx），发送时从画布查找节点内容注入上下文
-  const handleAgentSend = (text: string, _chipRefs: string[], _sessionId?: string | null, assetRefs: MentionAsset[] = []): ChatMsg[] => [
-    { who: 'user', text, assetRefs: assetRefs.length > 0 ? assetRefs : undefined },
-    { who: 'agent', text: '（正在请求 pi…）' },
-  ];
-
-  const handleAgentStream = useCallback((text: string, chipRefs: string[], push: (chunk: string) => void, sessionId?: string | null, assetRefs: MentionAsset[] = []) => {
-    const payload = chipRefs.map((name) => {
-      const node = useGraphStore.getState().graph?.nodes.find((n) => n.title === name.slice(2));
-      return { name, content: JSON.stringify(node?.fields ?? {}) };
-    });
-    // 返回 Promise：AgentPanel 据此进入/退出流式锁（期间禁止会话切换）
-    return agentChat(text, payload, push, agentModel || undefined, thinkingLevel || undefined, sessionId, assetRefs)
-      .catch(() => push('\n（agent 连接失败）'));
-  }, [agentModel, thinkingLevel]);
-
-  // 点击快照直接回滚（免确认）：重置图为目标快照状态并切换 HEAD，不追加新快照
-  const handleRollback = useCallback((seq: number) => {
-    void client.rollback(seq);
-  }, []);
-
-  // 撤销/重做快捷键：Ctrl+Z 撤销，Ctrl+Y / Ctrl+Shift+Z 重做（输入框内不拦截）
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      if (!(e.ctrlKey || e.metaKey)) return;
-      const key = e.key.toLowerCase();
-      if (key === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        void client.undo();
-      } else if (key === 'y' || (key === 'z' && e.shiftKey)) {
-        e.preventDefault();
-        void client.redo();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
-  // 覆盖未来（灰色）快照的确认钩子：写操作被后端拒绝（SNAPSHOT_FUTURE_EXISTS）时，
-  // 弹确认对话框；确认后批准覆盖并自动重放原操作
-  useEffect(() => {
-    setOverwriteConfirmHandler((message: string) => new Promise<boolean>((resolve) => {
-      setConfirm({
-        title: '覆盖未来快照',
-        body: `${message}。确认后其后的快照将被丢弃，且无法撤销。`,
-        action: () => resolve(true),
-        onCancel: () => resolve(false),
-      });
-    }));
-    return () => setOverwriteConfirmHandler(null);
-  }, []);
-
-  // 生成提交确认门：generation 节点“▶ 提交生成”按钮 → 确认后提交到 ComfyUI
-  // useCallback 保持引用稳定，避免 CanvasView 的 WS 订阅因 prop 变化反复重建
-  const askSubmitGeneration = useCallback((nodeId: string) => {
-    setConfirm({
-      title: '提交生成',
-      body: '将该段提交到 ComfyUI 生成？提交后生成队列将开始处理。',
-      action: () => void client.submitGeneration(nodeId),
-    });
-  }, []);
-
-  // 右键菜单删除节点确认门：删除写入快照，可回滚
-  const askDeleteNode = useCallback((nodeId: string, title: string) => {
-    setConfirm({
-      title: '删除节点',
-      body: '删除节点「' + title + '」？其连边将一并移除，改动会写入新快照。',
-      action: () => void client.deleteNode(nodeId),
-    });
-  }, []);
-
-  // 素材拖到画布 → 创建 asset 节点（计划 4 换素材库 API）
-  const handleDropToCanvas = (item: AssetItem, position: { x: number; y: number }) => {
-    void client.createNode({
-      type: 'asset', title: `素材 ${item.name}`,
-      fields: { assetKind: item.kind, assetName: item.name },
-      position,
-    });
   };
 
-  // AgentPanel 删除 chip 时传剩余数组：diff 出被移除项并同步 store
-  const handleChipsChange = useCallback((next: string[]) => {
-    const current = useGraphStore.getState().chips;
-    for (const c of current) {
-      if (!next.includes(c)) removeChip(c);
-    }
-  }, [removeChip]);
+  const handleTrySkill = (skill: SkillCard) => {
+    setInput(`使用技能：${skill.title}。${skill.desc}`);
+  };
 
-  const generationTaskList = [...taskRecords.values()]
-    .filter((task) => task.kind === 'comfy-generation')
-    .map((task) => ({
-      id: typeof task.payload.nodeId === 'string' ? task.payload.nodeId : task.id,
-      status: task.status === 'interrupted' ? 'failed' as const : task.status as 'queued' | 'running' | 'success' | 'failed' | 'cancelled',
-      progress: task.progress,
-      error: task.error,
-      promptId: typeof task.result?.promptId === 'string' ? task.result.promptId : undefined,
-      result: typeof task.result?.videoPath === 'string'
-        ? { videoPath: task.result.videoPath, lastFramePath: typeof task.result.lastFramePath === 'string' ? task.result.lastFramePath : '' }
-        : undefined,
-    }));
+  const handleNewChat = () => {
+    setMessages([]);
+    setInput('');
+    setActiveConv(null);
+  };
 
-  return (
-    <div className="app" data-theme={theme}>
-      <header className="topbar">
-        <div className="logo">
-          <div className="slate" />
-          <div>
-            <div className="logo-name">导演工作台</div>
-            <div className="logo-sub">DIRECTOR WORKBENCH</div>
-          </div>
-        </div>
-        <nav className="role-tabs" data-testid="role-tabs">
-          <a href="#/story-teller" className={`role-tab${route === 'story-teller' ? ' active' : ''}`} data-testid="tab-story-teller">故事向导</a>
-          <a href="#/object-designer" className={`role-tab${route === 'object-designer' ? ' active' : ''}`} data-testid="tab-object-designer">物体设计</a>
-          <a href="#/canvas" className={`role-tab${route === 'canvas' ? ' active' : ''}`} data-testid="tab-canvas">画布</a>
-        </nav>
-        <div className="header-div" />
-        <ProjectSwitcher
-          projects={projects}
-          activePath={projects.find((p) => p.current)?.path ?? ''}
-          projectOpen={projectOpen}
-          fallbackName={graph?.projectName ?? ''}
-          onSelect={handleProjectSelect}
-          onAdd={() => setAddProjectOpen(true)}
-          onRename={askRenameProject}
-          onRemove={askRemoveProject}
-        />
-        {comfyHealthy === null ? (
-          <div className="badge clickable" title="打开设置" onClick={() => setSettingsOpen(true)}><span className="dot" style={{ background: 'var(--text-faint)' }} />COMFYUI&nbsp;检测中</div>
-        ) : comfyHealthy ? (
-          <div className="badge clickable" title="打开设置" onClick={() => setSettingsOpen(true)}><span className="dot ok" />COMFYUI&nbsp;已连接</div>
-        ) : (
-          <div className="badge clickable" title="打开设置" onClick={() => setSettingsOpen(true)}><span className="dot" style={{ background: 'var(--rec)', boxShadow: '0 0 6px var(--rec)' }} />COMFYUI&nbsp;未连接</div>
-        )}
-        <div className="spacer" />
-        <button
-          className={`btn-ghost asset-drawer-toggle${assetDrawerOpen ? ' active' : ''}`}
-          data-testid="asset-library-toggle"
-          aria-expanded={assetDrawerOpen}
-          title="打开全局素材库（可拖到画布或对话）"
-          onClick={() => { setDrawerMode('assets'); setAssetDrawerOpen((open) => !open); setTaskDrawerOpen(false); }}
-        ><Icon name="image" />素材库</button>
-        <button
-          className={`btn-ghost task-queue-toggle${taskDrawerOpen ? ' active' : ''}`}
-          data-testid="task-queue-toggle"
-          aria-expanded={taskDrawerOpen}
-          title="查看全部后台任务"
-          onClick={() => { setDrawerMode('tasks'); setTaskDrawerOpen((open) => !open); setAssetDrawerOpen(false); }}
-        ><Icon name="text-lines" />任务队列{taskRecords.size > 0 && <span className="task-queue-count" data-testid="task-queue-count">{[...taskRecords.values()].filter((task) => task.status === 'queued' || task.status === 'running').length}</span>}</button>
-        <button
-          className="btn-ghost theme-toggle"
-          data-testid="theme-toggle"
-          aria-label={theme === 'dark' ? '切换浅色主题' : '切换深色主题'}
-          title={theme === 'dark' ? '切换浅色主题' : '切换深色主题'}
-          onClick={toggleTheme}
-        ><Icon name={theme === 'dark' ? 'sun' : 'moon'} /><span>{theme === 'dark' ? '浅色' : '深色'}</span></button>
-        <button
-          className="btn-ghost settings-btn"
-          data-testid="settings-open"
-          title="设置：ComfyUI 地址 / 默认模型 / 思考强度"
-          onClick={() => setSettingsOpen(true)}
-        ><Icon name="gear" />设置</button>
-        <button className="btn-ghost" onClick={() => setImportOpen(true)} disabled={!projectOpen}><Icon name="plus" />导入</button>
-        <button className="run-btn" disabled={!projectOpen}><Icon name="play" />运行流水线</button>
-      </header>
-      {route === 'canvas' ? (
-        <>
-          <main className="main">
-            {projectOpen ? (
-              <>
-            <section
-              className="canvas" data-testid="canvas"
-              onDragOver={(e) => e.preventDefault()}
-            >
-              {/* 素材拖放位置换算在 CanvasView 内完成（screenToFlowPosition，
-                  节点出现在松手时光标处）；onAssetDrop 收到画布坐标 */}
-              <CanvasView onNodeSubmit={askSubmitGeneration} onDeleteNode={askDeleteNode} onAssetDrop={handleDropToCanvas} />
-            </section>
-            <div
-              className={`splitter splitter-v ${dragging === 'right' ? 'active' : ''}`}
-              data-testid="splitter-right"
-              title="拖拽调整宽度 · 双击恢复默认"
-              onMouseDown={onSplitterDown('right')}
-              onDoubleClick={onSplitterReset('right')}
-            />
-            <aside className="right" style={{ flexBasis: rightW }} data-testid="agent-panel">
-              <div className="panel-title">AGENT · pi <span className="mini">mmh3 skills</span></div>
-              <AgentPanel chips={chips} onChipsChange={handleChipsChange} onSend={handleAgentSend} onStream={handleAgentStream} models={agentModels} selectedModel={agentModel} onModelChange={setAgentModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={setThinkingLevel} historyKey={graph?.projectName ?? 'none'} activity={agentActivity} />
-            </aside>
-              </>
-            ) : <ProjectEmptyState />}
-            <WorkspaceDrawer
-              open={assetDrawerOpen || taskDrawerOpen}
-              mode={drawerMode}
-              onClose={() => { setAssetDrawerOpen(false); setTaskDrawerOpen(false); }}
-              items={assets ?? []}
-              tasks={[...taskRecords.values()]}
-              onDropToCanvas={handleDropToCanvas}
-              onAssetsChanged={refreshAssets}
-              onCancel={(id) => { void client.cancelTask(id).then((r) => { if (r.task) upsertTaskRecord(r.task); else refreshTasks(); }); }}
-              onRetry={(id) => { void client.retryTask(id).then(upsertTaskRecord).catch(() => {}); }}
-            />
-          </main>
-          {projectOpen && <>
-          <div
-            className={`splitter splitter-h ${dragging === 'footer' ? 'active' : ''}`}
-            data-testid="splitter-footer"
-            title="拖拽调整高度 · 双击恢复默认"
-            onMouseDown={onSplitterDown('footer')}
-            onDoubleClick={onSplitterReset('footer')}
-          />
-          <footer className="footer" style={{ height: footerH }}>
-            <div className="timeline-wrap" data-testid="timeline"><Timeline /></div>
-            <div className="versions-wrap" data-testid="versions"><VersionsList onRollback={handleRollback} /></div>
-            <div className="queue-wrap" data-testid="queue"><GenQueue tasks={generationTaskList} /></div>
-          </footer>
-          </>}
-        </>
-      ) : route === 'story-teller' ? (
-        <div className="role-workspace">
-          {projectOpen ? (
-            <StoryTellerView
-              projectName={graph?.projectName ?? ''}
-              prompts={settings.prompts}
-              armorBreak={settings.armorBreak}
-              armorBreakEnabled={settings.armorBreakEnabled}
-              agentModel={settings.agentModel}
-              thinkingLevel={settings.agentThinking}
-            />
-          ) : <ProjectEmptyState />}
-          <WorkspaceDrawer
-            open={assetDrawerOpen || taskDrawerOpen}
-            mode={drawerMode}
-            onClose={() => { setAssetDrawerOpen(false); setTaskDrawerOpen(false); }}
-            items={assets ?? []}
-            tasks={[...taskRecords.values()]}
-            onDropToCanvas={handleDropToCanvas}
-            onAssetsChanged={refreshAssets}
-            onCancel={(id) => { void client.cancelTask(id).then((r) => { if (r.task) upsertTaskRecord(r.task); else refreshTasks(); }); }}
-            onRetry={(id) => { void client.retryTask(id).then(upsertTaskRecord).catch(() => {}); }}
-          />
-        </div>
-      ) : (
-        <div className="role-workspace">
-          {projectOpen ? (
-            <ObjectDesignerView
-              projectName={graph?.projectName ?? ''}
-              prompts={settings.prompts}
-              armorBreak={settings.armorBreak}
-              armorBreakEnabled={settings.armorBreakEnabled}
-            />
-          ) : <ProjectEmptyState />}
-          <WorkspaceDrawer
-            open={assetDrawerOpen || taskDrawerOpen}
-            mode={drawerMode}
-            onClose={() => { setAssetDrawerOpen(false); setTaskDrawerOpen(false); }}
-            items={assets ?? []}
-            tasks={[...taskRecords.values()]}
-            onDropToCanvas={handleDropToCanvas}
-            onAssetsChanged={refreshAssets}
-            onCancel={(id) => { void client.cancelTask(id).then((r) => { if (r.task) upsertTaskRecord(r.task); else refreshTasks(); }); }}
-            onRetry={(id) => { void client.retryTask(id).then(upsertTaskRecord).catch(() => {}); }}
-          />
-        </div>
-      )}
-      <ConfirmDialog
-        open={confirm !== null}
-        title={confirm?.title ?? ''}
-        body={confirm?.body ?? ''}
-        onCancel={() => { confirm?.onCancel?.(); setConfirm(null); }}
-        onConfirm={() => { confirm?.action(); setConfirm(null); }}
-        confirmLabel={confirm?.title === '提交生成' ? '确认提交' : confirm?.title === '回滚快照' ? '确认回滚' : '确认删除'}
-      />
-      <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
-      <TextInputDialog
-        open={renameTarget !== null}
-        title="更新项目名称"
-        body="只更新项目栏显示名称，不会修改磁盘目录。"
-        defaultValue={renameTarget?.name ?? ''}
-        placeholder="输入项目名称"
-        confirmLabel="保存名称"
-        busy={renameBusy}
-        error={renameError}
-        onConfirm={(name) => { void saveProjectName(name); }}
-        onCancel={() => { if (!renameBusy) setRenameTarget(null); }}
-      />
-      <AddProjectDialog
-        open={addProjectOpen}
-        onClose={() => setAddProjectOpen(false)}
-        onAdded={handleAddProject}
-      />
-      {/* 全局设置弹窗（ComfyUI / 默认模型 / 思考强度 → settings.json） */}
-      <SettingsModal
-        open={settingsOpen}
-        settings={settings}
-        models={agentModels}
-        onClose={() => setSettingsOpen(false)}
-        onSaved={handleSettingsSaved}
-        onError={handleSettingsError}
-      />
-    </div>
-  );
-}
-
-function ProjectEmptyState() {
-  return (
-    <section className="project-empty-state" data-testid="project-empty-state" aria-live="polite">
-      <div className="project-empty-icon"><Icon name="package" /></div>
-      <h2>未打开项目</h2>
-      <p>请先打开或添加项目，当前工作区为只读状态。</p>
-    </section>
-  );
-}
-
-function WorkspaceDrawer(props: {
-  open: boolean;
-  mode: 'assets' | 'tasks';
-  onClose: () => void;
-  items: AssetItem[];
-  tasks: TaskRecord[];
-  onDropToCanvas: (item: AssetItem, position: { x: number; y: number }) => void;
-  onAssetsChanged: () => void;
-  onCancel: (id: string) => void;
-  onRetry: (id: string) => void;
-}) {
-  const isTasks = props.mode === 'tasks';
-  return (
-    <aside
-      className={`${isTasks ? 'task-drawer' : 'asset-drawer'} workspace-drawer workspace-drawer-${props.mode}${props.open ? ' open' : ''}`}
-      data-testid={isTasks ? 'task-drawer' : 'asset-drawer'}
-      aria-label={isTasks ? '任务队列' : '全局素材库'}
-    >
-      <div key={props.mode} className={`drawer-content drawer-content-${props.mode} drawer-content-enter`}>
-        <div className="asset-drawer-head">
-          <div>
-            <div className="asset-drawer-eyebrow">{isTasks ? 'TASK QUEUE · GLOBAL' : 'ASSET LIBRARY · GLOBAL'}</div>
-            <div className="asset-drawer-title">{isTasks ? '任务队列' : '全局素材库'}</div>
-          </div>
-          <button type="button" className="asset-drawer-close" aria-label={isTasks ? '关闭任务队列' : '关闭素材库'} onClick={props.onClose}>×</button>
-        </div>
-        <div className="asset-drawer-sub">
-          {isTasks ? 'Ollama 与 ComfyUI 任务串行执行，重启中断任务可手动重试' : '可直接拖到画布、故事对话或其他面板'}
-        </div>
-        {isTasks
-          ? <TaskQueue tasks={props.tasks} onCancel={props.onCancel} onRetry={props.onRetry} />
-          : <AssetLibrary items={props.items} onDropToCanvas={props.onDropToCanvas} onAssetsChanged={props.onAssetsChanged} />}
+  if (error) {
+    return (
+      <div className="app-error">
+        <p>加载失败：{error}</p>
+        <p className="app-error-hint">请确认后端服务已启动（pnpm dev）</p>
       </div>
-    </aside>
+    );
+  }
+
+  if (!data) {
+    return <div className="app-loading">加载中…</div>;
+  }
+
+  const isEmpty = messages.length === 0;
+
+  return (
+    <div className="app">
+      <Rail
+        items={data.rail.items}
+        loginLabel={data.rail.loginLabel}
+        pointsLabel={data.rail.pointsLabel}
+        activeId={activeNav}
+        onSelect={setActiveNav}
+      />
+      <div className="workbench">
+        <Sidebar
+          createLabel={data.sidebar.createLabel}
+          newChatLabel={data.sidebar.newChatLabel}
+          conversations={conversations}
+          activeId={activeConv}
+          onNewChat={handleNewChat}
+          onSelect={id => setActiveConv(id)}
+        />
+        <main className="main">
+          {isEmpty ? (
+            <div className="generate-empty">
+              <h1 className="generate-title">{data.hero.title}</h1>
+              <SkillCards skills={data.skills} onTry={handleTrySkill} />
+            </div>
+          ) : (
+            <div className="chat-scroll" ref={chatRef}>
+              <ChatView messages={messages} />
+              {sending && (
+                <div className="chat-row assistant">
+                  <div className="chat-avatar">
+                    <svg width="28" height="28" viewBox="0 0 40 40" fill="none">
+                      <rect width="40" height="40" rx="12" fill="#00cae0" />
+                      <rect x="8" y="10" width="24" height="17" rx="3.5" fill="white" />
+                      <path d="M8 15.5h24M13 10v5.5M27 10v5.5" stroke="#00a1c2" strokeWidth="1.6" />
+                      <path d="m24.5 21.5 3 3-3 3" stroke="#00a1c2" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                      <circle cx="17.5" cy="24.5" r="3" fill="#00a1c2" />
+                    </svg>
+                  </div>
+                  <div className="chat-bubble assistant">
+                    <span className="chat-typing">
+                      <i /><i /><i />
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="composer-wrap">
+            <Composer
+              placeholder={data.composer.placeholder}
+              modes={data.composer.modes}
+              value={input}
+              onChange={setInput}
+              onSubmit={() => handleSend()}
+              disabled={sending}
+              mode={mode}
+              onModeChange={setMode}
+            />
+          </div>
+        </main>
+      </div>
+    </div>
   );
 }

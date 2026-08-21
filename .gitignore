@@ -1,8 +1,6 @@
 node_modules/
 dist/
-.director/
-.playwright-cli/
+*.local
+.env
+.DS_Store
 *.tsbuildinfo
-.codegraph/
-output/
-.superpowers/

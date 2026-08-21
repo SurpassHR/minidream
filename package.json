@@ -1,34 +1,21 @@
 {
   "name": "director-workbench",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n server,web -c blue,green \"pnpm run dev:server\" \"pnpm run dev:web\"",
-    "dev:server": "tsx watch src/index.ts",
-    "dev:web": "node scripts/wait-for-server.mjs http://127.0.0.1:4777/health && pnpm --filter director-workbench-web run dev",
-    "start": "tsx src/index.ts",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "dependencies": {
-    "@fastify/multipart": "^8.3.1",
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "chokidar": "^3.6.0",
-    "express": "^4.22.2",
-    "fast-glob": "^3.3.2",
-    "fast-json-patch": "^3.1.1",
-    "fastify": "^4.28.0",
-    "sharp": "^0.35.3",
-    "ws": "^8.18.0"
+    "dev:server": "pnpm --filter server run dev",
+    "dev:web": "pnpm --filter web run dev",
+    "build": "pnpm --filter web run build",
+    "start": "pnpm --filter server run start"
   },
   "devDependencies": {
-    "@types/express": "^4.17.25",
-    "@types/node": "^20.14.0",
-    "@types/ws": "^8.5.10",
-    "concurrently": "^10.0.4",
-    "tsx": "^4.16.0",
-    "typescript": "^5.5.0",
-    "vitest": "^2.0.0"
+    "concurrently": "^9.1.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }
