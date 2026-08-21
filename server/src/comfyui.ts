@@ -5,7 +5,19 @@
  * /ws 用 Node 24 内置 WebSocket 收实时进度事件。
  */
 
-export const COMFYUI_BASE_URL = (process.env.COMFYUI_BASE_URL || 'http://127.0.0.1:8188').replace(/\/+$/, '');
+export const DEFAULT_COMFYUI_BASE_URL = 'http://127.0.0.1:8188';
+
+/** 当前 ComfyUI 地址（运行时可修改：见 setComfyBaseUrl） */
+export let COMFYUI_BASE_URL = (process.env.COMFYUI_BASE_URL || DEFAULT_COMFYUI_BASE_URL).replace(/\/+$/, '');
+
+/** 更新 ComfyUI 地址（去空白、去尾部斜杠、校验 http/https），返回规范化后的地址 */
+export function setComfyBaseUrl(url: string): string {
+  const trimmed = url.trim().replace(/\/+$/, '');
+  if (!trimmed) throw new ComfyUIError('ComfyUI 地址不能为空');
+  if (!/^https?:\/\//i.test(trimmed)) throw new ComfyUIError('ComfyUI 地址需以 http:// 或 https:// 开头');
+  COMFYUI_BASE_URL = trimmed;
+  return COMFYUI_BASE_URL;
+}
 
 export class ComfyUIError extends Error {
   constructor(

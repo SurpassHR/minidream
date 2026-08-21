@@ -558,6 +558,15 @@ export async function buildSpecs(): Promise<WorkflowSpec[]> {
 
 let specsCache: { at: number; specs: WorkflowSpec[] | null } = { at: 0, specs: null };
 
+/** 切换 ComfyUI 实例后清空 introspection / 规格 / 素材探测缓存 */
+export function invalidateComfyCaches(): void {
+  objectInfoCache.at = 0;
+  objectInfoCache.data = null;
+  specsCache = { at: 0, specs: null };
+  fileProbeCache.clear();
+}
+
+
 /** 带 30s 缓存的 spec 列表（开发期改 workflow 文件 30s 内生效） */
 export async function buildSpecsCached(): Promise<WorkflowSpec[]> {
   if (specsCache.specs && Date.now() - specsCache.at < 30_000) return specsCache.specs;

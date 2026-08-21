@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchGenerateData,
   sendChat,
@@ -16,6 +16,7 @@ import {
 } from './api';
 import Rail from './components/Rail';
 import Sidebar, { type Conversation } from './components/Sidebar';
+import SettingsModal from './components/SettingsModal';
 import SkillCards from './components/SkillCards';
 import Composer, { type ComposerSubmitOpts } from './components/Composer';
 import ChatView from './components/ChatView';
@@ -85,6 +86,7 @@ export default function App() {
   const [workflows, setWorkflows] = useState<WorkflowSpec[]>([]);
   const [comfyStatus, setComfyStatus] = useState<ComfyStatus | null>(null);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme');
     const t: 'light' | 'dark' =
@@ -103,17 +105,25 @@ export default function App() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  useEffect(() => {
-    fetchGenerateData()
-      .then(setData)
-      .catch(e => setError(String(e?.message ?? e)));
-    fetchWorkflows()
-      .then(setWorkflows)
-      .catch(() => undefined);
+  const refreshComfyStatus = useCallback(() => {
     fetchComfyStatus()
       .then(setComfyStatus)
       .catch(() => undefined);
   }, []);
+
+  const refreshWorkflows = useCallback(() => {
+    fetchWorkflows()
+      .then(setWorkflows)
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    fetchGenerateData()
+      .then(setData)
+      .catch(e => setError(String(e?.message ?? e)));
+    refreshWorkflows();
+    refreshComfyStatus();
+  }, [refreshComfyStatus, refreshWorkflows]);
 
   useEffect(() => {
     chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight });
@@ -206,6 +216,7 @@ export default function App() {
         onSelect={setActiveNav}
         theme={theme}
         onToggleTheme={() => setTheme(t => (t === 'dark' ? 'light' : 'dark'))}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
       <div className="workbench">
         <Sidebar
@@ -263,6 +274,13 @@ export default function App() {
           </div>
         </main>
       </div>
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        comfyStatus={comfyStatus}
+        onRefreshStatus={refreshComfyStatus}
+        onRefreshWorkflows={refreshWorkflows}
+      />
     </div>
   );
 }

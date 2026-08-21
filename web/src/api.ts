@@ -156,6 +156,30 @@ export async function fetchComfyStatus(): Promise<ComfyStatus> {
   return http('/api/comfyui/status');
 }
 
+export interface ComfySettings {
+  baseUrl: string;
+}
+
+export async function fetchComfySettings(): Promise<ComfySettings> {
+  return http('/api/settings');
+}
+
+export async function saveComfySettings(
+  baseUrl: string,
+): Promise<{
+  ok: boolean;
+  baseUrl: string;
+  connected: boolean;
+  status?: ComfyStatus;
+  error?: string;
+}> {
+  return http('/api/settings/comfyui', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ baseUrl }),
+  });
+}
+
 export interface SendChatOptions {
   workflowId?: string;
   params?: Record<string, unknown>;

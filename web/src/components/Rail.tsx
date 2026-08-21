@@ -50,12 +50,14 @@ export default function Rail({
   onSelect,
   theme,
   onToggleTheme,
+  onOpenSettings,
 }: {
   items: RailItem[];
   activeId: string;
   onSelect: (id: string) => void;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
+  onOpenSettings: () => void;
 }) {
   return (
     <nav className="rail" aria-label="主导航">
@@ -82,6 +84,17 @@ export default function Rail({
           </li>
         ))}
       </ul>
+      <button className="rail-settings" onClick={onOpenSettings} title="设置" aria-label="设置">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <path
+            d="M8.4 2.5h3.2l.5 2.1 1.7.8 2-1.1 1.6 1.6-1.1 2 .8 1.7 2.1.5v3.2l-2.1.5-.8 1.7 1.1 2-1.6 1.6-2-1.1-1.7.8-.5 2.1H8.4l-.5-2.1-1.7-.8-2 1.1-1.6-1.6 1.1-2-.8-1.7-2.1-.5V8.4l2.1-.5.8-1.7-1.1-2 1.6-1.6 2 1.1 1.7-.8.5-2.1Z"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinejoin="round"
+          />
+          <circle cx="10" cy="10" r="2.3" stroke="currentColor" strokeWidth="1.3" />
+        </svg>
+      </button>
       <button
         className="rail-theme"
         onClick={onToggleTheme}

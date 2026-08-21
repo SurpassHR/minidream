@@ -7,10 +7,17 @@ import {
   COMFYUI_BASE_URL,
   checkHealth,
   getQueue,
+  setComfyBaseUrl,
   uploadFile,
   submitPrompt,
 } from './comfyui.js';
-import { buildSpecsCached, buildPrompt, getWorkflowJson, type WorkflowSpec } from './workflow.js';
+import {
+  buildSpecsCached,
+  buildPrompt,
+  getWorkflowJson,
+  invalidateComfyCaches,
+  type WorkflowSpec,
+} from './workflow.js';
 import { startJob, cancelJob, subscribeJob, getJob, jobSnapshot } from './jobs.js';
 import type { ChatReply } from './data.js';
 
@@ -127,6 +134,26 @@ app.get('/comfyui/view', async (req, res) => {
     res.send(buf);
   } catch (e) {
     res.status(502).json({ error: (e as Error).message });
+  }
+});
+
+/* ---------------- 设置 ---------------- */
+
+/** 当前设置（前端设置弹窗初始化用） */
+app.get('/api/settings', (_req, res) => {
+  res.json({ comfyui: { baseUrl: COMFYUI_BASE_URL } });
+});
+
+/** 更新 ComfyUI 地址：清空 introspection 缓存并立即做一次健康检查 */
+app.post('/api/settings/comfyui', async (req, res) => {
+  const baseUrl = typeof req.body?.baseUrl === 'string' ? req.body.baseUrl : '';
+  try {
+    const next = setComfyBaseUrl(baseUrl);
+    invalidateComfyCaches();
+    const status = await checkHealth();
+    res.json({ ok: true, baseUrl: next, connected: status.connected, status });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: (e as Error).message });
   }
 });
 
