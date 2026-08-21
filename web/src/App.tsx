@@ -11,7 +11,6 @@ export default function App() {
   const [data, setData] = useState<GenerateData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeNav, setActiveNav] = useState('generate');
-  const [mode, setMode] = useState('Agent 模式');
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
@@ -21,10 +20,7 @@ export default function App() {
 
   useEffect(() => {
     fetchGenerateData()
-      .then(d => {
-        setData(d);
-        setMode(d.composer.modes[0] ?? 'Agent 模式');
-      })
+      .then(setData)
       .catch(e => setError(String(e?.message ?? e)));
   }, []);
 
@@ -40,8 +36,8 @@ export default function App() {
     setInput('');
     setSending(true);
     try {
-      const { reply, title } = await sendChat(content);
-      setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+      const { reply, title, stages } = await sendChat(content);
+      setMessages(prev => [...prev, { role: 'assistant', content: reply ?? '', stages }]);
       const id = `c${Date.now()}`;
       setConversations(prev => {
         const exists = prev.some(c => c.title === title);
@@ -53,6 +49,12 @@ export default function App() {
     } finally {
       setSending(false);
     }
+  };
+
+  const handleRegenerate = (index: number) => {
+    // 找到该条 assistant 消息对应的用户消息，重新发送
+    const userMsg = [...messages].slice(0, index).reverse().find(m => m.role === 'user');
+    if (userMsg) void handleSend(userMsg.content);
   };
 
   const handleTrySkill = (skill: SkillCard) => {
@@ -82,13 +84,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Rail
-        items={data.rail.items}
-        loginLabel={data.rail.loginLabel}
-        pointsLabel={data.rail.pointsLabel}
-        activeId={activeNav}
-        onSelect={setActiveNav}
-      />
+      <Rail items={data.rail.items} activeId={activeNav} onSelect={setActiveNav} />
       <div className="workbench">
         <Sidebar
           createLabel={data.sidebar.createLabel}
@@ -106,7 +102,7 @@ export default function App() {
             </div>
           ) : (
             <div className="chat-scroll" ref={chatRef}>
-              <ChatView messages={messages} />
+              <ChatView messages={messages} onRegenerate={handleRegenerate} />
               {sending && (
                 <div className="chat-row assistant">
                   <div className="chat-avatar">
@@ -130,13 +126,11 @@ export default function App() {
           <div className="composer-wrap">
             <Composer
               placeholder={data.composer.placeholder}
-              modes={data.composer.modes}
+              composer={data.composer}
               value={input}
               onChange={setInput}
               onSubmit={() => handleSend()}
               disabled={sending}
-              mode={mode}
-              onModeChange={setMode}
             />
           </div>
         </main>

@@ -46,14 +46,10 @@ function RailIcon({ id }: { id: string }) {
 
 export default function Rail({
   items,
-  loginLabel,
-  pointsLabel,
   activeId,
   onSelect,
 }: {
   items: RailItem[];
-  loginLabel: string;
-  pointsLabel: string;
   activeId: string;
   onSelect: (id: string) => void;
 }) {
@@ -82,16 +78,6 @@ export default function Rail({
           </li>
         ))}
       </ul>
-      <div className="rail-bottom">
-        <button className="rail-login">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <circle cx="9" cy="6.5" r="3" stroke="currentColor" strokeWidth="1.3" />
-            <path d="M3.5 15c1.1-2.4 3-3.4 5.5-3.4s4.4 1 5.5 3.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-          </svg>
-          <span>{loginLabel}</span>
-          <span className="rail-points">{pointsLabel}</span>
-        </button>
-      </div>
     </nav>
   );
 }

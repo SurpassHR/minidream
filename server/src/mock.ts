@@ -14,8 +14,6 @@ export const generateData: GenerateData = {
       { id: 'assets', label: '资产', icon: 'assets' },
       { id: 'canvas', label: '画布', icon: 'canvas' },
     ],
-    loginLabel: '登录',
-    pointsLabel: '领积分',
   },
   sidebar: {
     createLabel: '开启创作',
@@ -26,54 +24,90 @@ export const generateData: GenerateData = {
   },
   skills: [
     {
-      id: 'script',
+      id: 'director-storyboard',
       tag: '热门技能',
-      title: '剧本创作',
-      desc: '输入故事灵感或一句话大纲，自动生成完整剧本：角色设定、场景描述、对白与三幕结构，支持导演风格定制',
+      title: '叙事短片导演分镜',
+      desc: '以森海荧光导演分镜方法论产出叙事短片：导演意图书、九列分镜表、4~15s Clip 表与逐 Clip 提示词，直至成片。',
       image: skillImg(11),
     },
     {
-      id: 'storyboard',
+      id: 'series-generate',
       tag: '热门技能',
-      title: '分镜设计',
-      desc: '将剧本自动拆解为分镜：镜头语言、景别、运镜与时长设计，产出可直接交付 AI 视频生成的九列分镜表',
+      title: '系列套图生成',
+      desc: '将母版提示词、参考图、角色设定抽象为稳定的系列视觉母体，生成风格统一但变量清晰的系列图片。',
       image: skillImg(14),
     },
     {
-      id: 'video',
+      id: 'ecommerce-video',
       tag: '热门技能',
-      title: '视频生成',
-      desc: '基于分镜与提示词批量生成视频片段，支持首尾帧参考、风格锁定与多版本对比挑选，直达成片',
+      title: '爆款电商短视频题材创意',
+      desc: '电商短视频创作助手，支持多题材选择、时长配置，每个题材生成5组差异化方案。',
       image: skillImg(20),
     },
   ],
   composer: {
-    placeholder: '输入想法、剧本或上传参考，支持 “/” 使用技能，添加主体，和 Agent 一起创作',
-    modes: ['Agent 模式', '自动', '使用技能'],
+    placeholder: '输入想法、剧本或上传参考，支持 “/”使用技能，添加主体，和Agent一起创作',
+    agentOptions: ['Agent 模式', '图片生成', '视频生成', '音乐生成', '配音生成', '数字人', '动作模仿'],
+    preferences: {
+      types: ['图片', '视频'],
+      ratios: ['智能', '21:9', '16:9', '3:2', '4:3', '1:1', '3:4', '2:3', '9:16'],
+      models: ['图片 4.0'],
+    },
+    skills: [
+      { id: 'story', name: '剧情短片', tag: '官方', desc: '帮你自动生成故事大纲、分镜脚本并产出短片' },
+      { id: 'ecommerce', name: '电商套图', desc: '生成风格统一的商品全套视觉素材，适用于各大电商平台' },
+      { id: 'poster', name: '海报设计', desc: '生成更有创意的海报内容，擅长营销场景和节日热点' },
+      { id: 'brand', name: '品牌设计', desc: '根据公司名称、业务与客群，生成品牌 Logo 与视觉方案' },
+    ],
+    skillFooter: ['用 Agent 创建技能', '管理技能'],
   },
 };
 
-/** Mock chat: keyword-based canned replies, falling back to a generic one. */
+/**
+ * Mock chat：按关键词返回分阶段生成流程（思考日志 → 任务进行中 → 完成），
+ * 复刻即梦生成页的中间态结构。
+ */
 export function mockReply(message: string): ChatReply {
   const m = message.trim();
-  let reply: string;
-  if (/剧本|脚本|故事|剧情/.test(m)) {
-    reply =
-      '好的，我来帮你写剧本。已按三幕结构起草：角色设定、核心冲突与关键场景都已就位。\n\n' +
-      '下一步可以让我：\n1. 展开对白与分场\n2. 直接拆分为九列分镜表\n3. 按指定导演风格（如森海荧光、赛博朋克）重写';
-  } else if (/分镜|镜头|运镜|storyboard/i.test(m)) {
-    reply =
-      '正在把剧本拆解为分镜。我将按镜头语言输出：景别（远/全/中/近/特）、运镜（推/拉/摇/移/跟）、时长与画面描述。\n\n' +
-      '分镜表生成后，可直接逐条生成 AI 视频片段，并支持上一段末帧作为下一段参考图。';
-  } else if (/视频|短片|成片|生成/.test(m)) {
-    reply =
-      '已进入视频生成流程：基于分镜与提示词批量出片。默认使用「导演版 2.5」模型，支持首尾帧参考与风格锁定。\n\n' +
-      '生成完成后我会给出每个片段的预览与版本对比，方便你挑选最佳效果。';
-  } else {
-    reply =
-      '收到，已记录你的创作意图。我会以 Agent 模式推进：先产出方案大纲，再逐步细化到剧本、分镜与成片。\n\n' +
-      '你可以告诉我更多细节，比如题材、风格、时长，或直接说「生成视频」开始创作。';
-  }
   const title = m.slice(0, 12) + (m.length > 12 ? '…' : '');
-  return { reply, title };
+  const isVideo = /视频|短片|成片|生成视频/.test(m);
+  const isScript = /剧本|脚本|故事|剧情|分镜|镜头/.test(m);
+
+  // 分阶段生成流程：思考日志 → 任务 → 完成
+  const stages = [
+    {
+      type: 'thinking' as const,
+      logs: [
+        '收到，我来分析你的创作意图。这个题材非常适合用短片呈现，我会先把氛围感和故事结构搭起来。',
+        '我先加载视频创作优化技巧，之后直接为你生成这段画面。',
+        isVideo
+          ? '检测到当前模型为会员专属版本，我将自动切换为非会员可用的视频生成模型来完成这段画面，效果同样可以保证。'
+          : '已加载技能：视频Prompt Skill，正在为你组织分镜与画面描述。',
+      ],
+    },
+    {
+      type: 'task' as const,
+      progress: { completed: 0, total: 1 },
+      taskLabel: '视频生成中…',
+      queued: true,
+      queueLabel: '1 个任务排队中',
+    },
+    {
+      type: 'done' as const,
+      logs: [
+        isScript
+          ? '已完成。这段故事的剧本大纲、分镜脚本都已就位，可直接进入成片环节。如果对氛围、动作细节有调整想法，随时告诉我。'
+          : '已提交生成，这段画面正在渲染中，完成后你就可以直接查看成片效果啦。如果后续对画面氛围、动作细节有调整想法，随时告诉我。',
+      ],
+      credits: 75,
+      suggestion: isScript ? '按这个剧本开始生成分镜' : '按这个场景开始生成视频',
+    },
+  ];
+
+  // 生成最终回复文本（供侧栏/简化场景使用）
+  const reply =
+    stages[2]?.logs?.[0] ??
+    '已完成。这段创作已进入生成流程，完成后可直接查看成片效果。';
+
+  return { title, reply, stages };
 }
