@@ -5,14 +5,6 @@ export interface RailItem {
   active?: boolean;
 }
 
-export interface SkillCard {
-  id: string;
-  tag: string;
-  title: string;
-  desc: string;
-  image: string;
-}
-
 export interface GenerateData {
   rail: {
     items: RailItem[];
@@ -24,10 +16,8 @@ export interface GenerateData {
   hero: {
     title: string;
   };
-  skills: SkillCard[];
   composer: {
     placeholder: string;
-    agentOptions: string[];
     preferences: {
       types: string[];
       ratios: string[];
@@ -35,8 +25,6 @@ export interface GenerateData {
       sizes: { min: number; max: number; step: number; default: number };
       models: string[];
     };
-    skills: { id: string; name: string; tag?: string; desc: string }[];
-    skillFooter: string[];
   };
 }
 
@@ -306,6 +294,8 @@ export type AgentThinking = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhi
 export interface AgentSettings {
   model: string;
   thinking: AgentThinking;
+  /** Agent 是否轮询生成任务状态（关闭时移除 generation.status 工具，进度走 SSE 推送） */
+  pollTaskStatus: boolean;
 }
 
 export interface AgentModel {

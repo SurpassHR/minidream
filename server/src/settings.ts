@@ -25,6 +25,8 @@ export type AgentThinking = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhi
 export interface AgentSettings {
   model: string;
   thinking: AgentThinking;
+  /** Agent 是否轮询生成任务状态（关闭时移除 generation.status 工具，进度走 SSE 推送） */
+  pollTaskStatus: boolean;
 }
 
 export interface ImageGenSettings {
@@ -66,6 +68,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   agent: {
     model: '',
     thinking: 'minimal',
+    pollTaskStatus: false,
   },
   imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
   storage: {
@@ -116,6 +119,10 @@ export function readSettings(file: string): AppSettings {
         thinking: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(agent.thinking)
           ? agent.thinking
           : DEFAULT_SETTINGS.agent.thinking,
+        pollTaskStatus:
+          typeof agent.pollTaskStatus === 'boolean'
+            ? agent.pollTaskStatus
+            : DEFAULT_SETTINGS.agent.pollTaskStatus,
       },
       imageGen: {
         seedMode: imageGen.seedMode === 'fixed' ? 'fixed' : DEFAULT_IMAGE_GEN_SETTINGS.seedMode,
@@ -194,6 +201,10 @@ export function updateAgentSettings(file: string, partial: Partial<AgentSettings
     agent: {
       model: typeof partial.model === 'string' ? partial.model.trim() : current.agent.model,
       thinking,
+      pollTaskStatus:
+        typeof partial.pollTaskStatus === 'boolean'
+          ? partial.pollTaskStatus
+          : current.agent.pollTaskStatus,
     },
   });
 }

@@ -23,7 +23,6 @@ import {
   type ComfyStatus,
   type GenerateData,
   type JobEvent,
-  type SkillCard,
   type WorkflowSpec,
   type ActionCardData,
   type ToolCallData,
@@ -35,7 +34,6 @@ import {
 import Rail from './components/Rail';
 import Sidebar, { type Conversation } from './components/Sidebar';
 import SettingsModal from './components/SettingsModal';
-import SkillCards from './components/SkillCards';
 import Composer, { type ComposerSubmitOpts } from './components/Composer';
 import ChatView from './components/ChatView';
 import ActivityPanel from './components/ActivityPanel';
@@ -589,10 +587,6 @@ export default function App() {
     });
   };
 
-  const handleTrySkill = (skill: SkillCard) => {
-    setInput(`使用技能：${skill.title}。${skill.desc}`);
-  };
-
   const handleNewChat = async () => {
     try {
       const r = await createSession();
@@ -723,7 +717,6 @@ export default function App() {
             isEmpty ? (
               <div className="generate-empty">
                 <h1 className="generate-title">{data.hero.title}</h1>
-                <SkillCards skills={data.skills} onTry={handleTrySkill} />
               </div>
             ) : (
               <div className="chat-scroll" ref={chatRef}>

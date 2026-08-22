@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import type { GenerateData } from '../api';
 import { computeResolution } from '../resolution';
 
-type PanelId = 'agent' | 'preference' | 'skills' | null;
+type PanelId = 'preference' | null;
 
 export interface Attachment {
   id: string;
@@ -47,7 +47,6 @@ export default function Composer({
 }) {
   const [focused, setFocused] = useState(false);
   const [openPanel, setOpenPanel] = useState<PanelId>(null);
-  const [agentMode, setAgentMode] = useState(composer.agentOptions[0] ?? 'Agent 模式');
   const [ratio, setRatio] = useState(composer.preferences.ratios[0] ?? '智能');
   const sizeCfg = composer.preferences.sizes ?? { min: 0.5, max: 10, step: 0.5, default: 1 };
   const [size, setSize] = useState(sizeCfg.default);
@@ -76,11 +75,6 @@ export default function Composer({
 
   const toggle = (p: Exclude<PanelId, null>) => {
     setOpenPanel(openPanel === p ? null : p);
-  };
-
-  const selectAgent = (opt: string) => {
-    setAgentMode(opt);
-    setOpenPanel(null);
   };
 
   const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -141,41 +135,6 @@ export default function Composer({
 
       <div className="composer-bottom">
         <div className="composer-modes">
-          {/* Agent 模式下拉（创作类型） */}
-          <div className="composer-mode-wrap">
-            <button
-              className={`composer-mode${openPanel === 'agent' ? ' open' : ''}`}
-              onClick={() => toggle('agent')}
-            >
-              {agentMode}
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path d="M2.5 4.5 6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-            {openPanel === 'agent' && (
-              <div className="composer-panel agent-panel">
-                <div className="panel-title">创作类型</div>
-                <ul className="agent-options">
-                  {composer.agentOptions.map(opt => (
-                    <li key={opt}>
-                      <button
-                        className={`agent-option${agentMode === opt ? ' active' : ''}`}
-                        onClick={() => selectAgent(opt)}
-                      >
-                        <span>{opt}</span>
-                        {agentMode === opt && (
-                          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                            <path d="m3 7.5 2.8 2.8L11 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        )}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-
           {/* 生成比例 + 生成尺寸 */}
           <div className="composer-mode-wrap">
             <button
@@ -266,49 +225,6 @@ export default function Composer({
             )}
           </div>
 
-          {/* 使用技能 */}
-          <div className="composer-mode-wrap">
-            <button
-              className={`composer-mode${openPanel === 'skills' ? ' open' : ''}`}
-              onClick={() => toggle('skills')}
-            >
-              使用技能
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path d="M2.5 4.5 6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-            {openPanel === 'skills' && (
-              <div className="composer-panel skills-panel">
-                <div className="panel-title">技能</div>
-                <ul className="skill-list">
-                  {composer.skills.map(s => (
-                    <li key={s.id}>
-                      <button
-                        className="skill-item"
-                        onClick={() => {
-                          onChange(`使用技能：${s.name}。${s.desc}`);
-                          setOpenPanel(null);
-                        }}
-                      >
-                        <span className="skill-item-name">
-                          {s.name}
-                          {s.tag && <em className="skill-item-tag">{s.tag}</em>}
-                        </span>
-                        <span className="skill-item-desc">{s.desc}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-                <div className="skill-footer">
-                  {composer.skillFooter.map(f => (
-                    <button key={f} className="skill-footer-btn" onClick={() => setOpenPanel(null)}>
-                      {f}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
         </div>
 
         <div className="composer-actions">

@@ -81,7 +81,11 @@ function filterEnabledWorkflows(specs: WorkflowSpec[]): WorkflowSpec[] {
   return specs.filter(s => isWorkflowEnabled(s.id));
 }
 
-export const mcpServer: McpServerInstance = createDirectorMCPServer(taskQueue, isWorkflowEnabled);
+export const mcpServer: McpServerInstance = createDirectorMCPServer(
+  taskQueue,
+  isWorkflowEnabled,
+  () => readSettings(SETTINGS_FILE).agent.pollTaskStatus,
+);
 export const activityRegistry = new ActivityRegistry(taskQueue);
 
 
@@ -392,6 +396,7 @@ app.post('/api/settings/agent', (req, res) => {
     const partial: Partial<AgentSettings> = {
       model: typeof req.body?.model === 'string' ? req.body.model : undefined,
       thinking: typeof req.body?.thinking === 'string' ? req.body.thinking as AgentSettings['thinking'] : undefined,
+      pollTaskStatus: typeof req.body?.pollTaskStatus === 'boolean' ? req.body.pollTaskStatus : undefined,
     };
     const updated = updateAgentSettings(SETTINGS_FILE, partial);
     res.json({ ok: true, agent: updated.agent });

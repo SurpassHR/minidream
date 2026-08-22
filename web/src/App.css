@@ -722,102 +722,6 @@
   margin-bottom: 40px;
 }
 
-/* ============ 技能卡 ============ */
-.skill-cards {
-  display: flex;
-  gap: 8px;
-}
-
-.skill-card {
-  width: 261px;
-  border: none;
-  background: var(--bg-card);
-  border-radius: 16px;
-  overflow: hidden;
-  text-align: left;
-  cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
-}
-
-.skill-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.1);
-}
-
-.skill-card-media {
-  position: relative;
-}
-
-.skill-card-img {
-  width: 100%;
-  height: 176px;
-  object-fit: cover;
-}
-
-.skill-card-tag {
-  position: absolute;
-  top: 10px;
-  left: 12px;
-  padding: 2px 8px;
-  font-size: 9px;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.4);
-  border-radius: 4px;
-  z-index: 1;
-}
-
-.skill-card-overlay {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px;
-  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.62));
-}
-
-.skill-card-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: #fff;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-}
-
-.skill-card-try {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  height: 28px;
-  padding: 0 10px;
-  font-size: 10px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.56);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.2);
-  white-space: nowrap;
-  transition: background-color 0.15s;
-}
-
-.skill-card:hover .skill-card-try {
-  background: rgba(0, 0, 0, 0.32);
-}
-
-.skill-card-desc {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  padding: 12px 14px 14px;
-  font-size: 12px;
-  line-height: 20px;
-  color: var(--text-secondary);
-}
-
 /* ============ Composer ============ */
 .composer-wrap {
   padding: 0 32px 20px;
@@ -898,51 +802,14 @@
   padding: 8px;
 }
 
-.agent-panel {
-  width: 200px;
-}
-
 .pref-panel {
   width: 340px;
-}
-
-.skills-panel {
-  width: 324px;
-  left: auto;
-  right: 0;
 }
 
 .panel-title {
   padding: 4px 8px 6px;
   font-size: 12px;
   color: var(--text-placeholder);
-}
-
-.agent-options {
-  display: flex;
-  flex-direction: column;
-}
-
-.agent-option {
-  width: 100%;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 10px;
-  border-radius: 8px;
-  font-size: 13px;
-  color: var(--text-primary);
-  transition: background-color 0.15s;
-}
-
-.agent-option:hover {
-  background: var(--bg-hover);
-}
-
-.agent-option.active {
-  background: var(--brand-soft);
-  color: var(--brand-deep);
 }
 
 .pref-row {
@@ -1097,73 +964,6 @@
 .pref-size-preview-hint {
   font-size: 10px;
   color: var(--text-tertiary);
-}
-
-.skill-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.skill-item {
-  width: 100%;
-  padding: 10px;
-  border-radius: 10px;
-  text-align: left;
-  transition: background-color 0.15s;
-}
-
-.skill-item:hover {
-  background: var(--bg-hover);
-}
-
-.skill-item-name {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.skill-item-tag {
-  font-style: normal;
-  font-size: 9px;
-  color: var(--brand-deep);
-  background: var(--brand-soft);
-  padding: 1px 6px;
-  border-radius: 4px;
-}
-
-.skill-item-desc {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  margin-top: 4px;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--text-secondary);
-}
-
-.skill-footer {
-  display: flex;
-  gap: 4px;
-  margin-top: 8px;
-  padding: 8px 4px 2px;
-  border-top: 1px solid var(--border);
-}
-
-.skill-footer-btn {
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--brand-deep);
-  transition: background-color 0.15s;
-}
-
-.skill-footer-btn:hover {
-  background: var(--brand-soft);
 }
 
 /* 附件 chips */
@@ -2148,6 +1948,7 @@
 
 .settings-modal {
   /* 视口占比：宽度最高约 90vw/960px，高度最高约 86vh/760px，小屏自动缩小 */
+  position: relative;
   width: min(90vw, 960px);
   height: min(86vh, 760px);
   background: var(--bg-card);
@@ -2287,6 +2088,19 @@
   color: var(--text-secondary);
 }
 
+.settings-switch-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-field-hint {
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--text-tertiary);
+}
+
 .settings-input {
   width: 100%;
   height: 38px;
@@ -2380,6 +2194,30 @@
   display: flex;
   gap: 8px;
   margin-top: 18px;
+}
+
+/* 修改提示 toast：任一设置被修改时浮出，带保存按钮 */
+.settings-save-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px 9px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-float);
+  z-index: 50;
+  animation: settings-pop 0.18s ease;
+}
+
+.settings-save-toast-msg {
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
 }
 
 .settings-btn {

@@ -6,14 +6,6 @@ export interface RailItem {
   active?: boolean;
 }
 
-export interface SkillCard {
-  id: string;
-  tag: string;
-  title: string;
-  desc: string;
-  image: string;
-}
-
 export interface GenerateData {
   rail: {
     items: RailItem[];
@@ -25,11 +17,8 @@ export interface GenerateData {
   hero: {
     title: string;
   };
-  skills: SkillCard[];
   composer: {
     placeholder: string;
-    /** 创作类型（Agent 模式下拉）选项 */
-    agentOptions: string[];
     /** 生成偏好面板 */
     preferences: {
       types: string[];
@@ -38,9 +27,6 @@ export interface GenerateData {
       sizes: { min: number; max: number; step: number; default: number };
       models: string[];
     };
-    /** 使用技能面板 */
-    skills: { id: string; name: string; tag?: string; desc: string }[];
-    skillFooter: string[];
   };
 }
 

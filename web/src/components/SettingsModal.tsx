@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchAgentModels,
   fetchAppSettings,
@@ -70,6 +70,20 @@ const CATEGORIES: Category[] = [
 
 const PLUGIN_KIND_LABEL = { image: '图片', video: '视频', text: '文本' };
 
+/** 两个 Set 内容是否一致 */
+function setEquals(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const v of a) {
+    if (!b.has(v)) return false;
+  }
+  return true;
+}
+
+/** 两个 JSON 可序列化对象是否一致 */
+function objEquals(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export default function SettingsModal({
   open,
   onClose,
@@ -87,23 +101,25 @@ export default function SettingsModal({
 }) {
   const [active, setActive] = useState(CATEGORIES[0]!.id);
   const [baseUrl, setBaseUrl] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [baseUrlSaved, setBaseUrlSaved] = useState('');
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [tip, setTip] = useState<string | null>(null);
 
   const [outputDir, setOutputDir] = useState('');
-  const [savingStorage, setSavingStorage] = useState(false);
+  const [outputDirSaved, setOutputDirSaved] = useState('');
   const [storageTip, setStorageTip] = useState<string | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [agentModel, setAgentModel] = useState('');
   const [agentThinking, setAgentThinking] = useState<AgentThinking>('minimal');
+  const [agentPoll, setAgentPoll] = useState(false);
   const [agentModels, setAgentModels] = useState<AgentModel[]>([]);
   const [agentModelsLoading, setAgentModelsLoading] = useState(false);
   const [agentTip, setAgentTip] = useState<string | null>(null);
   const [agentError, setAgentError] = useState<string | null>(null);
-  const [savingAgent, setSavingAgent] = useState(false);
+  const [agentSaved, setAgentSaved] = useState<{ model: string; thinking: AgentThinking; pollTaskStatus: boolean } | null>(null);
 
   // 插件（工作流）状态：停用列表 + 参数配置（workflowId → { paramId: 值 }）
   const [pluginDisabled, setPluginDisabled] = useState<string[]>([]);
@@ -112,11 +128,14 @@ export default function SettingsModal({
   const [pluginConfigDraft, setPluginConfigDraft] = useState<Record<string, Record<string, string>> | null>(null);
   /** 当前进入插件详情设置的工作流 id；null 表示显示插件列表 */
   const [configTarget, setConfigTarget] = useState<string | null>(null);
-  const [savingPlugins, setSavingPlugins] = useState(false);
   const [pluginsTip, setPluginsTip] = useState<string | null>(null);
+  const [pluginsSaved, setPluginsSaved] = useState<{ disabled: string[]; config: Record<string, Record<string, string>> } | null>(null);
+  const [savingAll, setSavingAll] = useState(false);
+  const [toastFlash, setToastFlash] = useState<'saved' | 'failed' | null>(null);
   const [pluginsError, setPluginsError] = useState<string | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusRef = useRef<ComfyStatus | null>(comfyStatus);
   statusRef.current = comfyStatus;
 
@@ -133,25 +152,31 @@ export default function SettingsModal({
     setPluginsError(null);
     setReconnecting(false);
     setAttempt(0);
+    setSettingsLoaded(false);
+    setToastFlash(null);
+    setSavingAll(false);
 
     fetchAppSettings()
       .then(s => {
-        if (s.comfyui?.baseUrl) {
-          setBaseUrl(s.comfyui.baseUrl);
-        } else if (comfyStatus?.baseUrl) {
-          setBaseUrl(comfyStatus.baseUrl);
-        }
+        const savedBase = s.comfyui?.baseUrl || comfyStatus?.baseUrl || '';
+        setBaseUrl(savedBase);
+        setBaseUrlSaved(savedBase);
         if (s.storage?.outputDir) {
           setOutputDir(s.storage.outputDir);
+          setOutputDirSaved(s.storage.outputDir);
         }
         if (s.agent) {
           setAgentModel(s.agent.model);
           setAgentThinking(s.agent.thinking);
+          setAgentPoll(s.agent.pollTaskStatus);
+          setAgentSaved({ model: s.agent.model, thinking: s.agent.thinking, pollTaskStatus: s.agent.pollTaskStatus });
         }
         if (s.plugins) {
           setPluginDisabled(s.plugins.disabled);
           setPluginConfig(s.plugins.config ?? {});
+          setPluginsSaved({ disabled: s.plugins.disabled, config: s.plugins.config ?? {} });
         }
+        setSettingsLoaded(true);
         setAgentModelsLoading(true);
         void fetchAgentModels()
           .then(result => setAgentModels(result.models))
@@ -161,7 +186,9 @@ export default function SettingsModal({
       .catch(() => {
         if (comfyStatus?.baseUrl) {
           setBaseUrl(comfyStatus.baseUrl);
+          setBaseUrlSaved(comfyStatus.baseUrl);
         }
+        setSettingsLoaded(true);
       });
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -206,8 +233,7 @@ export default function SettingsModal({
   const comboParamsOf = (wf: WorkflowSpec): WorkflowParam[] =>
     wf.params.filter(p => p.type === 'combo' && (p.options?.length ?? 0) > 0);
 
-  const savePlugins = async () => {
-    setSavingPlugins(true);
+  const savePlugins = async (): Promise<boolean> => {
     setPluginsTip(null);
     setPluginsError(null);
     try {
@@ -217,15 +243,55 @@ export default function SettingsModal({
       if (res.ok) {
         setPluginDisabled(res.plugins.disabled);
         setPluginConfig(res.plugins.config);
+        setPluginsSaved({ disabled: res.plugins.disabled, config: res.plugins.config });
         setPluginsTip('插件配置已保存并生效');
-      } else {
-        setPluginsError('保存失败');
+        return true;
       }
+      setPluginsError('保存失败');
+      return false;
     } catch (e) {
       setPluginsError((e as Error).message);
-    } finally {
-      setSavingPlugins(false);
+      return false;
     }
+  };
+
+  /** 各分类是否相对已保存值有未提交修改 */
+  const dirty = useMemo(
+    () => ({
+      comfyui: settingsLoaded && baseUrl.trim() !== baseUrlSaved,
+      agent:
+        settingsLoaded &&
+        agentSaved !== null &&
+        (agentModel !== agentSaved.model || agentThinking !== agentSaved.thinking || agentPoll !== agentSaved.pollTaskStatus),
+      storage: settingsLoaded && outputDir.trim() !== outputDirSaved,
+      plugins:
+        settingsLoaded &&
+        pluginsSaved !== null &&
+        (!setEquals(pluginDraft ?? new Set(), new Set(pluginsSaved.disabled)) ||
+          !objEquals(pluginConfigDraft ?? {}, pluginsSaved.config)),
+    }),
+    [settingsLoaded, baseUrl, baseUrlSaved, agentModel, agentThinking, agentPoll, agentSaved, outputDir, outputDirSaved, pluginDraft, pluginConfigDraft, pluginsSaved],
+  );
+  const isDirty = dirty.comfyui || dirty.agent || dirty.storage || dirty.plugins;
+
+  /** toast 闪现提示（已保存/保存失败） */
+  const flashToast = (kind: 'saved' | 'failed') => {
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    setToastFlash(kind);
+    flashTimerRef.current = setTimeout(() => setToastFlash(null), 2200);
+  };
+
+  /** 全局保存：仅保存有修改的分类，全部成功才算成功 */
+  const handleSaveAll = async () => {
+    if (savingAll) return;
+    setSavingAll(true);
+    let ok = true;
+    if (dirty.comfyui) ok = (await saveComfy()) && ok;
+    if (dirty.agent) ok = (await saveAgent()) && ok;
+    if (dirty.storage) ok = (await saveStorage()) && ok;
+    if (dirty.plugins) ok = (await savePlugins()) && ok;
+    setSavingAll(false);
+    flashToast(ok ? 'saved' : 'failed');
   };
 
   // Esc 关闭；卸载时清理重连定时器
@@ -240,6 +306,10 @@ export default function SettingsModal({
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
+      }
+      if (flashTimerRef.current) {
+        clearTimeout(flashTimerRef.current);
+        flashTimerRef.current = null;
       }
     };
   }, [open, onClose]);
@@ -280,13 +350,12 @@ export default function SettingsModal({
     run();
   };
 
-  const saveComfy = async () => {
+  const saveComfy = async (): Promise<boolean> => {
     const url = baseUrl.trim();
     if (!/^https?:\/\//i.test(url)) {
       setError('地址需以 http:// 或 https:// 开头');
-      return;
+      return false;
     }
-    setSaving(true);
     setError(null);
     setTip(null);
     stopReconnect();
@@ -294,11 +363,10 @@ export default function SettingsModal({
       const res = await saveComfySettings(url);
       if (!res.ok) {
         setError(res.error ?? '保存失败');
-        setSaving(false);
-        return;
+        return false;
       }
       setBaseUrl(res.baseUrl);
-      setSaving(false);
+      setBaseUrlSaved(res.baseUrl);
       if (res.connected) {
         setTip('已连接');
         onRefreshStatus();
@@ -307,49 +375,51 @@ export default function SettingsModal({
         setTip('地址已保存，正在自动重连…');
         startAutoReconnect();
       }
+      return true;
     } catch (e) {
       setError((e as Error).message);
-      setSaving(false);
+      return false;
     }
   };
 
-  const saveStorage = async () => {
+  const saveStorage = async (): Promise<boolean> => {
     const value = outputDir.trim();
     if (!value.startsWith('/')) {
       setStorageError('产物存储目录必须是绝对路径');
-      return;
+      return false;
     }
-    setSavingStorage(true);
     setStorageTip(null);
     setStorageError(null);
     try {
       const res = await saveStorageSettings(value);
       setOutputDir(res.storage.outputDir);
+      setOutputDirSaved(res.storage.outputDir);
       setStorageTip('产物存储目录已保存并生效');
+      return true;
     } catch (e) {
       setStorageError((e as Error).message);
-    } finally {
-      setSavingStorage(false);
+      return false;
     }
   };
 
-  const saveAgent = async () => {
-    setSavingAgent(true);
+  const saveAgent = async (): Promise<boolean> => {
     setAgentTip(null);
     setAgentError(null);
     try {
-      const result = await saveAgentSettings({ model: agentModel, thinking: agentThinking });
+      const result = await saveAgentSettings({ model: agentModel, thinking: agentThinking, pollTaskStatus: agentPoll });
       if (!result.ok) {
         setAgentError(result.error ?? '保存失败');
-        return;
+        return false;
       }
       setAgentModel(result.agent.model);
       setAgentThinking(result.agent.thinking);
+      setAgentPoll(result.agent.pollTaskStatus);
+      setAgentSaved({ model: result.agent.model, thinking: result.agent.thinking, pollTaskStatus: result.agent.pollTaskStatus });
       setAgentTip('Agent 配置已保存并生效');
+      return true;
     } catch (e) {
       setAgentError((e as Error).message);
-    } finally {
-      setSavingAgent(false);
+      return false;
     }
   };
 
@@ -396,11 +466,6 @@ export default function SettingsModal({
       )}
       {pluginsError && <div className="settings-error">{pluginsError}</div>}
       {pluginsTip && <div className="settings-tip">{pluginsTip}</div>}
-      <div className="settings-actions">
-        <button className="settings-btn primary" onClick={savePlugins} disabled={savingPlugins}>
-          {savingPlugins ? '保存中…' : '保存插件配置'}
-        </button>
-      </div>
     </section>
   ) : (
     <section className="settings-section">
@@ -486,11 +551,6 @@ export default function SettingsModal({
       )}
       {pluginsError && <div className="settings-error">{pluginsError}</div>}
       {pluginsTip && <div className="settings-tip">{pluginsTip}</div>}
-      <div className="settings-actions">
-        <button className="settings-btn primary" onClick={savePlugins} disabled={savingPlugins}>
-          {savingPlugins ? '保存中…' : '保存插件配置'}
-        </button>
-      </div>
     </section>
   );
 
@@ -540,16 +600,13 @@ export default function SettingsModal({
                 </div>
                 {error && <div className="settings-error">{error}</div>}
                 {tip && <div className="settings-tip">{tip}</div>}
-                <div className="settings-actions">
-                  <button className="settings-btn primary" onClick={saveComfy} disabled={saving || reconnecting}>
-                    {saving ? '保存中…' : reconnecting ? '重连中…' : '保存并重连'}
-                  </button>
-                  {reconnecting && (
+                {reconnecting && (
+                  <div className="settings-actions">
                     <button className="settings-btn" onClick={stopReconnect}>
                       停止重试
                     </button>
-                  )}
-                </div>
+                  </div>
+                )}
               </section>
             )}
 
@@ -597,13 +654,25 @@ export default function SettingsModal({
                   </select>
                   <span className="settings-field-hint">思考越深通常响应越慢；最低是当前 v2 默认值。</span>
                 </label>
+                <label className="settings-field">
+                  <span className="settings-switch-head">
+                    <span className="settings-label">Agent 轮询生成状态</span>
+                    <button
+                      className={`plugin-toggle${agentPoll ? ' on' : ''}`}
+                      onClick={() => setAgentPoll(v => !v)}
+                      role="switch"
+                      aria-checked={agentPoll}
+                      aria-label="Agent 轮询生成状态"
+                    >
+                      <span className="plugin-toggle-knob" />
+                    </button>
+                  </span>
+                  <span className="settings-field-hint">
+                    开启后 Agent 会主动查询任务状态，并在完成后输出结果摘要（更慢、更耗 token）；关闭则依赖实时事件流推送进度与产物，响应更快。
+                  </span>
+                </label>
                 {agentError && <div className="settings-error">{agentError}</div>}
                 {agentTip && <div className="settings-tip">{agentTip}</div>}
-                <div className="settings-actions">
-                  <button className="settings-btn primary" onClick={saveAgent} disabled={savingAgent}>
-                    {savingAgent ? '保存中…' : '保存 Agent 配置'}
-                  </button>
-                </div>
               </section>
             )}
 
@@ -626,11 +695,6 @@ export default function SettingsModal({
                 <div className="storage-path-hint">目录不存在时会自动创建；需要当前服务进程具备读写权限。</div>
                 {storageError && <div className="settings-error">{storageError}</div>}
                 {storageTip && <div className="settings-tip">{storageTip}</div>}
-                <div className="settings-actions">
-                  <button className="settings-btn primary" onClick={saveStorage} disabled={savingStorage}>
-                    {savingStorage ? '检查并保存中…' : '保存存储目录'}
-                  </button>
-                </div>
               </section>
             )}
 
@@ -638,6 +702,24 @@ export default function SettingsModal({
 
           </div>
         </div>
+        {(isDirty || toastFlash) && (
+          <div className="settings-save-toast" role="status">
+            <span className="settings-save-toast-msg">
+              {savingAll
+                ? '保存中…'
+                : toastFlash === 'saved'
+                  ? '已保存 ✓'
+                  : toastFlash === 'failed'
+                    ? '保存失败，请检查对应面板的提示'
+                    : '有配置已修改，是否保存？'}
+            </span>
+            {!savingAll && toastFlash !== 'saved' && (
+              <button className="settings-btn primary" onClick={handleSaveAll}>
+                保存
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

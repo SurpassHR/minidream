@@ -220,6 +220,51 @@ describe('Director MCP Server', () => {
     expect(['queued', 'running']).toContain(task.status);
   });
 
+  it('关闭状态轮询时 tools/list 不暴露 generation.status', async () => {
+    const noPoll = createMcpServer({
+      taskQueue,
+      port: 0,
+      isStatusPollingEnabled: () => false,
+    });
+    try {
+      const res = (await noPoll.handleRpcMessage({
+        jsonrpc: '2.0',
+        id: 40,
+        method: 'tools/list',
+      })) as any;
+      const toolNames = res.result.tools.map((t: any) => t.name);
+      expect(toolNames).toContain('workflow.list');
+      expect(toolNames).toContain('generation.submit');
+      expect(toolNames).not.toContain('generation.status');
+      expect(toolNames).toContain('generation.cancel');
+      // submit 描述附带“无需轮询”提示，引导 Agent 直接收尾
+      const submit = res.result.tools.find((t: any) => t.name === 'generation.submit');
+      expect(submit.description).toMatch(/无需轮询/);
+    } finally {
+      await noPoll.close();
+    }
+  });
+
+  it('关闭状态轮询时 generation.status 调用返回错误', async () => {
+    const noPoll = createMcpServer({
+      taskQueue,
+      port: 0,
+      isStatusPollingEnabled: () => false,
+    });
+    try {
+      const res = (await noPoll.handleRpcMessage({
+        jsonrpc: '2.0',
+        id: 41,
+        method: 'tools/call',
+        params: { name: 'generation.status', arguments: { taskId: 'any' } },
+      })) as any;
+      expect(res.result.isError).toBe(true);
+      expect(JSON.stringify(res.result.content)).toMatch(/无需/);
+    } finally {
+      await noPoll.close();
+    }
+  });
+
   it('calls generation.cancel to cancel a queued task', async () => {
     const submitRes = await sendRpc({
       jsonrpc: '2.0',

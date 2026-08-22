@@ -1,7 +1,5 @@
 import type { ChatReply, GenerateData } from './data.js';
 
-const skillImg = (n: number) => `/assets/images/img-${String(n).padStart(2, '0')}.webp`;
-
 /**
  * 页面内容基于即梦AI「生成」页抓取的结构复刻，
  * 品牌文案替换为「导演工作台」，技能卡内容围绕剧本/分镜/视频创作。
@@ -23,45 +21,14 @@ export const generateData: GenerateData = {
   hero: {
     title: '你好，想创作什么？',
   },
-  skills: [
-    {
-      id: 'director-storyboard',
-      tag: '热门技能',
-      title: '叙事短片导演分镜',
-      desc: '以森海荧光导演分镜方法论产出叙事短片：导演意图书、九列分镜表、4~15s Clip 表与逐 Clip 提示词，直至成片。',
-      image: skillImg(11),
-    },
-    {
-      id: 'series-generate',
-      tag: '热门技能',
-      title: '系列套图生成',
-      desc: '将母版提示词、参考图、角色设定抽象为稳定的系列视觉母体，生成风格统一但变量清晰的系列图片。',
-      image: skillImg(14),
-    },
-    {
-      id: 'ecommerce-video',
-      tag: '热门技能',
-      title: '爆款电商短视频题材创意',
-      desc: '电商短视频创作助手，支持多题材选择、时长配置，每个题材生成5组差异化方案。',
-      image: skillImg(20),
-    },
-  ],
   composer: {
-    placeholder: '输入想法、剧本或上传参考，支持 “/”使用技能，添加主体，和Agent一起创作',
-    agentOptions: ['Agent 模式', '图片生成', '视频生成', '音乐生成', '配音生成', '数字人', '动作模仿'],
+    placeholder: '输入想法、剧本或上传参考，和Agent一起创作',
     preferences: {
       types: ['图片', '视频'],
       ratios: ['智能', '21:9', '16:9', '3:2', '4:3', '1:1', '3:4', '2:3', '9:16'],
       sizes: { min: 0.5, max: 10, step: 0.5, default: 1 },
       models: ['图片 4.0'],
     },
-    skills: [
-      { id: 'story', name: '剧情短片', tag: '官方', desc: '帮你自动生成故事大纲、分镜脚本并产出短片' },
-      { id: 'ecommerce', name: '电商套图', desc: '生成风格统一的商品全套视觉素材，适用于各大电商平台' },
-      { id: 'poster', name: '海报设计', desc: '生成更有创意的海报内容，擅长营销场景和节日热点' },
-      { id: 'brand', name: '品牌设计', desc: '根据公司名称、业务与客群，生成品牌 Logo 与视觉方案' },
-    ],
-    skillFooter: ['用 Agent 创建技能', '管理技能'],
   },
 };
 

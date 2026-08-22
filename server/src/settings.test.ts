@@ -27,7 +27,11 @@ describe('agent settings', () => {
       thinking: 'off',
     });
 
-    expect(updated.agent).toEqual({ model: 'anthropic/claude-sonnet-4', thinking: 'off' });
+    expect(updated.agent).toEqual({
+      model: 'anthropic/claude-sonnet-4',
+      thinking: 'off',
+      pollTaskStatus: false,
+    });
     expect(readSettings(file).comfyui).toEqual(DEFAULT_SETTINGS.comfyui);
     expect(readSettings(file).imageGen).toEqual(DEFAULT_SETTINGS.imageGen);
   });
@@ -36,6 +40,16 @@ describe('agent settings', () => {
     updateAgentSettings(file, { thinking: 'high' });
     const updated = updateAgentSettings(file, { thinking: 'invalid' as never });
     expect(updated.agent.thinking).toBe('high');
+  });
+
+  it('保存并读取 pollTaskStatus（默认关闭）', () => {
+    expect(readSettings(file).agent.pollTaskStatus).toBe(false);
+    const updated = updateAgentSettings(file, { pollTaskStatus: true });
+    expect(updated.agent.pollTaskStatus).toBe(true);
+    expect(readSettings(file).agent.pollTaskStatus).toBe(true);
+    // 再次保存其他字段时保留 pollTaskStatus
+    const again = updateAgentSettings(file, { model: 'openai/gpt-4o' });
+    expect(again.agent.pollTaskStatus).toBe(true);
   });
 });
 

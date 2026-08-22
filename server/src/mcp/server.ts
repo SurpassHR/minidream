@@ -10,6 +10,8 @@ export interface McpServerOptions {
   onActivity?: (text: string) => void;
   /** 插件（工作流）启用判定：返回 false 的插件不会出现在 workflow.list，也无法提交 */
   isWorkflowEnabled?: (id: string) => boolean;
+  /** Agent 是否可轮询生成状态：返回 false 时从工具列表移除 generation.status（进度改由 SSE 推送） */
+  isStatusPollingEnabled?: () => boolean;
 }
 
 export interface McpServerInstance {
@@ -97,13 +99,15 @@ const MCP_TOOLS: McpToolDescriptor[] = [
 export function createDirectorMCPServer(
   taskQueue: TaskQueue,
   isWorkflowEnabled?: (id: string) => boolean,
+  isStatusPollingEnabled?: () => boolean,
 ): McpServerInstance {
-  return createMcpServer({ taskQueue, isWorkflowEnabled });
+  return createMcpServer({ taskQueue, isWorkflowEnabled, isStatusPollingEnabled });
 }
 
 export function createMcpServer(options: McpServerOptions): McpServerInstance {
-  const { taskQueue, onActivity, isWorkflowEnabled } = options;
+  const { taskQueue, onActivity, isWorkflowEnabled, isStatusPollingEnabled } = options;
   const workflowEnabled = isWorkflowEnabled ?? (() => true);
+  const statusPollingEnabled = isStatusPollingEnabled ?? (() => true);
   let server: http.Server | null = null;
   let serverUrl: string | undefined;
 
@@ -166,6 +170,12 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
       }
 
       case 'generation.status': {
+        if (!statusPollingEnabled()) {
+          return {
+            content: [{ type: 'text', text: '状态轮询已关闭：生成进度与产物会通过事件流自动推送，无需查询任务状态' }],
+            isError: true,
+          };
+        }
         if (!args.taskId) {
           return {
             content: [{ type: 'text', text: '错误: taskId 为必填参数' }],
@@ -247,11 +257,20 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
     }
 
     if (method === 'tools/list') {
+      const tools = statusPollingEnabled()
+        ? MCP_TOOLS
+        : MCP_TOOLS
+            .filter(tool => tool.name !== 'generation.status')
+            .map(tool =>
+              tool.name === 'generation.submit'
+                ? { ...tool, description: tool.description + '（提交后任务自动执行，进度与产物会通过事件流自动推送，无需轮询状态）' }
+                : tool,
+            );
       return {
         jsonrpc: '2.0',
         id,
         result: {
-          tools: MCP_TOOLS,
+          tools,
         },
       };
     }
