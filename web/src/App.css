@@ -1859,3 +1859,249 @@
   font-size: 13px;
   color: var(--text-tertiary);
 }
+
+/* ============ Agent 工具调用卡片 ============ */
+.tool-call-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-secondary);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.tool-call-running {
+  border-color: rgba(0, 163, 196, 0.4);
+  background: rgba(0, 163, 196, 0.05);
+}
+
+.tool-call-icon {
+  font-size: 14px;
+}
+
+.tool-call-title {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.tool-call-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(0, 163, 196, 0.2);
+  border-top-color: var(--brand-deep);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+  margin-left: 4px;
+}
+
+/* ============ 统一任务状态卡片 ============ */
+.task-card {
+  margin: 12px 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--bg-card, rgba(255, 255, 255, 0.6));
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.task-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.task-card-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-icon {
+  font-size: 16px;
+}
+
+.task-workflow-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.task-badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.task-badge-queued {
+  background: rgba(234, 179, 8, 0.15);
+  color: #b45309;
+}
+
+.task-badge-running {
+  background: rgba(14, 165, 233, 0.15);
+  color: #0284c7;
+}
+
+.task-badge-completed {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+}
+
+.task-badge-failed,
+.task-badge-interrupted {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+}
+
+.task-badge-canceled {
+  background: rgba(100, 116, 139, 0.15);
+  color: #475569;
+}
+
+.task-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.task-cancel-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.task-cancel-btn:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.task-card-prompt {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  padding: 8px 12px;
+  border-radius: 8px;
+  word-break: break-word;
+}
+
+.task-card-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-progress-bar-bg {
+  width: 100%;
+  height: 6px;
+  background: var(--bg-hover-strong, rgba(0, 0, 0, 0.08));
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.task-progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--brand-deep), #38bdf8);
+  border-radius: 3px;
+  transition: width 0.2s ease-out;
+}
+
+.task-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.task-card-error {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  color: var(--error-fg);
+  font-size: 12px;
+}
+
+/* 产物网格 */
+.task-artifacts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.task-artifact-item {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #000;
+  display: flex;
+  flex-direction: column;
+}
+
+.task-artifact-media {
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  display: block;
+}
+
+/* ============ 动作卡片 (Action Card) ============ */
+.action-card {
+  margin: 12px 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(0, 163, 196, 0.06), rgba(99, 102, 241, 0.06));
+  border: 1px solid rgba(0, 163, 196, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.action-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.action-card-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.action-card-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  background: var(--brand-deep);
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.action-card-btn:hover {
+  opacity: 0.9;
+}
+

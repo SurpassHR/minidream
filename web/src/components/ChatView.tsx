@@ -1,12 +1,19 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { ChatMessage, ChatStage, GenerationOutput } from '../api';
+import type {
+  ChatMessage,
+  ChatStage,
+  GenerationOutput,
+  TaskItem,
+  ToolCallData,
+  ActionCardData,
+} from '../api';
 
 /* ==================== 工具函数 ==================== */
 
 /** 渐进式揭示文字（打字机效果） */
-function useTypewriter(text: string, enabled: boolean, speed = 18) {
+function useTypewriter(text: string, enabled: boolean, speed = 15) {
   const [shown, setShown] = useState(enabled ? 0 : text.length);
   const raf = useRef(0);
   const last = useRef(0);
@@ -53,44 +60,6 @@ function AgentAvatar({ size = 32 }: { size?: number }) {
   );
 }
 
-function TaskCard({
-  stage,
-  cancelled,
-  onCancel,
-}: {
-  stage: ChatStage;
-  cancelled: boolean;
-  onCancel?: () => void;
-}) {
-  const p = stage.progress ?? { completed: 0, total: 1 };
-  const percent = cancelled ? 100 : Math.min(100, (p.completed / Math.max(1, p.total)) * 100);
-  return (
-    <div className="task-card">
-      <div className="task-card-head">
-        <span className="task-card-type">{stage.taskLabel ?? '生成中…'}</span>
-        <span className="task-card-count">
-          ({p.completed}/{p.total})
-        </span>
-      </div>
-      <div className="task-card-progress">
-        <div className={`task-card-bar${cancelled ? ' cancelled' : ''}`} style={{ width: `${percent}%` }} />
-      </div>
-      {stage.queued && !cancelled && (
-        <div className="task-card-queued">
-          <span>排队中...</span>
-          <em>{stage.queueLabel ?? '1 个任务排队中'}</em>
-          {onCancel && (
-            <button className="task-cancel" onClick={onCancel}>
-              取消生成
-            </button>
-          )}
-        </div>
-      )}
-      {cancelled && <div className="task-card-cancelled">已取消生成</div>}
-    </div>
-  );
-}
-
 /* ==================== Markdown 渲染 ==================== */
 
 function MarkdownContent({ content, animate }: { content: string; animate?: boolean }) {
@@ -108,10 +77,31 @@ function MarkdownContent({ content, animate }: { content: string; animate?: bool
 
 /* ==================== 思维链（可折叠） ==================== */
 
-function ThinkingChain({ logs, live }: { logs: string[]; live: boolean }) {
+function ThinkingChain({
+  thinking,
+  durationMs,
+  live,
+}: {
+  thinking: string;
+  durationMs?: number;
+  live: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const count = logs.length;
-  if (count === 0) return null;
+  const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef(Date.now());
+
+  useEffect(() => {
+    if (!live) return;
+    startRef.current = Date.now();
+    const timer = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startRef.current) / 1000));
+    }, 500);
+    return () => clearInterval(timer);
+  }, [live]);
+
+  if (!thinking.trim()) return null;
+
+  const seconds = durationMs ? Math.round(durationMs / 1000) : elapsed;
 
   return (
     <div className={`thinking-chain${expanded ? ' expanded' : ''}`}>
@@ -126,7 +116,11 @@ function ThinkingChain({ logs, live }: { logs: string[]; live: boolean }) {
           />
         </svg>
         <span className="thinking-label">
-          {live ? `深度思考中…（${count} 步）` : `深度思考（${count} 步）`}
+          {live
+            ? `思考中… (${elapsed}s)`
+            : seconds > 0
+              ? `已深度思考 (${seconds}秒)`
+              : '深度思考过程'}
         </span>
         {live && (
           <span className="thinking-dots">
@@ -136,21 +130,156 @@ function ThinkingChain({ logs, live }: { logs: string[]; live: boolean }) {
       </button>
       {expanded && (
         <div className="thinking-logs">
-          {logs.map((log, i) => (
-            <div key={i} className="thinking-log-item">
-              <span className="thinking-step">{i + 1}</span>
-              <span className="thinking-text">{log}</span>
-            </div>
-          ))}
+          <div className="thinking-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{thinking}</ReactMarkdown>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-/* ==================== 生成结果 ==================== */
+/* ==================== 工具调用状态卡片 ==================== */
 
-function GenerationResults({ outputs }: { outputs: GenerationOutput[] }) {
+function ToolCallsView({ toolCalls }: { toolCalls: ToolCallData[] }) {
+  if (!toolCalls || toolCalls.length === 0) return null;
+  return (
+    <div className="tool-calls-container">
+      {toolCalls.map((tc, idx) => {
+        const isDone = tc.result !== undefined;
+        let label = `调用工具: ${tc.name}`;
+        if (tc.name === 'generation.submit') {
+          const wf = (tc.args?.workflowId as string) || '';
+          label = wf.includes('video') ? '🎬 正在创建 MiniMax H3 视频生成任务…' : '🎨 正在创建 Krea2 图像生成任务…';
+        } else if (tc.name === 'workflow.list') {
+          label = '🔍 正在自省工作流模板能力…';
+        } else if (tc.name === 'generation.status') {
+          label = '⏳ 正在同步生成进度…';
+        } else if (tc.name === 'generation.cancel') {
+          label = '🛑 正在请求取消任务…';
+        }
+
+        return (
+          <div key={tc.callId ?? idx} className={`tool-call-chip${isDone ? ' done' : ' active'}`}>
+            <span className="tool-call-icon">{isDone ? '✓' : '⚡'}</span>
+            <span className="tool-call-label">{label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ==================== 统一任务卡片 (TaskCard) ==================== */
+
+function TaskCardItem({
+  task,
+  onCancel,
+}: {
+  task: TaskItem;
+  onCancel?: (taskId: string) => void;
+}) {
+  const isQueued = task.status === 'queued';
+  const isRunning = task.status === 'running';
+  const isCompleted = task.status === 'completed';
+  const isFailed = task.status === 'failed' || task.status === 'interrupted';
+  const isCanceled = task.status === 'canceled';
+
+  const activeStage = task.stages.find(s => s.status === 'active') || task.stages[task.stages.length - 1];
+  const percent = isCompleted
+    ? 100
+    : isFailed || isCanceled
+      ? 100
+      : activeStage?.progress ?? (isQueued ? 0 : 5);
+
+  const stageName = isQueued
+    ? '排队等待 GPU 调度...'
+    : activeStage?.name || (isRunning ? '生成渲染中...' : '任务完成');
+
+  return (
+    <div className={`task-card task-status-${task.status}`}>
+      <div className="task-card-head">
+        <div className="task-card-title-group">
+          <span className="task-card-type">
+            {task.type === 'video_generation' ? '🎬 MiniMax 视频生成' : '🎨 Krea2 图像生成'}
+          </span>
+          <span className="task-card-id">#{task.id.slice(0, 8)}</span>
+        </div>
+        <span className={`task-badge badge-${task.status}`}>
+          {isQueued && '排队中'}
+          {isRunning && '渲染中'}
+          {isCompleted && '已完成'}
+          {isFailed && '失败'}
+          {isCanceled && '已取消'}
+        </span>
+      </div>
+
+      {/* 进度条 */}
+      <div className="task-card-progress">
+        <div
+          className={`task-card-bar ${isCanceled ? 'cancelled' : ''} ${isFailed ? 'failed' : ''}`}
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+
+      <div className="task-card-footer">
+        <div className="task-card-stage-info">
+          <span className="task-stage-name">{stageName}</span>
+          {activeStage?.totalSteps && activeStage.totalSteps > 0 && (
+            <span className="task-step-count">
+              ({activeStage.step ?? 0}/{activeStage.totalSteps} 步 · {Math.round(percent)}%)
+            </span>
+          )}
+        </div>
+
+        {(isQueued || isRunning) && onCancel && (
+          <button className="task-cancel" onClick={() => onCancel(task.id)}>
+            取消任务
+          </button>
+        )}
+      </div>
+
+      {task.error && <div className="task-card-error">错误: {task.error}</div>}
+    </div>
+  );
+}
+
+/* ==================== 动作卡片 (ActionCard) ==================== */
+
+function ActionCardItem({
+  card,
+  onAction,
+}: {
+  card: ActionCardData;
+  onAction?: (card: ActionCardData) => void;
+}) {
+  return (
+    <div className="action-card">
+      <div className="action-card-head">
+        <div className="action-card-badge">分镜 / 创作建议</div>
+        <div className="action-card-title">{card.title}</div>
+      </div>
+      <div className="action-card-prompt">{card.prompt}</div>
+      {card.workflowId && (
+        <div className="action-card-meta">
+          <span>工作流: {card.workflowId}</span>
+        </div>
+      )}
+      <div className="action-card-foot">
+        <button className="action-card-submit-btn" onClick={() => onAction?.(card)}>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M3 2.5l8 4.5-8 4.5v-9z" fill="currentColor" />
+          </svg>
+          一键生成此分镜
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ==================== 生成结果渲染 ==================== */
+
+function GenerationOutputsView({ outputs }: { outputs: GenerationOutput[] }) {
   if (!outputs?.length) return null;
   const images = outputs.filter(o => o.kind === 'image');
   const videos = outputs.filter(o => o.kind === 'video');
@@ -189,35 +318,43 @@ function GenerationResults({ outputs }: { outputs: GenerationOutput[] }) {
   );
 }
 
-function ErrorBox({ logs }: { logs: string[] }) {
+/* ==================== 旧 Stage 兼容 TaskCard ==================== */
+
+function LegacyTaskCard({
+  stage,
+  cancelled,
+  onCancel,
+}: {
+  stage: ChatStage;
+  cancelled: boolean;
+  onCancel?: () => void;
+}) {
+  const p = stage.progress ?? { completed: 0, total: 1 };
+  const percent = cancelled ? 100 : Math.min(100, (p.completed / Math.max(1, p.total)) * 100);
   return (
-    <div className="chat-error">
-      {logs.map((log, i) => (
-        <div key={i}>{log}</div>
-      ))}
-    </div>
-  );
-}
-
-/* ==================== 带动画的思考日志 ==================== */
-
-function AnimatedThinkingLogs({ logs }: { logs: string[] }) {
-  const [shown, setShown] = useState(0);
-
-  useEffect(() => {
-    if (shown >= logs.length) return;
-    const timer = setTimeout(() => setShown(s => s + 1), 400);
-    return () => clearTimeout(timer);
-  }, [shown, logs.length]);
-
-  return (
-    <>
-      {logs.slice(0, shown).map((log, i) => (
-        <div key={i} className="chat-log thinking-log">
-          {log}
+    <div className="task-card">
+      <div className="task-card-head">
+        <span className="task-card-type">{stage.taskLabel ?? '生成中…'}</span>
+        <span className="task-card-count">
+          ({p.completed}/{p.total})
+        </span>
+      </div>
+      <div className="task-card-progress">
+        <div className={`task-card-bar${cancelled ? ' cancelled' : ''}`} style={{ width: `${percent}%` }} />
+      </div>
+      {stage.queued && !cancelled && (
+        <div className="task-card-queued">
+          <span>排队中...</span>
+          <em>{stage.queueLabel ?? '1 个任务排队中'}</em>
+          {onCancel && (
+            <button className="task-cancel" onClick={onCancel}>
+              取消生成
+            </button>
+          )}
         </div>
-      ))}
-    </>
+      )}
+      {cancelled && <div className="task-card-cancelled">已取消生成</div>}
+    </div>
   );
 }
 
@@ -228,85 +365,124 @@ function AssistantMessageBody({
   live,
   onRegenerate,
   onCancelJob,
+  onCancelTask,
+  onActionCard,
   index,
 }: {
   message: ChatMessage;
   live: boolean;
   onRegenerate?: (index: number) => void;
   onCancelJob?: (jobId: string) => void;
+  onCancelTask?: (taskId: string) => void;
+  onActionCard?: (card: ActionCardData) => void;
   index: number;
 }) {
-  const stages = message.stages;
-  if (!stages?.length) {
-    return <MarkdownContent content={message.content} />;
+  // 1. 新流式架构属性
+  const hasThinking = Boolean(message.thinking && message.thinking.length > 0);
+  const hasToolCalls = Boolean(message.toolCalls && message.toolCalls.length > 0);
+  const hasTasks = Boolean(message.tasks && message.tasks.length > 0);
+  const hasActionCards = Boolean(message.actionCards && message.actionCards.length > 0);
+
+  // 2. 提取任务产物
+  const taskOutputs: GenerationOutput[] = [];
+  if (message.tasks) {
+    for (const t of message.tasks) {
+      if (t.outputs) {
+        for (const out of t.outputs) {
+          taskOutputs.push({
+            kind: out.kind,
+            url: out.url,
+            label: out.filename,
+          });
+        }
+      }
+    }
   }
 
-  const thinkingLogs = stages.flatMap(s => (s.type === 'thinking' ? s.logs ?? [] : []));
-  const taskStage = stages.find(s => s.type === 'task');
-  const doneStage = stages.find(s => s.type === 'done');
-  const errorStage = stages.find(s => s.type === 'error');
-  const cancelled = taskStage?.cancelled ?? false;
-  const running = live && !doneStage && !errorStage && !cancelled;
+  // 3. 旧 stage 兼容
+  const stages = message.stages;
+  const legacyThinkingLogs = stages?.flatMap(s => (s.type === 'thinking' ? s.logs ?? [] : [])) ?? [];
+  const legacyTaskStage = stages?.find(s => s.type === 'task');
+  const legacyDoneStage = stages?.find(s => s.type === 'done');
+  const legacyErrorStage = stages?.find(s => s.type === 'error');
+
+  const allOutputs = [...taskOutputs, ...(legacyDoneStage?.outputs ?? [])];
 
   return (
     <div className="assistant-stages">
-      {/* 思维链 */}
-      {thinkingLogs.length > 0 && (
-        <ThinkingChain logs={thinkingLogs} live={running} />
+      {/* 思考链 (Thinking Chain) */}
+      {hasThinking && (
+        <ThinkingChain
+          thinking={message.thinking!}
+          durationMs={message.thinkingDurationMs}
+          live={live && !message.content && !hasTasks}
+        />
       )}
 
-      {/* 等待中的 loading */}
-      {running && thinkingLogs.length === 0 && (
-        <div className="chat-thinking">
-          <span className="chat-thinking-dots"><i /><i /><i /></span>
-          <span>任务响应中...</span>
+      {/* 旧版 Thinking 兼容 */}
+      {!hasThinking && legacyThinkingLogs.length > 0 && (
+        <div className="thinking-chain">
+          <div className="thinking-logs">
+            {legacyThinkingLogs.map((log, i) => (
+              <div key={i} className="thinking-log-item">
+                <span className="thinking-step">{i + 1}</span>
+                <span className="thinking-text">{log}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
-      {/* 任务进度卡片 */}
-      {taskStage && running && (
-        <TaskCard
-          stage={taskStage}
-          cancelled={cancelled}
+      {/* 工具调用小标签 */}
+      {hasToolCalls && <ToolCallsView toolCalls={message.toolCalls!} />}
+
+      {/* 正在运行中的统一任务卡片 */}
+      {hasTasks && (
+        <div className="tasks-container">
+          {message.tasks!.map(task => (
+            <TaskCardItem key={task.id} task={task} onCancel={onCancelTask} />
+          ))}
+        </div>
+      )}
+
+      {/* 旧版 TaskCard 兼容 */}
+      {legacyTaskStage && !hasTasks && (
+        <LegacyTaskCard
+          stage={legacyTaskStage}
+          cancelled={legacyTaskStage.cancelled ?? false}
           onCancel={message.jobId ? () => onCancelJob?.(message.jobId!) : undefined}
         />
       )}
 
-      {/* 错误 */}
-      {errorStage && <ErrorBox logs={errorStage.logs ?? ['生成失败']} />}
+      {/* 动作建议卡片 (Action Cards) */}
+      {hasActionCards && (
+        <div className="action-cards-container">
+          {message.actionCards!.map((card, idx) => (
+            <ActionCardItem key={idx} card={card} onAction={onActionCard} />
+          ))}
+        </div>
+      )}
 
-      {/* 完成态 */}
-      {doneStage && (
-        <div className="chat-done">
-          {message.content && (
-            <MarkdownContent content={message.content} animate={live} />
-          )}
-          <GenerationResults outputs={doneStage.outputs ?? []} />
-          {doneStage.outputs?.length === 0 && !message.content && (
-            <div className="chat-log done">生成完成。</div>
-          )}
-          <div className="chat-done-meta">
-            {doneStage.credits !== undefined && (
-              <span className="chat-credits">本次消耗 {doneStage.credits} 积分</span>
-            )}
-            <span className="chat-ai-note">以上内容由 AI 生成</span>
-          </div>
-          <div className="chat-done-actions">
-            {doneStage.suggestion && (
-              <button className="chat-suggestion" onClick={() => onRegenerate?.(index)}>
-                {doneStage.suggestion}
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M2.5 6h7m0 0L6.5 3M9.5 6 6.5 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-            )}
-            <button className="chat-regenerate" onClick={() => onRegenerate?.(index)}>
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M12 7a5 5 0 1 1-1.46-3.54M12 2.5V6H8.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              重新生成
-            </button>
-          </div>
+      {/* 正文内容 (Markdown 打字机) */}
+      {message.content && (
+        <MarkdownContent content={message.content} animate={live} />
+      )}
+
+      {/* 多模态生成产物展示 */}
+      {allOutputs.length > 0 && <GenerationOutputsView outputs={allOutputs} />}
+
+      {/* 错误展示 */}
+      {legacyErrorStage && <div className="chat-error">{legacyErrorStage.logs?.join('\n')}</div>}
+
+      {/* 底部操作区（重新生成） */}
+      {!live && (
+        <div className="chat-done-actions">
+          <button className="chat-regenerate" onClick={() => onRegenerate?.(index)}>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M12 7a5 5 0 1 1-1.46-3.54M12 2.5V6H8.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            重新生成
+          </button>
         </div>
       )}
     </div>
@@ -317,12 +493,18 @@ function AssistantMessageBody({
 
 export default function ChatView({
   messages,
+  liveIndex,
   onRegenerate,
   onCancelJob,
+  onCancelTask,
+  onActionCard,
 }: {
   messages: ChatMessage[];
+  liveIndex?: number | null;
   onRegenerate?: (index: number) => void;
   onCancelJob?: (jobId: string) => void;
+  onCancelTask?: (taskId: string) => void;
+  onActionCard?: (card: ActionCardData) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -351,9 +533,11 @@ export default function ChatView({
             <div className="chat-bubble assistant">
               <AssistantMessageBody
                 message={m}
-                live={!!m.jobId}
+                live={liveIndex === i || (!m.content && !m.tasks?.length && !m.stages?.length)}
                 onRegenerate={onRegenerate}
                 onCancelJob={onCancelJob}
+                onCancelTask={onCancelTask}
+                onActionCard={onActionCard}
                 index={i}
               />
             </div>

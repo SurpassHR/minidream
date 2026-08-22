@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchGenerateData,
-  sendChat,
+  sendChatStream,
   fetchWorkflows,
   fetchComfyStatus,
   cancelJob,
+  cancelTask,
   openJobEvents,
   createSession,
   deleteSession as apiDeleteSession,
@@ -20,6 +21,9 @@ import {
   type JobEvent,
   type SkillCard,
   type WorkflowSpec,
+  type ActionCardData,
+  type ToolCallData,
+  type TaskItem,
 } from './api';
 import Rail from './components/Rail';
 import Sidebar, { type Conversation } from './components/Sidebar';
@@ -162,32 +166,131 @@ export default function App() {
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setSending(true);
+
+    // 预置一条空的助手消息用于流式填充
+    const initialAssistantMsg: ChatMessage = {
+      role: 'assistant',
+      content: '',
+      thinking: '',
+      toolCalls: [],
+      tasks: [],
+      actionCards: [],
+      stages: [],
+    };
+    setMessages(prev => [...prev, initialAssistantMsg]);
+
+    let sid = activeConv;
+
     try {
-      const { reply, title, stages, jobId, sessionId } = await sendChat(content, { ...opts, sessionId: activeConv });
-      const sid = sessionId ?? activeConv;
-      // 会话列表同步：新会话加入 / 已有会话更新时间
-      setConversations(prev => {
-        const now = Date.now();
-        const exists = prev.some(c => c.id === sid);
-        if (!exists) return [...prev, { id: sid ?? '', title: title ?? '', updatedAt: now }];
-        return prev.map(c => (c.id === sid ? { ...c, title: title ?? c.title, updatedAt: now } : c));
-      });
-      if (sid) setActiveConv(sid);
-      setMessages(prev => [...prev, { role: 'assistant', content: reply ?? '', stages, jobId }]);
-      if (jobId && sid) {
-        openJobEvents(jobId, evt => {
-          setMessages(prev => {
-            const idx = [...prev].reverse().findIndex(m => m.role === 'assistant' && m.jobId === jobId);
-            if (idx < 0) return prev;
-            const realIdx = prev.length - 1 - idx;
-            const updated = prev.map((m, i) => (i === realIdx ? mergeJobEvent(m, evt) : m));
-            // SSE 终态（完成/失败/取消）把最终消息落库，刷新后可还原结果
-            if (evt.type === 'done' || evt.type === 'error' || evt.type === 'cancelled') {
-              const finalMsg = updated[realIdx];
-              if (finalMsg) void updateLastMessage(sid, finalMsg).catch(() => undefined);
+      await sendChatStream(
+        content,
+        { ...opts, sessionId: activeConv },
+        event => {
+          if (event.type === 'agent:end') {
+            if (event.sessionId) {
+              const targetId = event.sessionId;
+              sid = targetId;
+              setActiveConv(targetId);
+              setConversations(prev => {
+                const now = Date.now();
+                const exists = prev.some(c => c.id === targetId);
+                if (!exists) return [...prev, { id: targetId, title: '新会话', updatedAt: now }];
+                return prev.map(c => (c.id === targetId ? { ...c, updatedAt: now } : c));
+              });
             }
-            return updated;
+          }
+
+          setMessages(prev => {
+            const lastIdx = prev.length - 1;
+            if (lastIdx < 0) return prev;
+            const target = prev[lastIdx];
+            if (!target || target.role !== 'assistant') return prev;
+            const current: ChatMessage = {
+              role: 'assistant',
+              content: target.content || '',
+              thinking: target.thinking,
+              thinkingDurationMs: target.thinkingDurationMs,
+              toolCalls: target.toolCalls ? [...target.toolCalls] : [],
+              tasks: target.tasks ? [...target.tasks] : [],
+              actionCards: target.actionCards ? [...target.actionCards] : [],
+              stages: target.stages ? [...target.stages] : [],
+              jobId: target.jobId,
+              taskId: target.taskId,
+            };
+
+            if (event.type === 'agent:thinking') {
+              current.thinking = (current.thinking || '') + event.delta;
+            } else if (event.type === 'agent:text') {
+              current.content = (current.content || '') + event.delta;
+            } else if (event.type === 'agent:action_card') {
+              current.actionCards = [...(current.actionCards || []), event.card];
+            } else if (event.type === 'tool:call') {
+              const tc: ToolCallData = {
+                callId: event.callId,
+                name: event.name,
+                args: event.args,
+              };
+              current.toolCalls = [...(current.toolCalls || []), tc];
+            } else if (event.type === 'tool:result') {
+              current.toolCalls = (current.toolCalls || []).map(t =>
+                t.callId === event.callId ? { ...t, result: event.result } : t,
+              );
+            } else if (
+              event.type === 'task:queued' ||
+              event.type === 'task:progress' ||
+              event.type === 'task:completed' ||
+              event.type === 'task:failed' ||
+              event.type === 'task:canceled'
+            ) {
+              if ('task' in event && event.task) {
+                const taskObj = event.task;
+                const tasks = [...(current.tasks || [])];
+                const tIdx = tasks.findIndex(t => t.id === taskObj.id);
+                if (tIdx >= 0) {
+                  tasks[tIdx] = taskObj;
+                } else {
+                  tasks.push(taskObj);
+                }
+                current.tasks = tasks;
+              }
+            } else if (event.type === 'task:artifact') {
+              // 自动将 artifact 合并到 task 中（如果有对应 task）
+              if (current.tasks) {
+                current.tasks = current.tasks.map(t => {
+                  if (t.id === event.taskId) {
+                    const outputs = [...(t.outputs || [])];
+                    if (!outputs.some(o => o.url === event.url)) {
+                      outputs.push({
+                        kind: event.kind,
+                        url: event.url,
+                        filename: event.filename || 'output',
+                      });
+                    }
+                    return { ...t, outputs };
+                  }
+                  return t;
+                });
+              }
+            } else if (event.type === 'agent:error') {
+              current.stages = [
+                ...(current.stages || []),
+                { type: 'error', logs: [event.error] },
+              ];
+            }
+
+            return prev.map((m, i) => (i === lastIdx ? current : m));
           });
+        },
+      );
+
+      // 流结束，将最后完整的助手消息持久化落盘
+      if (sid) {
+        setMessages(latest => {
+          const lastMsg = latest[latest.length - 1];
+          if (lastMsg && lastMsg.role === 'assistant') {
+            void updateLastMessage(sid!, lastMsg).catch(() => undefined);
+          }
+          return latest;
         });
       }
     } catch {
@@ -195,7 +298,7 @@ export default function App() {
         ...prev,
         {
           role: 'assistant',
-          content: '（生成失败：请确认后端服务已启动）',
+          content: '（请求失败：请确认后端服务已正常运行）',
           stages: [{ type: 'error', logs: ['请求失败：请确认后端服务已启动（pnpm dev）'] }],
         },
       ]);
@@ -216,6 +319,32 @@ export default function App() {
       /* ignore */
     }
     setMessages(prev => prev.map(m => (m.jobId === jobId ? mergeJobEvent(m, { type: 'cancelled' }) : m)));
+  };
+
+  const handleCancelTask = async (taskId: string) => {
+    try {
+      await cancelTask(taskId);
+      setMessages(prev =>
+        prev.map(m => {
+          if (!m.tasks) return m;
+          return {
+            ...m,
+            tasks: m.tasks.map(t => (t.id === taskId ? { ...t, status: 'canceled' } : t)),
+          };
+        }),
+      );
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handleActionCard = (card: ActionCardData) => {
+    const images = card.images?.map(url => ({ dataUrl: url }));
+    void handleSend(card.prompt, {
+      workflowId: card.workflowId,
+      images,
+      params: card.params,
+    });
   };
 
   const handleTrySkill = (skill: SkillCard) => {
@@ -319,8 +448,15 @@ export default function App() {
             </div>
           ) : (
             <div className="chat-scroll" ref={chatRef}>
-              <ChatView messages={messages} onRegenerate={handleRegenerate} onCancelJob={handleCancelJob} />
-              {sending && (
+              <ChatView
+                messages={messages}
+                liveIndex={sending ? messages.length - 1 : null}
+                onRegenerate={handleRegenerate}
+                onCancelJob={handleCancelJob}
+                onCancelTask={handleCancelTask}
+                onActionCard={handleActionCard}
+              />
+              {sending && messages.length > 0 && !messages[messages.length - 1]?.content && !messages[messages.length - 1]?.thinking && (
                 <div className="chat-row assistant">
                   <div className="chat-avatar">
                     <svg width="28" height="28" viewBox="0 0 40 40" fill="none">

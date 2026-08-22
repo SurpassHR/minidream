@@ -61,11 +61,95 @@ export interface GenerationOutput {
   text?: string;
 }
 
+export interface TaskStage {
+  id: string;
+  name: string;
+  status: 'pending' | 'active' | 'completed' | 'failed';
+  progress?: number;
+  step?: number;
+  totalSteps?: number;
+  logs: string[];
+}
+
+export interface TaskOutput {
+  kind: 'image' | 'video' | 'text';
+  url: string;
+  filename: string;
+  subfolder?: string;
+  type?: string;
+}
+
+export interface TaskItem {
+  id: string;
+  type: 'image_generation' | 'video_generation';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'canceled' | 'interrupted';
+  workflowId: string;
+  prompt: string;
+  images?: string[];
+  params?: Record<string, unknown>;
+  sessionId?: string;
+  stages: TaskStage[];
+  outputs?: TaskOutput[];
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ActionCardData {
+  title: string;
+  workflowId: string;
+  prompt: string;
+  images?: string[];
+  params?: Record<string, unknown>;
+}
+
+export interface ToolCallData {
+  callId?: string;
+  name: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
+}
+
+export type StreamChatEvent =
+  | { type: 'agent:thinking'; delta: string }
+  | { type: 'agent:text'; delta: string }
+  | { type: 'agent:action_card'; card: ActionCardData }
+  | { type: 'tool:call'; callId?: string; name: string; args?: Record<string, unknown> }
+  | { type: 'tool:result'; callId?: string; name: string; result?: unknown }
+  | { type: 'task:queued'; taskId: string; position: number }
+  | {
+      type: 'task:progress';
+      taskId: string;
+      stage: string;
+      step: number;
+      total: number;
+      percent: number;
+      task?: TaskItem;
+    }
+  | {
+      type: 'task:artifact';
+      taskId: string;
+      kind: 'image' | 'video' | 'text';
+      url: string;
+      filename?: string;
+    }
+  | { type: 'task:completed'; taskId: string; task?: TaskItem }
+  | { type: 'task:failed'; taskId: string; error?: string; task?: TaskItem }
+  | { type: 'task:canceled'; taskId: string; task?: TaskItem }
+  | { type: 'agent:error'; error: string }
+  | { type: 'agent:end'; sessionId?: string; totalTokens?: number };
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  thinking?: string;
+  thinkingDurationMs?: number;
+  toolCalls?: ToolCallData[];
+  tasks?: TaskItem[];
+  actionCards?: ActionCardData[];
   stages?: ChatStage[];
   jobId?: string;
+  taskId?: string;
 }
 
 export interface ChatReply {
@@ -229,6 +313,158 @@ export async function sendChat(message: string, opts: SendChatOptions = {}): Pro
     body: JSON.stringify({ message, ...opts }),
   });
 }
+
+/** 流式发送对话，解析 SSE 事件（支持 Thinking、Task 进度、Tool 调用与多模态产物） */
+export async function sendChatStream(
+  message: string,
+  opts: SendChatOptions = {},
+  onEvent: (evt: StreamChatEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    },
+    body: JSON.stringify({ message, ...opts, stream: true }),
+    signal,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '网络请求失败');
+    throw new Error(`HTTP ${res.status}: ${errorText}`);
+  }
+
+  if (!res.body) {
+    throw new Error('ReadableStream not supported in response');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split(/\r?\n\r?\n/);
+    buffer = lines.pop() ?? '';
+
+    for (const block of lines) {
+      if (!block.trim()) continue;
+      let eventType = 'message';
+      let dataStr = '';
+
+      const lineList = block.split(/\r?\n/);
+      for (const line of lineList) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          dataStr = line.slice(6).trim();
+        }
+      }
+
+      if (!dataStr) continue;
+      try {
+        const parsed = JSON.parse(dataStr);
+        if (eventType === 'agent:thinking') {
+          onEvent({ type: 'agent:thinking', delta: parsed.delta });
+        } else if (eventType === 'agent:text') {
+          onEvent({ type: 'agent:text', delta: parsed.delta });
+        } else if (eventType === 'agent:action_card') {
+          onEvent({ type: 'agent:action_card', card: parsed.card });
+        } else if (eventType === 'tool:call') {
+          onEvent({
+            type: 'tool:call',
+            callId: parsed.callId,
+            name: parsed.name,
+            args: parsed.args,
+          });
+        } else if (eventType === 'tool:result') {
+          onEvent({
+            type: 'tool:result',
+            callId: parsed.callId,
+            name: parsed.name,
+            result: parsed.result,
+          });
+        } else if (eventType === 'task:queued') {
+          onEvent({
+            type: 'task:queued',
+            taskId: parsed.taskId,
+            position: parsed.position,
+          });
+        } else if (eventType === 'task:progress') {
+          onEvent({
+            type: 'task:progress',
+            taskId: parsed.taskId,
+            stage: parsed.stage,
+            step: parsed.step,
+            total: parsed.total,
+            percent: parsed.percent,
+            task: parsed.task,
+          });
+        } else if (eventType === 'task:artifact') {
+          onEvent({
+            type: 'task:artifact',
+            taskId: parsed.taskId,
+            kind: parsed.kind,
+            url: parsed.url,
+            filename: parsed.filename,
+          });
+        } else if (eventType === 'task:completed') {
+          onEvent({
+            type: 'task:completed',
+            taskId: parsed.taskId,
+            task: parsed.task,
+          });
+        } else if (eventType === 'task:failed') {
+          onEvent({
+            type: 'task:failed',
+            taskId: parsed.taskId,
+            error: parsed.error,
+            task: parsed.task,
+          });
+        } else if (eventType === 'task:canceled') {
+          onEvent({
+            type: 'task:canceled',
+            taskId: parsed.taskId,
+            task: parsed.task,
+          });
+        } else if (eventType === 'agent:error') {
+          onEvent({
+            type: 'agent:error',
+            error: parsed.error,
+          });
+        } else if (eventType === 'agent:end') {
+          onEvent({
+            type: 'agent:end',
+            sessionId: parsed.sessionId,
+            totalTokens: parsed.totalTokens,
+          });
+        }
+      } catch {
+        /* ignore invalid JSON in stream chunk */
+      }
+    }
+  }
+}
+
+/* ---------------- 统一任务 API (/api/tasks) ---------------- */
+
+export async function getTasks(): Promise<{ tasks: TaskItem[] }> {
+  return http('/api/tasks');
+}
+
+export async function getTask(id: string): Promise<{ task: TaskItem }> {
+  return http(`/api/tasks/${encodeURIComponent(id)}`);
+}
+
+export async function cancelTask(id: string): Promise<{ ok: boolean; task: TaskItem }> {
+  return http(`/api/tasks/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
+}
+
 
 /* ---------------- 会话（服务端 JSON 文件持久化） ---------------- */
 
