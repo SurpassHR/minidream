@@ -36,7 +36,7 @@ const MCP_TOOLS: McpToolDescriptor[] = [
       properties: {
         workflowId: {
           type: 'string',
-          description: '工作流模板 ID（如 image_krea2_turbo_t2i_int8 或 video-minimax-h3-t2v）',
+          description: '工作流模板 ID（如 image_krea2_turbo_t2i 或 video-minimax-h3-t2v）',
         },
         prompt: {
           type: 'string',

@@ -50,6 +50,8 @@ const FILE_COMBO_FIELDS = new Set(['ckpt_name', 'vae_name', 'lora_name', 'unet_n
 const PARAM_FIELDS: Record<string, string[]> = {
   KSampler: ['seed', 'steps', 'cfg', 'denoise', 'sampler_name', 'scheduler'],
   KSamplerAdvanced: ['seed', 'steps', 'cfg', 'denoise', 'sampler_name', 'scheduler'],
+  KSamplerSelect: ['sampler_name'],
+  BasicScheduler: ['scheduler', 'steps'],
   EmptyLatentImage: ['width', 'height', 'batch_size'],
   EmptySD3LatentImage: ['width', 'height', 'batch_size'],
   RandomNumberGenerator: ['seed'],
@@ -593,12 +595,17 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
       let defVal: unknown = nodeInputs[field];
 
       if (Array.isArray(def)) {
-        // 形如 ["STRING", {...}] 或 [["a","b"], {...}] 或 ["INT", {...}]
+        // 形如 ["STRING", {...}] / [["a","b"], {...}] / ["COMBO", {options:[...]}] / ["INT", {...}]
         const [t, opts] = def as [unknown, any];
         if (Array.isArray(t)) {
           type = 'combo';
           options = t as string[];
           defVal = nodeInputs[field] ?? opts?.default ?? t[0];
+        } else if (t === 'COMBO' && Array.isArray(opts?.options)) {
+          // 新式 combo：选项在第二元素 { options: [...] }
+          type = 'combo';
+          options = opts.options as string[];
+          defVal = nodeInputs[field] ?? opts.default ?? opts.options[0];
         } else {
           type = t as WorkflowParam['type'];
           defVal = nodeInputs[field] ?? opts?.default ?? 0;
@@ -669,9 +676,7 @@ export interface WorkflowFile {
 }
 
 function formatWorkflowName(id: string): string {
-  if (id === 'image_krea2_turbo_t2i') return 'Krea2 Turbo 文生图 (FP8)';
-  if (id === 'image_krea2_turbo_t2i_int8') return 'Krea2 Turbo 文生图 (INT8)';
-  if (id === 'image_krea2_turbo_int8_image_style_reference') return 'Krea2 Turbo 风格参考生图 (INT8)';
+  if (id === 'image_krea2_turbo_t2i') return 'Krea2 Turbo 文生图';
   return id;
 }
 

@@ -125,7 +125,7 @@ describe('Director MCP Server', () => {
     const filtered = createMcpServer({
       taskQueue,
       port: 0,
-      isWorkflowEnabled: id => id !== 'image_krea2_turbo_t2i_int8',
+      isWorkflowEnabled: id => id !== 'image_krea2_turbo_t2i',
     });
     try {
       const res = (await filtered.handleRpcMessage({
@@ -136,7 +136,7 @@ describe('Director MCP Server', () => {
       })) as any;
       const parsed = JSON.parse(res.result.content[0].text);
       expect(Array.isArray(parsed)).toBe(true);
-      expect(parsed.some((w: any) => w.id === 'image_krea2_turbo_t2i_int8')).toBe(false);
+      expect(parsed.some((w: any) => w.id === 'image_krea2_turbo_t2i')).toBe(false);
     } finally {
       await filtered.close();
     }
@@ -146,7 +146,7 @@ describe('Director MCP Server', () => {
     const filtered = createMcpServer({
       taskQueue,
       port: 0,
-      isWorkflowEnabled: id => id !== 'image_krea2_turbo_t2i_int8',
+      isWorkflowEnabled: id => id !== 'image_krea2_turbo_t2i',
     });
     try {
       const res = (await filtered.handleRpcMessage({
@@ -155,7 +155,7 @@ describe('Director MCP Server', () => {
         method: 'tools/call',
         params: {
           name: 'generation.submit',
-          arguments: { workflowId: 'image_krea2_turbo_t2i_int8', prompt: 'should be rejected' },
+          arguments: { workflowId: 'image_krea2_turbo_t2i', prompt: 'should be rejected' },
         },
       })) as any;
       expect(res.result.isError).toBe(true);
@@ -173,7 +173,7 @@ describe('Director MCP Server', () => {
       params: {
         name: 'generation.submit',
         arguments: {
-          workflowId: 'image_krea2_turbo_t2i_int8',
+          workflowId: 'image_krea2_turbo_t2i',
           prompt: 'A futuristic city glowing with neon lights in rain',
         },
       },
@@ -197,7 +197,7 @@ describe('Director MCP Server', () => {
       params: {
         name: 'generation.submit',
         arguments: {
-          workflowId: 'image_krea2_turbo_t2i_int8',
+          workflowId: 'image_krea2_turbo_t2i',
           prompt: 'Test status query',
         },
       },
@@ -228,7 +228,7 @@ describe('Director MCP Server', () => {
       params: {
         name: 'generation.submit',
         arguments: {
-          workflowId: 'image_krea2_turbo_t2i_int8',
+          workflowId: 'image_krea2_turbo_t2i',
           prompt: 'Test cancel query',
         },
       },

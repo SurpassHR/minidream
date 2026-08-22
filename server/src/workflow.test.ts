@@ -11,8 +11,6 @@ const h3T2vJson = readWf('video-minimax-h3-t2v.json');
 const h3I2vJson = readWf('video-minimax-h3-i2v.json');
 const h3R2vJson = readWf('video-minimax-h3-r2v.json');
 const krea2T2iJson = readWf('image_krea2_turbo_t2i.json');
-const krea2T2iInt8Json = readWf('image_krea2_turbo_t2i_int8.json');
-const krea2StyleRefJson = readWf('image_krea2_turbo_int8_image_style_reference.json');
 
 /** 手写的最小 UI 格式（LiteGraph）工作流：全部是纯本地节点 */
 const uiFixtureJson = {
@@ -144,11 +142,11 @@ const OBJECT_INFO: Record<string, any> = {
     output: ['AUDIO'],
   },
   KSamplerSelect: {
-    input: { required: { sampler_name: [['res_multistep', 'euler'], {}] } },
+    input: { required: { sampler_name: ['COMBO', { options: ['res_multistep', 'euler', 'dpmpp_2m'] }] } },
     output: ['SAMPLER'],
   },
   BasicScheduler: {
-    input: { required: { scheduler: ['COMBO', {}], steps: ['INT', {}], denoise: ['FLOAT', {}] }, optional: { model: ['MODEL', {}] } },
+    input: { required: { scheduler: ['COMBO', { options: ['simple', 'karras', 'normal'] }], steps: ['INT', {}], denoise: ['FLOAT', {}] }, optional: { model: ['MODEL', {}] } },
     output: ['SIGMAS'],
   },
   BasicGuider: {
@@ -416,9 +414,9 @@ describe('workflow 引擎（通用自动适配）', () => {
 
   it('buildSpecs 文件探测：占位素材缺失 → 标记必传', async () => {
     const specs = await workflow.buildSpecs();
-    const styleRef = specs.find(s => s.id === 'image_krea2_turbo_int8_image_style_reference');
-    expect(styleRef).toBeDefined();
-    const images = styleRef!.inputs.filter(i => i.kind === 'image');
+    const i2v = specs.find(s => s.id === 'video-minimax-h3-i2v');
+    expect(i2v).toBeDefined();
+    const images = i2v!.inputs.filter(i => i.kind === 'image');
     expect(images).toHaveLength(1);
     for (const img of images) {
       expect(img.required).toBe(true);
@@ -500,8 +498,7 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(r2vPrompt['136'].inputs.prompt).toEqual(['138', 0]);
   });
 
-  it('Krea2 Turbo 模板 introspection 与 buildPrompt 正确处理子图展开、提示词与参考图注入', async () => {
-    // 1. Krea2 T2I (FP8)
+  it('Krea2 Turbo 模板 introspection 与 buildPrompt 正确处理子图展开与提示词注入', async () => {
     const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
     expect(t2iSpec.inputs.some(i => i.kind === 'image')).toBe(false);
     expect(t2iSpec.inputs.some(i => i.kind === 'text')).toBe(true);
@@ -511,24 +508,6 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(t2iPrompt['30_sg19'].class_type).toBe('PrimitiveStringMultiline');
     expect(t2iPrompt['30_sg19'].inputs.value).toBe('A futuristic city in neon rain');
     expect(t2iPrompt['29'].class_type).toBe('SaveImage');
-
-    // 2. Krea2 T2I (INT8)
-    const t2iInt8Spec = await workflow.introspectWorkflow(krea2T2iInt8Json, OBJECT_INFO);
-    const t2iInt8Prompt = await workflow.buildPrompt(t2iInt8Spec, krea2T2iInt8Json, { prompt: 'Int8 test prompt' });
-    expect(t2iInt8Prompt['30_sg19'].inputs.value).toBe('Int8 test prompt');
-
-    // 3. Krea2 Style Reference (INT8)
-    const styleSpec = await workflow.introspectWorkflow(krea2StyleRefJson, OBJECT_INFO);
-    expect(styleSpec.inputs.some(i => i.kind === 'image')).toBe(true);
-    expect(styleSpec.outputs).toEqual([expect.objectContaining({ kind: 'image', classType: 'SaveImage' })]);
-
-    const stylePrompt = await workflow.buildPrompt(styleSpec, krea2StyleRefJson, {
-      prompt: 'A fantasy treehouse',
-      uploaded: { 'image-69': 'style_input.png' },
-    });
-    expect(stylePrompt['30_sg19'].inputs.value).toBe('A fantasy treehouse');
-    expect(stylePrompt['69'].class_type).toBe('LoadImage');
-    expect(stylePrompt['69'].inputs.image).toBe('style_input.png');
   });
 
   it('buildPrompt 注入生成尺寸：EmptyLatentImage 宽高由链接值替换为具体数值', async () => {
@@ -584,6 +563,29 @@ describe('workflow 引擎（通用自动适配）', () => {
     });
     expect(prompt['30_sg10'].class_type).toBe('UNETLoader');
     expect(prompt['30_sg10'].inputs.unet_name).toBe('KREA2/krea2_turbo_int8_convrot.safetensors');
+  });
+
+  it('分离式采样链（KSamplerSelect/BasicScheduler）暴露采样器与调度器并可注入', async () => {
+    const h3Spec = await workflow.introspectWorkflow(h3T2vJson, OBJECT_INFO);
+    const byField = Object.fromEntries(h3Spec.params.map(p => [p.field, p]));
+    // KSamplerSelect 的 sampler_name 与 BasicScheduler 的 scheduler 进入白名单
+    expect(byField.sampler_name?.type).toBe('combo');
+    expect(byField.sampler_name?.options).toContain('euler');
+    expect(byField.scheduler?.type).toBe('combo');
+    expect(byField.scheduler?.options).toBeDefined();
+
+    // 通过 params 注入到对应节点
+    const prompt = await workflow.buildPrompt(h3Spec, h3T2vJson, {
+      prompt: 'sampler chain test',
+      params: {
+        [byField.sampler_name!.id]: 'res_multistep',
+        [byField.scheduler!.id]: 'karras',
+      },
+    });
+    const samplerNode = Object.values(prompt).find((n: any) => n.class_type === 'KSamplerSelect');
+    const schedulerNode = Object.values(prompt).find((n: any) => n.class_type === 'BasicScheduler');
+    expect(samplerNode?.inputs.sampler_name).toBe('res_multistep');
+    expect(schedulerNode?.inputs.scheduler).toBe('karras');
   });
 
   /* ---------- 提交前校验（缺失模型 / 子目录别名 / 非法 combo） ---------- */
