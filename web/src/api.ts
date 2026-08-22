@@ -156,11 +156,40 @@ export async function fetchComfyStatus(): Promise<ComfyStatus> {
   return http('/api/comfyui/status');
 }
 
-export interface ComfySettings {
-  baseUrl: string;
+export interface ImageGenSettings {
+  seedMode: 'random' | 'fixed';
+  seed: number;
+  steps: number;
+  cfg: number;
+  sampler_name: string;
+  scheduler: string;
+  denoise: number;
+  width: number;
+  height: number;
 }
 
-export async function fetchComfySettings(): Promise<ComfySettings> {
+export interface AppSettings {
+  comfyui: {
+    baseUrl: string;
+  };
+  imageGen?: ImageGenSettings;
+}
+
+export async function fetchAppSettings(): Promise<AppSettings> {
+  return http('/api/settings');
+}
+
+export async function saveImageGenSettings(
+  settings: Partial<ImageGenSettings>,
+): Promise<{ ok: boolean; imageGen: ImageGenSettings }> {
+  return http('/api/settings/image-gen', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+}
+
+export async function fetchComfySettings(): Promise<AppSettings> {
   return http('/api/settings');
 }
 

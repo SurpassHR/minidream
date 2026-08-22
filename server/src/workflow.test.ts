@@ -286,6 +286,49 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(prompt['4'].inputs.ckpt_name).toBe('sd_xl_base.safetensors');
   });
 
+  it('根据 imageGen settings 注入默认参数与随机/固定 seed', async () => {
+    const spec = await workflow.introspectWorkflow(txt2imgJson);
+    const promptFixed = await workflow.buildPrompt(spec, txt2imgJson, {
+      prompt: '测试固定种子',
+      settings: {
+        seedMode: 'fixed',
+        seed: 123456,
+        steps: 25,
+        cfg: 8.5,
+        sampler_name: 'dpmpp_2m',
+        scheduler: 'karras',
+        denoise: 0.8,
+        width: 768,
+        height: 768,
+      },
+    });
+    expect(promptFixed['3'].inputs.seed).toBe(123456);
+    expect(promptFixed['3'].inputs.steps).toBe(25);
+    expect(promptFixed['3'].inputs.cfg).toBe(8.5);
+    expect(promptFixed['3'].inputs.sampler_name).toBe('dpmpp_2m');
+    expect(promptFixed['3'].inputs.scheduler).toBe('karras');
+    expect(promptFixed['3'].inputs.denoise).toBe(0.8);
+    expect(promptFixed['5'].inputs.width).toBe(768);
+    expect(promptFixed['5'].inputs.height).toBe(768);
+
+    const promptRandom = await workflow.buildPrompt(spec, txt2imgJson, {
+      prompt: '测试随机种子',
+      settings: {
+        seedMode: 'random',
+        seed: -1,
+        steps: 20,
+        cfg: 7.0,
+        sampler_name: 'euler',
+        scheduler: 'normal',
+        denoise: 1.0,
+        width: 1024,
+        height: 1024,
+      },
+    });
+    expect(typeof promptRandom['3'].inputs.seed).toBe('number');
+    expect(promptRandom['3'].inputs.seed).toBeGreaterThanOrEqual(0);
+  });
+
   it('img2img 识别图像输入并注入上传文件名', async () => {
     const spec = await workflow.introspectWorkflow(img2imgJson);
     const imgInput = spec.inputs.find(i => i.kind === 'image');

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ComfyStatus, GenerateData, WorkflowParam, WorkflowSpec } from '../api';
+import type { ComfyStatus, GenerateData, WorkflowSpec } from '../api';
 
 type PanelId = 'agent' | 'preference' | 'skills' | null;
 
@@ -45,7 +45,6 @@ export default function Composer({
   const [agentMode, setAgentMode] = useState(composer.agentOptions[0] ?? 'Agent 模式');
   const [prefType, setPrefType] = useState(composer.preferences.types[0] ?? '图片');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [params, setParams] = useState<Record<string, unknown>>({});
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -61,14 +60,6 @@ export default function Composer({
     filtered[0] ??
     null;
 
-  // workflow 切换时重置参数为默认值
-  useEffect(() => {
-    if (!activeWorkflow) return;
-    const next: Record<string, unknown> = {};
-    for (const p of activeWorkflow.params) next[p.id] = p.default;
-    setParams(next);
-  }, [activeWorkflow?.id]);
-
   const canSend = value.trim().length > 0 && !disabled;
 
   const submit = () => {
@@ -77,7 +68,6 @@ export default function Composer({
     const videoAtts = attachments.filter(a => a.kind === 'video');
     onSubmit({
       workflowId: activeWorkflow?.id,
-      params: Object.keys(params).length ? params : undefined,
       images: imageAtts.map(a => ({ name: a.name, dataUrl: a.dataUrl })),
       videos: videoAtts.map(a => ({ name: a.name, dataUrl: a.dataUrl })),
     });
@@ -113,8 +103,6 @@ export default function Composer({
   };
 
   const kindLabel = { image: '图片', video: '视频', text: '文本' };
-
-  const setParam = (id: string, v: unknown) => setParams(prev => ({ ...prev, [id]: v }));
 
   return (
     <div className={`composer${focused ? ' focused' : ''}`}>
@@ -253,17 +241,6 @@ export default function Composer({
                   </ul>
                 )}
 
-                {activeWorkflow && activeWorkflow.params.length > 0 && (
-                  <>
-                    <div className="panel-title">参数（自动提取）</div>
-                    <div className="param-grid">
-                      {activeWorkflow.params.map(p => (
-                        <ParamControl key={p.id} param={p} value={params[p.id]} onChange={v => setParam(p.id, v)} />
-                      ))}
-                    </div>
-                  </>
-                )}
-
                 {activeWorkflow?.inputs.some(i => i.kind === 'image') && (
                   <div className="pref-hint">该工作流需要参考图：点右下角上传按钮添加</div>
                 )}
@@ -358,61 +335,5 @@ export default function Composer({
         </div>
       </div>
     </div>
-  );
-}
-
-function ParamControl({
-  param,
-  value,
-  onChange,
-}: {
-  param: WorkflowParam;
-  value: unknown;
-  onChange: (v: unknown) => void;
-}) {
-  // value 尚未初始化时回退到 param.default，避免受控/非受控切换警告
-  const v = value ?? param.default;
-  if (param.type === 'BOOLEAN') {
-    return (
-      <label className="param-row">
-        <span>{param.label}</span>
-        <input type="checkbox" checked={!!v} onChange={e => onChange(e.target.checked)} />
-      </label>
-    );
-  }
-  if (param.type === 'combo' && param.options?.length) {
-    return (
-      <label className="param-row">
-        <span>{param.label}</span>
-        <select value={String(v)} onChange={e => onChange(e.target.value)}>
-          {param.options.map(o => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
-      </label>
-    );
-  }
-  if (param.type === 'STRING') {
-    return (
-      <label className="param-row">
-        <span>{param.label}</span>
-        <input type="text" value={String(v)} onChange={e => onChange(e.target.value)} />
-      </label>
-    );
-  }
-  return (
-    <label className="param-row">
-      <span>{param.label}</span>
-      <input
-        type="number"
-        value={v as number}
-        min={param.min}
-        max={param.max}
-        step={param.step}
-        onChange={e => onChange(param.type === 'FLOAT' ? Number(e.target.value) : Math.round(Number(e.target.value)))}
-      />
-    </label>
   );
 }

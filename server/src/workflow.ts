@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getObjectInfo, fileExists, ComfyUIError } from './comfyui.js';
+import type { ImageGenSettings } from './settings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const WORKFLOWS_DIR = path.resolve(__dirname, '../workflows');
@@ -736,6 +737,7 @@ export interface BuildValues {
   /** image/video 输入 → 已上传到 ComfyUI 的文件名 */
   uploaded?: Record<string, string>; // { [inputId]: filename }
   params?: Record<string, unknown>;
+  settings?: ImageGenSettings;
 }
 
 /** 从 object_info 里选一个已安装的 checkpoint（ckpt_name 为空时自动探测） */
@@ -804,9 +806,35 @@ export async function buildPrompt(
     // 未上传且非必传 → 保留模板默认文件名；必传但未上传 → 前端已拦截
   }
 
-  // 参数注入
+  // 参数注入（优先使用显式传递的 params，未传递时从 settings 获取全局默认值）
+  const s = values.settings;
   for (const p of spec.params) {
-    const v = values.params?.[p.id];
+    let v = values.params?.[p.id];
+
+    if (v === undefined && s) {
+      if (p.field === 'seed' || p.field === 'noise_seed') {
+        if (s.seedMode === 'fixed' && s.seed >= 0) {
+          v = s.seed;
+        } else {
+          v = Math.floor(Math.random() * 1125899906842624);
+        }
+      } else if (p.field === 'steps' && typeof s.steps === 'number') {
+        v = s.steps;
+      } else if (p.field === 'cfg' && typeof s.cfg === 'number') {
+        v = s.cfg;
+      } else if (p.field === 'sampler_name' && typeof s.sampler_name === 'string') {
+        v = s.sampler_name;
+      } else if (p.field === 'scheduler' && typeof s.scheduler === 'string') {
+        v = s.scheduler;
+      } else if (p.field === 'denoise' && typeof s.denoise === 'number') {
+        v = s.denoise;
+      } else if (p.field === 'width' && typeof s.width === 'number') {
+        v = s.width;
+      } else if (p.field === 'height' && typeof s.height === 'number') {
+        v = s.height;
+      }
+    }
+
     if (v === undefined) continue;
     prompt[p.nodeId].inputs[p.field] = v;
   }

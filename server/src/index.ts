@@ -11,7 +11,12 @@ import {
   uploadFile,
   submitPrompt,
 } from './comfyui.js';
-import { readSettings, writeSettings } from './settings.js';
+import {
+  readSettings,
+  writeSettings,
+  updateImageGenSettings,
+  type ImageGenSettings,
+} from './settings.js';
 import {
   buildSpecsCached,
   buildPrompt,
@@ -249,7 +254,22 @@ if (!process.env.COMFYUI_BASE_URL) {
 
 /** 当前设置（前端设置弹窗初始化用） */
 app.get('/api/settings', (_req, res) => {
-  res.json({ comfyui: { baseUrl: COMFYUI_BASE_URL } });
+  const current = readSettings(SETTINGS_FILE);
+  res.json({
+    comfyui: { baseUrl: COMFYUI_BASE_URL },
+    imageGen: current.imageGen,
+  });
+});
+
+/** 更新生图默认设置 */
+app.post('/api/settings/image-gen', (req, res) => {
+  try {
+    const partial = req.body as Partial<ImageGenSettings>;
+    const updated = updateImageGenSettings(SETTINGS_FILE, partial);
+    res.json({ ok: true, imageGen: updated });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: (e as Error).message });
+  }
 });
 
 /** 更新 ComfyUI 地址：持久化到文件 + 清空缓存 + 健康检查 */
@@ -417,10 +437,12 @@ async function generateReply(
 
     // 2. 构建 prompt 并提交
     logs.push('正在提交任务到 ComfyUI…');
+    const settings = readSettings(SETTINGS_FILE);
     const prompt = await buildPrompt(spec, getWorkflowJson(spec.id)!, {
       prompt: message,
       uploaded,
       params: opts.params,
+      settings: settings.imageGen,
     });
     const clientId = randomUUID();
     const submit = await submitPrompt(prompt, clientId);
