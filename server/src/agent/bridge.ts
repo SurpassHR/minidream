@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import path from 'node:path';
+import fs from 'node:fs';
 
 export interface AgentStreamEvent {
   type: 'thinking' | 'text' | 'tool_call' | 'tool_result' | 'error' | 'end';
