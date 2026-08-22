@@ -663,13 +663,40 @@ app.post('/api/chat', async (req, res) => {
             });
 
             // 如果提交了任务，自动订阅 TaskQueue 并转发进度
+            let taskId: string | undefined;
             const resObj = evt.result?.content as any;
-            const taskId = resObj?.taskId;
+            if (resObj && typeof resObj === 'object') {
+              taskId = resObj.taskId;
+              // 处理 MCP 标准 CallToolResult 格式: { content: [{ type: 'text', text: '{...}' }] }
+              if (!taskId && Array.isArray(resObj.content)) {
+                for (const c of resObj.content) {
+                  if (c?.type === 'text' && typeof c.text === 'string') {
+                    try {
+                      const parsed = JSON.parse(c.text);
+                      if (parsed?.taskId) {
+                        taskId = parsed.taskId;
+                        break;
+                      }
+                    } catch {
+                      // ignore json parse error
+                    }
+                  }
+                }
+              }
+            } else if (typeof resObj === 'string') {
+              try {
+                const parsed = JSON.parse(resObj);
+                if (parsed?.taskId) taskId = parsed.taskId;
+              } catch {
+                // ignore
+              }
+            }
+
             if (taskId && typeof taskId === 'string') {
               const task = taskQueue.getTask(taskId);
               if (task) {
                 activeTaskCount++;
-                sendEvent('task:queued', { taskId: task.id, position: resObj.position ?? 1 });
+                sendEvent('task:queued', { taskId: task.id, position: 1, task });
 
                 const unsub = taskQueue.subscribeTask(task.id, (tEvt, updatedTask) => {
                   if (tEvt === 'updated') {
@@ -711,6 +738,7 @@ app.post('/api/chat', async (req, res) => {
                 taskUnsubscribes.push(unsub);
               }
             }
+
           } else if (evt.type === 'error') {
             sendEvent('agent:error', { error: evt.error });
           }
