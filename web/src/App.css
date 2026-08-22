@@ -2506,39 +2506,57 @@
   transform: translateX(16px);
 }
 
-/* 插件参数配置（combo 下拉） */
-.plugin-config {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px dashed var(--border);
+/* 插件卡片操作（设置按钮 + 开关） */
+.plugin-card-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
-.plugin-config-toggle {
+.plugin-config-btn {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.plugin-config-btn:hover {
+  background: var(--bg-hover);
+  color: var(--brand-deep);
+}
+
+/* 插件详情设置（钻取页） */
+.plugin-detail-back {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  margin-bottom: 14px;
+  padding: 4px 10px 4px 6px;
+  border-radius: 8px;
   font-size: 12px;
+  color: var(--text-secondary);
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.plugin-detail-back:hover {
+  background: var(--bg-hover);
   color: var(--brand-deep);
-  transition: color 0.15s;
 }
 
-.plugin-config-toggle svg {
-  transition: transform 0.15s;
+.plugin-detail-title {
+  margin-top: 2px;
 }
 
-.plugin-config-toggle[aria-expanded='true'] svg {
-  transform: rotate(180deg);
-}
-
-.plugin-config-toggle:hover {
-  color: #0089a6;
-}
-
-.plugin-config-grid {
+.plugin-detail-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 12px;
+  margin-top: 16px;
 }
 
 .plugin-config-field {
@@ -2556,9 +2574,129 @@
   text-overflow: ellipsis;
 }
 
-.plugin-config-select {
+.plugin-config-select .filter-select-trigger {
   height: 32px;
   font-size: 12px;
+}
+
+/* ============ 可筛选下拉（FilterSelect） ============ */
+.filter-select {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.filter-select-trigger {
+  width: 100%;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-page);
+  transition: border-color 0.15s;
+}
+
+.filter-select-trigger:hover {
+  border-color: rgba(0, 161, 194, 0.5);
+}
+
+.filter-select-trigger[aria-expanded='true'] {
+  border-color: var(--brand-deep);
+}
+
+.filter-select-trigger:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.filter-select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-select-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-float);
+  padding: 6px;
+}
+
+.filter-select-search {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-page);
+  outline: none;
+}
+
+.filter-select-search:focus {
+  border-color: var(--brand-deep);
+}
+
+.filter-select-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.filter-select-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.filter-select-option:hover {
+  background: var(--bg-hover);
+}
+
+.filter-select-option.active {
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+}
+
+.filter-select-option-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-select-option-check {
+  flex-shrink: 0;
+  color: var(--brand-deep);
+}
+
+.filter-select-empty {
+  padding: 12px 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 /* ============ 状态页 ============ */

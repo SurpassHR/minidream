@@ -12,6 +12,7 @@ import {
   type WorkflowParam,
   type WorkflowSpec,
 } from '../api';
+import FilterSelect from './FilterSelect';
 
 interface Category {
   id: string;
@@ -109,7 +110,8 @@ export default function SettingsModal({
   const [pluginDraft, setPluginDraft] = useState<Set<string> | null>(null);
   const [pluginConfig, setPluginConfig] = useState<Record<string, Record<string, string>>>({});
   const [pluginConfigDraft, setPluginConfigDraft] = useState<Record<string, Record<string, string>> | null>(null);
-  const [expandedConfig, setExpandedConfig] = useState<Set<string>>(new Set());
+  /** 当前进入插件详情设置的工作流 id；null 表示显示插件列表 */
+  const [configTarget, setConfigTarget] = useState<string | null>(null);
   const [savingPlugins, setSavingPlugins] = useState(false);
   const [pluginsTip, setPluginsTip] = useState<string | null>(null);
   const [pluginsError, setPluginsError] = useState<string | null>(null);
@@ -168,7 +170,7 @@ export default function SettingsModal({
     if (!open) return;
     setPluginDraft(new Set(pluginDisabled));
     setPluginConfigDraft(pluginConfig);
-    setExpandedConfig(new Set());
+    setConfigTarget(null);
   }, [open, pluginDisabled, pluginConfig, workflows]);
 
   const togglePlugin = (id: string) => {
@@ -176,15 +178,6 @@ export default function SettingsModal({
       const next = new Set(prev ?? []);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleConfig = (wfId: string) => {
-    setExpandedConfig(prev => {
-      const next = new Set(prev);
-      if (next.has(wfId)) next.delete(wfId);
-      else next.add(wfId);
       return next;
     });
   };
@@ -367,6 +360,140 @@ export default function SettingsModal({
     ? `已连接（${comfyStatus?.baseUrl ?? baseUrl}）${comfyStatus?.system?.comfyui_version ? `· v${comfyStatus.system.comfyui_version}` : ''}`
     : `未连接${comfyStatus?.error ? `：${comfyStatus.error}` : ''}`;
 
+  // 插件区：列表视图 ↔ 单插件详情设置（钻取）
+  const pluginTarget = configTarget ? (workflows.find(w => w.id === configTarget) ?? null) : null;
+  const pluginSection = pluginTarget ? (
+    <section className="settings-section">
+      <button className="plugin-detail-back" onClick={() => setConfigTarget(null)}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M8.5 3 4.5 7l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        返回插件列表
+      </button>
+      <h3 className="settings-section-title plugin-detail-title">{pluginTarget.name}</h3>
+      <p className="settings-section-desc">
+        配置该插件使用的模型与采样参数（扩散模型、CLIP、VAE、LoRA、采样器、调度器等，选项来自 ComfyUI
+        节点）。{pluginDraft?.has(pluginTarget.id) ? '该插件当前已停用，配置将保留。' : ''}
+      </p>
+      {comboParamsOf(pluginTarget).length === 0 ? (
+        <div className="pref-empty">该插件没有可配置参数（需连接 ComfyUI 才能读取节点选项）</div>
+      ) : (
+        <div className="plugin-detail-grid">
+          {comboParamsOf(pluginTarget).map(param => (
+            <label key={param.id} className="plugin-config-field">
+              <span className="plugin-config-label">{param.label}</span>
+              <FilterSelect
+                className="plugin-config-select"
+                value={configValueOf(pluginTarget.id, param)}
+                onChange={v => setPluginParam(pluginTarget.id, param.id, v)}
+                options={param.options ?? []}
+                ariaLabel={param.label}
+                searchPlaceholder={`筛选 ${param.label}…`}
+              />
+            </label>
+          ))}
+        </div>
+      )}
+      {pluginsError && <div className="settings-error">{pluginsError}</div>}
+      {pluginsTip && <div className="settings-tip">{pluginsTip}</div>}
+      <div className="settings-actions">
+        <button className="settings-btn primary" onClick={savePlugins} disabled={savingPlugins}>
+          {savingPlugins ? '保存中…' : '保存插件配置'}
+        </button>
+      </div>
+    </section>
+  ) : (
+    <section className="settings-section">
+      <h3 className="settings-section-title">生成插件（工作流）</h3>
+      <p className="settings-section-desc">
+        启用/停用生成插件，点击插件右侧的设置按钮可配置该插件的模型与采样参数（扩散模型、CLIP、VAE、
+        LoRA、采样器、调度器等，选项来自 ComfyUI 节点）。停用的插件不会出现在生成流程中。
+      </p>
+      {workflows.length === 0 ? (
+        <div className="pref-empty">暂无插件：请把 workflow 文件放到 server/workflows/</div>
+      ) : (
+        <div className="plugin-groups">
+          {(['image', 'video'] as const).map(kind => {
+            const list = workflows.filter(w =>
+              kind === 'video'
+                ? w.outputs.some(o => o.kind === 'video')
+                : w.outputs.some(o => o.kind === 'image'),
+            );
+            if (list.length === 0) return null;
+            return (
+              <div key={kind} className="plugin-group">
+                <div className="plugin-group-title">{kind === 'image' ? '图像' : '视频'}</div>
+                <div className="plugin-list">
+                  {list.map(w => {
+                    const disabled = pluginDraft?.has(w.id) ?? false;
+                    const hasConfig = comboParamsOf(w).length > 0;
+                    return (
+                      <div key={w.id} className={`plugin-card${disabled ? ' off' : ''}`}>
+                        <div className="plugin-card-head">
+                          <span className="plugin-card-name">{w.name}</span>
+                          <div className="plugin-card-acts">
+                            {hasConfig && (
+                              <button
+                                className="plugin-config-btn"
+                                onClick={() => setConfigTarget(w.id)}
+                                title="插件设置"
+                                aria-label={`设置 ${w.name}`}
+                              >
+                                <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                                  <circle cx="8" cy="8" r="2.6" stroke="currentColor" strokeWidth="1.3" />
+                                  <path
+                                    d="M8 1.8v1.9M8 12.3v1.9M1.8 8h1.9M12.3 8h1.9M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6 11 5M5 11l-1.4 1.4"
+                                    stroke="currentColor"
+                                    strokeWidth="1.3"
+                                    strokeLinecap="round"
+                                  />
+                                </svg>
+                              </button>
+                            )}
+                            <button
+                              className={`plugin-toggle${disabled ? '' : ' on'}`}
+                              onClick={() => togglePlugin(w.id)}
+                              role="switch"
+                              aria-checked={!disabled}
+                              aria-label={`${disabled ? '启用' : '停用'} ${w.name}`}
+                            >
+                              <span className="plugin-toggle-knob" />
+                            </button>
+                          </div>
+                        </div>
+                        {w.description && <div className="plugin-card-desc">{w.description}</div>}
+                        <div className="plugin-card-badges">
+                          {w.inputs.map(i => (
+                            <em key={i.id} className={`wf-badge in ${i.kind}`}>
+                              输入·{PLUGIN_KIND_LABEL[i.kind]}
+                              {i.required ? '·必传' : ''}
+                            </em>
+                          ))}
+                          {w.outputs.map(o => (
+                            <em key={o.id} className={`wf-badge out ${o.kind}`}>
+                              输出·{PLUGIN_KIND_LABEL[o.kind]}
+                            </em>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {pluginsError && <div className="settings-error">{pluginsError}</div>}
+      {pluginsTip && <div className="settings-tip">{pluginsTip}</div>}
+      <div className="settings-actions">
+        <button className="settings-btn primary" onClick={savePlugins} disabled={savingPlugins}>
+          {savingPlugins ? '保存中…' : '保存插件配置'}
+        </button>
+      </div>
+    </section>
+  );
+
   return (
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-modal" role="dialog" aria-modal="true" aria-label="设置" onClick={e => e.stopPropagation()}>
@@ -507,112 +634,7 @@ export default function SettingsModal({
               </section>
             )}
 
-            {active === 'plugins' && (
-              <section className="settings-section">
-                <h3 className="settings-section-title">生成插件（工作流）</h3>
-                <p className="settings-section-desc">
-                  启用/停用生成插件，并可针对每个插件配置模型与采样参数（扩散模型、CLIP、VAE、LoRA、采样器、
-                  调度器等，选项来自 ComfyUI 节点）。停用的插件不会出现在生成流程中。
-                </p>
-                {workflows.length === 0 ? (
-                  <div className="pref-empty">暂无插件：请把 workflow 文件放到 server/workflows/</div>
-                ) : (
-                  <div className="plugin-groups">
-                    {(['image', 'video'] as const).map(kind => {
-                      const list = workflows.filter(w =>
-                        kind === 'video'
-                          ? w.outputs.some(o => o.kind === 'video')
-                          : w.outputs.some(o => o.kind === 'image'),
-                      );
-                      if (list.length === 0) return null;
-                      return (
-                        <div key={kind} className="plugin-group">
-                          <div className="plugin-group-title">{kind === 'image' ? '图像' : '视频'}</div>
-                          <div className="plugin-list">
-                            {list.map(w => {
-                              const disabled = pluginDraft?.has(w.id) ?? false;
-                              const combos = comboParamsOf(w);
-                              const configOpen = expandedConfig.has(w.id);
-                              return (
-                                <div key={w.id} className={`plugin-card${disabled ? ' off' : ''}`}>
-                                  <div className="plugin-card-head">
-                                    <span className="plugin-card-name">{w.name}</span>
-                                    <button
-                                      className={`plugin-toggle${disabled ? '' : ' on'}`}
-                                      onClick={() => togglePlugin(w.id)}
-                                      role="switch"
-                                      aria-checked={!disabled}
-                                      aria-label={`${disabled ? '启用' : '停用'} ${w.name}`}
-                                    >
-                                      <span className="plugin-toggle-knob" />
-                                    </button>
-                                  </div>
-                                  {w.description && <div className="plugin-card-desc">{w.description}</div>}
-                                  <div className="plugin-card-badges">
-                                    {w.inputs.map(i => (
-                                      <em key={i.id} className={`wf-badge in ${i.kind}`}>
-                                        输入·{PLUGIN_KIND_LABEL[i.kind]}
-                                        {i.required ? '·必传' : ''}
-                                      </em>
-                                    ))}
-                                    {w.outputs.map(o => (
-                                      <em key={o.id} className={`wf-badge out ${o.kind}`}>
-                                        输出·{PLUGIN_KIND_LABEL[o.kind]}
-                                      </em>
-                                    ))}
-                                  </div>
-                                  {combos.length > 0 && (
-                                    <div className="plugin-config">
-                                      <button
-                                        className="plugin-config-toggle"
-                                        onClick={() => toggleConfig(w.id)}
-                                        aria-expanded={configOpen}
-                                      >
-                                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                                          <path d="M2.5 4.5 6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                                        </svg>
-                                        {configOpen ? '收起参数配置' : `参数配置（${combos.length}）`}
-                                      </button>
-                                      {configOpen && (
-                                        <div className="plugin-config-grid">
-                                          {combos.map(param => (
-                                            <label key={param.id} className="plugin-config-field">
-                                              <span className="plugin-config-label">{param.label}</span>
-                                              <select
-                                                className="settings-select plugin-config-select"
-                                                value={configValueOf(w.id, param)}
-                                                onChange={e => setPluginParam(w.id, param.id, e.target.value)}
-                                              >
-                                                {(param.options ?? []).map(opt => (
-                                                  <option key={opt} value={opt}>
-                                                    {opt}
-                                                  </option>
-                                                ))}
-                                              </select>
-                                            </label>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {pluginsError && <div className="settings-error">{pluginsError}</div>}
-                {pluginsTip && <div className="settings-tip">{pluginsTip}</div>}
-                <div className="settings-actions">
-                  <button className="settings-btn primary" onClick={savePlugins} disabled={savingPlugins}>
-                    {savingPlugins ? '保存中…' : '保存插件配置'}
-                  </button>
-                </div>
-              </section>
-            )}
+            {active === 'plugins' && pluginSection}
 
           </div>
         </div>
