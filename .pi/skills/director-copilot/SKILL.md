@@ -26,14 +26,26 @@ description: 导演工作台 Copilot 技能库。负责解析用户创作意图�
 
 ---
 
-## 2. 图像生成提示词增强法则 (Krea2 Turbo)
+## 2. 图像生成提示词增强法则 (Krea2 Turbo - 现代自然语言叙述模式)
 
 适配模型：`image_krea2_turbo_t2i`、`image_krea2_turbo_t2i_int8`、`image_krea2_turbo_int8_image_style_reference`。
 
-- **核心结构**：`[Subject & Action], [Environment & Background], [Lighting & Color Grading], [Camera & Optics], [Quality & Style]`
-- **机位与景别**：使用具体的电影镜头术语（如 `cinematic wide-angle shot`, `close-up macro details`, `low angle dynamic perspective`, `anamorphic lens flare`）。
-- **光影与质感**：强化环境光（`volumetric god rays`, `neon ambient reflections`, `soft rim light`, `dramatic chiaroscuro`）与材质细节（`hyperrealistic texture, 8k octane render, cinematic film grain`）。
-- **风格图引用**：若提供了参考图片，选择 `image_krea2_turbo_int8_image_style_reference` 并传入图片路径。
+**⚠️ 极其重要：Krea2 / FLUX 架构基于 T5 纯自然语言编码器，切勿使用 SD 1.5 时代的逗号堆叠 Tag（如 `1girl, cute, masterpiece, best quality, 8k, highly detailed, octane render` 等垃圾词汇）！**
+
+### Krea2 自然语言 Prompt 构建准则：
+- **完整连贯的自然语言描述（Descriptive Prose）**：用流畅、有画面感的一段或两段英文叙述，就像电影剧本或小说插画的场景描述一样。
+- **叙事核心四要素**：
+  1. **主体与生动细节 (Subject & Living Detail)**：具体描述主体的位置、神态、动作、毛发/材质纹理、微表情。
+  2. **环境与氛围空间 (Environment & Mood)**：空间纵深、背景建筑/自然植被、空气中的微粒、天气氛围。
+  3. **电影级光影设计 (Cinematic Lighting)**：精确描述光源方向、色温与光影对比（例如 *warm golden hour sunlight spilling across the floor*, *soft diffuse morning window light creating gentle shadows*, *vibrant neon reflections in rain puddles*）。
+  4. **摄影机参数与镜头美学 (Cinematography & Framing)**：景别、镜头类型与景深（例如 *A close-up portrait shot on 35mm film with a shallow depth of field*, *A wide cinematic establishing shot*）。
+
+### ❌ 错误对比 (SD 1.5 Tag 堆叠)：
+`cute cat, fluffy, big eyes, soft lighting, 8k, photorealistic, octane render, highly detailed`
+
+### ✅ 正确示范 (Krea2 自然语言描写)：
+`A close-up cinematic portrait of an adorable fluffy ginger kitten curled up by a sunlit wooden windowsill. The warm morning sunlight filters through sheer curtains, softly illuminating its soft fur and curious, glassy green eyes. In the background, house plants blur into a gentle, creamy bokeh. Captured on a 50mm lens with shallow depth of field, warm cozy atmosphere, natural color tones.`
+
 
 ---
 
