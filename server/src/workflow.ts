@@ -776,6 +776,103 @@ export interface BuildValues {
   settings?: ImageGenSettings;
 }
 
+/* ---------- 提交前模型/参数可用性校验 ---------- */
+
+/** 文件类 combo 字段 → ComfyUI models 子目录（缺失模型错误提示用） */
+const FILE_COMBO_FOLDERS: Record<string, string> = {
+  ckpt_name: 'checkpoints',
+  unet_name: 'diffusion_models',
+  clip_name: 'text_encoders',
+  vae_name: 'vae',
+  lora_name: 'loras',
+  control_net_name: 'controlnet',
+  audio_name: 'audio',
+};
+
+/** 模型文件名 basename（去目录前缀、去扩展名） */
+function modelBasename(name: string): string {
+  return (name.split('/').pop() ?? name).replace(/\.(safetensors|pt|pth|bin|ckpt|sft)$/i, '');
+}
+
+/**
+ * 提交前修正文件类 combo：
+ * - 模板引用裸文件名但模型实际装在子目录（如 MINIMAX/H3/xxx.safetensors）→ 按 basename 别名替换为已安装路径；
+ * - 模型确实未安装 → 抛可读错误（缺失文件、应放目录、可用同类模型），而不是 ComfyUI 的 “Value not in list”。
+ */
+export function resolveModelCombos(prompt: Record<string, any>, objectInfoData: Record<string, any>): void {
+  for (const node of Object.values(prompt)) {
+    if (!node || typeof node !== 'object') continue;
+    const { class_type: cls, inputs } = node as { class_type?: string; inputs?: Record<string, unknown> };
+    if (!cls || !inputs) continue;
+    const info = objectInfoData[cls]?.input;
+    if (!info) continue;
+    const defs: Record<string, unknown> = { ...(info.required ?? {}), ...(info.optional ?? {}) };
+    for (const [field, value] of Object.entries(inputs)) {
+      if (!(field in FILE_COMBO_FOLDERS) || typeof value !== 'string' || !value.trim()) continue;
+      const def = defs[field] as any;
+      const options: string[] = Array.isArray(def) && Array.isArray(def[0]) ? def[0] : [];
+      if (!options.length || options.includes(value)) continue;
+      // 子目录别名：模板写的是裸文件名，实际文件装在子目录
+      const alias = options.find(o => o === value || o.endsWith(`/${value}`) || modelBasename(o) === modelBasename(value));
+      if (alias) {
+        inputs[field] = alias;
+        continue;
+      }
+      const folder = FILE_COMBO_FOLDERS[field];
+      const similar = suggestSimilarModels(value, options);
+      const hint = similar.length
+        ? `；或改用已安装的同类模型：${similar.join('、')}`
+        : '；或更换其他工作流';
+      throw new ComfyUIError(
+        `工作流需要模型「${value}」（models/${folder}/），但 ComfyUI 中未安装。` +
+          `请先把该模型下载到 ComfyUI/models/${folder}/${value}${hint}。`,
+      );
+    }
+  }
+}
+
+/** 从已安装选项中找与缺失模型同家族的候选（basename 前两段前缀匹配，最多 3 个） */
+function suggestSimilarModels(missing: string, options: string[]): string[] {
+  const base = modelBasename(missing).toLowerCase();
+  const tokens = base.split('_');
+  const prefix = tokens.length >= 2 ? `${tokens[0] ?? ''}_${tokens[1] ?? ''}` : tokens[0] ?? '';
+  return options
+    .map(o => ({ o, b: modelBasename(o).toLowerCase() }))
+    .filter(x => x.b !== base && x.b.startsWith(prefix))
+    .sort((a, b) => a.b.length - b.b.length)
+    .slice(0, 3)
+    .map(x => x.o);
+}
+
+/** combo 选项是否像文件列表（模型/素材文件选择，含扩展名或路径分隔符） */
+function isFileLikeCombo(options: string[]): boolean {
+  return options.some(o => o.includes('/') || /\.[a-z0-9]{2,5}$/i.test(o));
+}
+
+/** 校验其余 combo 参数（采样器/调度器等）的值在允许列表内，给出可读错误 */
+export function validateComboValues(prompt: Record<string, any>, objectInfoData: Record<string, any>): void {
+  for (const node of Object.values(prompt)) {
+    if (!node || typeof node !== 'object') continue;
+    const { class_type: cls, inputs } = node as { class_type?: string; inputs?: Record<string, unknown> };
+    if (!cls || !inputs) continue;
+    const info = objectInfoData[cls]?.input;
+    if (!info) continue;
+    const defs: Record<string, unknown> = { ...(info.required ?? {}), ...(info.optional ?? {}) };
+    for (const [field, value] of Object.entries(inputs)) {
+      if (typeof value !== 'string' || !value.trim()) continue;
+      const def = defs[field] as any;
+      const options: string[] = Array.isArray(def) && Array.isArray(def[0]) ? def[0] : [];
+      if (!options.length || options.includes(value)) continue;
+      // 文件选择类 combo（LoadImage.image、素材占位等）由上传流程替换，不在此校验；模型文件由 resolveModelCombos 处理
+      if (isFileLikeCombo(options)) continue;
+      const shown = options.length > 6 ? [...options.slice(0, 6), '…'] : options;
+      throw new ComfyUIError(
+        `工作流参数「${field}」的值「${value}」不在允许列表内（可用值：${shown.join('、')}）。请检查 ComfyUI 设置或改用其他参数。`,
+      );
+    }
+  }
+}
+
 /** 从 object_info 里选一个已安装的 checkpoint（ckpt_name 为空时自动探测） */
 async function resolveCheckpoints(
   json: Record<string, any>,
@@ -877,6 +974,12 @@ export async function buildPrompt(
 
   // checkpoint 自动探测（仅当工作流含 checkpoint 节点）
   if (oi) await resolveCheckpoints(prompt, oi);
+
+  // 提交前校验：子目录模型别名解析 + 缺失模型/非法参数给出可读错误
+  if (oi) {
+    resolveModelCombos(prompt, oi);
+    validateComboValues(prompt, oi);
+  }
 
   return prompt;
 }

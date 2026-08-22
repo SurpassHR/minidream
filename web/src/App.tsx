@@ -8,6 +8,7 @@ import {
   cancelTask,
   fetchActivity,
   openActivityEvents,
+  openSessionEvents,
   cancelSession as apiCancelSession,
   openJobEvents,
   createSession,
@@ -29,6 +30,7 @@ import {
   type TaskItem,
   type ActivitySnapshot,
   type ActivityStreamEvent,
+  type StreamChatEvent,
 } from './api';
 import Rail from './components/Rail';
 import Sidebar, { type Conversation } from './components/Sidebar';
@@ -114,6 +116,104 @@ function mergeJobEvent(msg: ChatMessage, evt: JobEvent): ChatMessage {
   return { ...msg, stages };
 }
 
+function newAssistantMessage(): ChatMessage {
+  return {
+    role: 'assistant',
+    content: '',
+    thinking: '',
+    toolCalls: [],
+    tasks: [],
+    actionCards: [],
+    stages: [],
+  };
+}
+
+function mergeStreamEvent(
+  messages: ChatMessage[],
+  event: StreamChatEvent,
+  addEmptyResponseError = false,
+): ChatMessage[] {
+  let lastIdx = messages.length - 1;
+  let next = messages;
+  if (lastIdx < 0 || messages[lastIdx]?.role !== 'assistant') {
+    next = [...messages, newAssistantMessage()];
+    lastIdx = next.length - 1;
+  }
+
+  const target = next[lastIdx];
+  if (!target || target.role !== 'assistant') return next;
+  const current: ChatMessage = {
+    role: 'assistant',
+    content: target.content || '',
+    thinking: target.thinking,
+    thinkingDurationMs: target.thinkingDurationMs,
+    toolCalls: target.toolCalls ? [...target.toolCalls] : [],
+    tasks: target.tasks ? [...target.tasks] : [],
+    actionCards: target.actionCards ? [...target.actionCards] : [],
+    stages: target.stages ? [...target.stages] : [],
+    jobId: target.jobId,
+    taskId: target.taskId,
+  };
+
+  if (event.type === 'agent:thinking') {
+    current.status = undefined;
+    current.thinking = (current.thinking || '') + event.delta;
+  } else if (event.type === 'agent:text') {
+    current.status = undefined;
+    current.content = (current.content || '') + event.delta;
+  } else if (event.type === 'agent:action_card') {
+    current.status = undefined;
+    current.actionCards = [...(current.actionCards || []), event.card];
+  } else if (event.type === 'tool:call') {
+    current.status = undefined;
+    current.toolCalls = [...(current.toolCalls || []), {
+      callId: event.callId,
+      name: event.name,
+      args: event.args,
+    }];
+  } else if (event.type === 'tool:result') {
+    current.status = undefined;
+    current.toolCalls = (current.toolCalls || []).map(tool =>
+      tool.callId === event.callId ? { ...tool, result: event.result } : tool,
+    );
+  } else if (
+    event.type === 'task:queued' ||
+    event.type === 'task:progress' ||
+    event.type === 'task:completed' ||
+    event.type === 'task:failed' ||
+    event.type === 'task:canceled'
+  ) {
+    current.status = undefined;
+    if (event.task) {
+      const tasks = [...(current.tasks || [])];
+      const taskIndex = tasks.findIndex(task => task.id === event.task!.id);
+      if (taskIndex >= 0) tasks[taskIndex] = event.task;
+      else tasks.push(event.task);
+      current.tasks = tasks;
+    }
+  } else if (event.type === 'task:artifact') {
+    current.status = undefined;
+    current.tasks = (current.tasks || []).map(task => {
+      if (task.id !== event.taskId) return task;
+      const outputs = [...(task.outputs || [])];
+      if (!outputs.some(output => output.url === event.url)) {
+        outputs.push({ kind: event.kind, url: event.url, filename: event.filename || 'output' });
+      }
+      return { ...task, outputs };
+    });
+  } else if (event.type === 'agent:error') {
+    current.status = undefined;
+    current.stages = [...(current.stages || []), { type: 'error', logs: [event.error] }];
+  } else if (event.type === 'agent:end' && !event.canceled && addEmptyResponseError && !current.content && !current.thinking) {
+    current.stages = [
+      ...(current.stages || []),
+      { type: 'error', logs: ['流式响应结束，但没有收到 Agent 输出。请检查 Pi CLI 和模型配置。'] },
+    ];
+  }
+
+  return next.map((message, index) => index === lastIdx ? current : message);
+}
+
 export default function App() {
   const [data, setData] = useState<GenerateData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -125,6 +225,7 @@ export default function App() {
   const [activityOpen, setActivityOpen] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConv, setActiveConv] = useState<string | null>(null);
+  const [loadedConv, setLoadedConv] = useState<string | null>(null);
   const [workflows, setWorkflows] = useState<WorkflowSpec[]>([]);
   const [comfyStatus, setComfyStatus] = useState<ComfyStatus | null>(null);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
@@ -142,6 +243,7 @@ export default function App() {
   });
   const chatRef = useRef<HTMLDivElement>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
+  const sessionEventUnsubscribeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -174,7 +276,14 @@ export default function App() {
       if (alive) setActivity(snapshot);
     }).catch(() => undefined);
     const unsubscribe = openActivityEvents(event => {
-      if (alive) setActivity(previous => mergeActivityEvent(previous, event));
+      if (!alive) return;
+      setActivity(previous => mergeActivityEvent(previous, event));
+      if (event.type === 'session:renamed') {
+        // 对话自动命名完成（可能发生在聊天流结束后），实时更新侧边栏标题
+        setConversations(prev =>
+          prev.map(c => (c.id === event.sessionId ? { ...c, title: event.title } : c)),
+        );
+      }
     });
     fetchSessions()
       .then(r => {
@@ -183,7 +292,10 @@ export default function App() {
         if (r.activeId) {
           setActiveConv(r.activeId);
           return fetchSessionMessages(r.activeId).then(msgs => {
-            if (alive) setMessages(msgs);
+            if (alive) {
+              setMessages(msgs);
+              setLoadedConv(r.activeId);
+            }
           });
         }
       })
@@ -198,6 +310,48 @@ export default function App() {
     chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight });
   }, [messages]);
 
+  // 刷新后重新订阅仍在运行的会话；后端会先回放断线期间的事件。
+  useEffect(() => {
+    if (!loadedConv) return;
+    let disposed = false;
+    let closeSubscription: () => void = () => undefined;
+    fetchActivity()
+      .then(snapshot => {
+        if (
+          disposed ||
+          streamAbortRef.current ||
+          !snapshot.sessions.some(session => session.sessionId === loadedConv && session.status === 'running')
+        ) return;
+        setSending(true);
+        closeSubscription = openSessionEvents(loadedConv, event => {
+          if (event.type === 'agent:started' || event.type === 'agent:end') {
+            if (event.sessionId) setActiveConv(event.sessionId);
+          }
+          if (event.type === 'session:renamed') {
+            setConversations(prev =>
+              prev.map(c => (c.id === event.sessionId ? { ...c, title: event.title } : c)),
+            );
+          }
+          setMessages(previous => mergeStreamEvent(previous, event, event.type === 'agent:end'));
+          if (event.type === 'agent:end') {
+            setSending(false);
+            setMessages(latest => {
+              const last = latest.at(-1);
+              if (last?.role === 'assistant') void updateLastMessage(loadedConv!, last).catch(() => undefined);
+              return latest;
+            });
+          }
+        });
+        sessionEventUnsubscribeRef.current = closeSubscription;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      closeSubscription();
+      if (sessionEventUnsubscribeRef.current === closeSubscription) sessionEventUnsubscribeRef.current = null;
+    };
+  }, [loadedConv]);
+
   const handleSend = async (text?: string, opts?: ComposerSubmitOpts) => {
     const content = (text ?? input).trim();
     if (!content || sending) return;
@@ -209,15 +363,7 @@ export default function App() {
     streamAbortRef.current = streamAbort;
 
     // 预置一条空的助手消息用于流式填充
-    const initialAssistantMsg: ChatMessage = {
-      role: 'assistant',
-      content: '',
-      thinking: '',
-      toolCalls: [],
-      tasks: [],
-      actionCards: [],
-      stages: [],
-    };
+    const initialAssistantMsg = newAssistantMessage();
     setMessages(prev => [...prev, initialAssistantMsg]);
 
     let sid = activeConv;
@@ -259,6 +405,13 @@ export default function App() {
             }
           }
 
+          if (event.type === 'session:renamed') {
+            // 新会话自动命名完成后，实时更新侧边栏标题
+            setConversations(prev =>
+              prev.map(c => (c.id === event.sessionId ? { ...c, title: event.title } : c)),
+            );
+          }
+
           setMessages(prev => {
             const lastIdx = prev.length - 1;
             if (lastIdx < 0) return prev;
@@ -278,12 +431,16 @@ export default function App() {
             };
 
             if (event.type === 'agent:thinking') {
+              current.status = undefined;
               current.thinking = (current.thinking || '') + event.delta;
             } else if (event.type === 'agent:text') {
+              current.status = undefined;
               current.content = (current.content || '') + event.delta;
             } else if (event.type === 'agent:action_card') {
+              current.status = undefined;
               current.actionCards = [...(current.actionCards || []), event.card];
             } else if (event.type === 'tool:call') {
+              current.status = undefined;
               const tc: ToolCallData = {
                 callId: event.callId,
                 name: event.name,
@@ -291,6 +448,7 @@ export default function App() {
               };
               current.toolCalls = [...(current.toolCalls || []), tc];
             } else if (event.type === 'tool:result') {
+              current.status = undefined;
               current.toolCalls = (current.toolCalls || []).map(t =>
                 t.callId === event.callId ? { ...t, result: event.result } : t,
               );
@@ -301,6 +459,7 @@ export default function App() {
               event.type === 'task:failed' ||
               event.type === 'task:canceled'
             ) {
+              current.status = undefined;
               if ('task' in event && event.task) {
                 const taskObj = event.task;
                 const tasks = [...(current.tasks || [])];
@@ -313,6 +472,7 @@ export default function App() {
                 current.tasks = tasks;
               }
             } else if (event.type === 'task:artifact') {
+              current.status = undefined;
               // 自动将 artifact 合并到 task 中（如果有对应 task）
               if (current.tasks) {
                 current.tasks = current.tasks.map(t => {
@@ -331,6 +491,7 @@ export default function App() {
                 });
               }
             } else if (event.type === 'agent:error') {
+              current.status = undefined;
               current.stages = [
                 ...(current.stages || []),
                 { type: 'error', logs: [event.error] },
@@ -438,6 +599,7 @@ export default function App() {
       const r = await createSession();
       setConversations(r.sessions);
       setActiveConv(r.activeId);
+      setLoadedConv(null);
       setMessages([]);
       setInput('');
     } catch {
@@ -448,10 +610,14 @@ export default function App() {
   const handleSelectConversation = (id: string) => {
     if (id === activeConv) return;
     setActiveConv(id);
+    setLoadedConv(null);
     setMessages([]);
     void apiSelectSession(id).catch(() => undefined);
     fetchSessionMessages(id)
-      .then(setMessages)
+      .then(msgs => {
+        setMessages(msgs);
+        setLoadedConv(id);
+      })
       .catch(() => undefined);
   };
 
@@ -474,11 +640,16 @@ export default function App() {
       setConversations(r.sessions);
       if (r.activeId) {
         setActiveConv(r.activeId);
+        setLoadedConv(null);
         fetchSessionMessages(r.activeId)
-          .then(setMessages)
+          .then(msgs => {
+            setMessages(msgs);
+            setLoadedConv(r.activeId);
+          })
           .catch(() => undefined);
       } else {
         setActiveConv(null);
+        setLoadedConv(null);
         setMessages([]);
       }
     } catch {

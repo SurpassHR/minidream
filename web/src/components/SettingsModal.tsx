@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  fetchAgentModels,
   fetchAppSettings,
+  saveAgentSettings,
   saveComfySettings,
   saveImageGenSettings,
   saveStorageSettings,
+  type AgentModel,
+  type AgentThinking,
   type ComfyStatus,
   type ImageGenSettings,
 } from '../api';
@@ -27,6 +31,16 @@ const CATEGORIES: Category[] = [
         <rect x="10" y="1.5" width="6.5" height="6.5" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
         <rect x="1.5" y="10" width="6.5" height="6.5" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
         <rect x="10" y="10" width="6.5" height="6.5" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      </svg>
+    ),
+  },
+  {
+    id: 'agent',
+    label: 'Agent 配置',
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <path d="M9 2.25a4 4 0 0 0-4 4v2.5a4 4 0 0 0 8 0v-2.5a4 4 0 0 0-4-4Z" stroke="currentColor" strokeWidth="1.3" />
+        <path d="M2.75 8.5v1.25a6.25 6.25 0 0 0 12.5 0V8.5M9 14.75v1.5M6.5 16.25h5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
       </svg>
     ),
   },
@@ -138,6 +152,13 @@ export default function SettingsModal({
   const [savingStorage, setSavingStorage] = useState(false);
   const [storageTip, setStorageTip] = useState<string | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
+  const [agentModel, setAgentModel] = useState('');
+  const [agentThinking, setAgentThinking] = useState<AgentThinking>('minimal');
+  const [agentModels, setAgentModels] = useState<AgentModel[]>([]);
+  const [agentModelsLoading, setAgentModelsLoading] = useState(false);
+  const [agentTip, setAgentTip] = useState<string | null>(null);
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const [savingAgent, setSavingAgent] = useState(false);
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusRef = useRef<ComfyStatus | null>(comfyStatus);
@@ -152,6 +173,8 @@ export default function SettingsModal({
     setImageGenError(null);
     setStorageTip(null);
     setStorageError(null);
+    setAgentTip(null);
+    setAgentError(null);
     setReconnecting(false);
     setAttempt(0);
 
@@ -168,6 +191,15 @@ export default function SettingsModal({
         if (s.storage?.outputDir) {
           setOutputDir(s.storage.outputDir);
         }
+        if (s.agent) {
+          setAgentModel(s.agent.model);
+          setAgentThinking(s.agent.thinking);
+        }
+        setAgentModelsLoading(true);
+        void fetchAgentModels()
+          .then(result => setAgentModels(result.models))
+          .catch(() => setAgentModels([]))
+          .finally(() => setAgentModelsLoading(false));
       })
       .catch(() => {
         if (comfyStatus?.baseUrl) {
@@ -281,6 +313,26 @@ export default function SettingsModal({
     }
   };
 
+  const saveAgent = async () => {
+    setSavingAgent(true);
+    setAgentTip(null);
+    setAgentError(null);
+    try {
+      const result = await saveAgentSettings({ model: agentModel, thinking: agentThinking });
+      if (!result.ok) {
+        setAgentError(result.error ?? '保存失败');
+        return;
+      }
+      setAgentModel(result.agent.model);
+      setAgentThinking(result.agent.thinking);
+      setAgentTip('Agent 配置已保存并生效');
+    } catch (e) {
+      setAgentError((e as Error).message);
+    } finally {
+      setSavingAgent(false);
+    }
+  };
+
   const saveImageGen = async () => {
     setSavingImageGen(true);
     setImageGenTip(null);
@@ -362,6 +414,60 @@ export default function SettingsModal({
                       停止重试
                     </button>
                   )}
+                </div>
+              </section>
+            )}
+
+            {active === 'agent' && (
+              <section className="settings-section">
+                <h3 className="settings-section-title">Agent 配置</h3>
+                <p className="settings-section-desc">
+                  选择创作 Agent 使用的默认模型与思考强度。配置会保存到服务端，并应用于后续对话。
+                </p>
+                <label className="settings-field">
+                  <span className="settings-label">默认模型</span>
+                  <select
+                    className="settings-select"
+                    value={agentModel}
+                    onChange={e => setAgentModel(e.target.value)}
+                  >
+                    <option value="">使用 Pi 默认模型</option>
+                    {agentModel && !agentModels.some(model => model.id === agentModel) && (
+                      <option value={agentModel}>{agentModel}（当前值）</option>
+                    )}
+                    {agentModels.map(model => (
+                      <option key={model.id} value={model.id}>
+                        {model.id}{model.thinking ? ' · 支持思考' : ''}{model.images ? ' · 支持图片' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="settings-field-hint">
+                    {agentModelsLoading ? '正在读取 Pi 模型列表…' : '模型列表来自当前 Pi 配置；列表为空时仍可使用 Pi 默认模型'}
+                  </span>
+                </label>
+                <label className="settings-field">
+                  <span className="settings-label">思考强度</span>
+                  <select
+                    className="settings-select"
+                    value={agentThinking}
+                    onChange={e => setAgentThinking(e.target.value as AgentThinking)}
+                  >
+                    <option value="off">关闭</option>
+                    <option value="minimal">最低</option>
+                    <option value="low">低</option>
+                    <option value="medium">中</option>
+                    <option value="high">高</option>
+                    <option value="xhigh">极高</option>
+                    <option value="max">最大</option>
+                  </select>
+                  <span className="settings-field-hint">思考越深通常响应越慢；最低是当前 v2 默认值。</span>
+                </label>
+                {agentError && <div className="settings-error">{agentError}</div>}
+                {agentTip && <div className="settings-tip">{agentTip}</div>}
+                <div className="settings-actions">
+                  <button className="settings-btn primary" onClick={saveAgent} disabled={savingAgent}>
+                    {savingAgent ? '保存中…' : '保存 Agent 配置'}
+                  </button>
                 </div>
               </section>
             )}

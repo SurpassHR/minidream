@@ -84,4 +84,46 @@ describe('ActivityRegistry', () => {
     expect(events).toContain('task:updated');
     expect(events).toContain('session:canceled');
   });
+
+  it('断开会话事件订阅不会取消 Agent 或任务，并可回放已错过的事件', () => {
+    const queue = new TaskQueue({ dataFile: file, autoStart: false });
+    const registry = new ActivityRegistry(queue);
+    const controller = new AbortController();
+    registry.startSession('session-1', '刷新页面后继续', controller);
+    const task = queue.submit({ workflowId: 'image_krea2_turbo_t2i', prompt: 'keep running', sessionId: 'session-1' });
+    registry.attachTask('session-1', task.id);
+    const firstEvent = { type: 'agent:text' as const, delta: '已经收到' };
+    const secondEvent = { type: 'task:progress' as const, taskId: task.id, percent: 42 };
+    registry.publishSessionEvent('session-1', firstEvent);
+    const disconnected = registry.subscribeSession('session-1', () => undefined, 0);
+    disconnected();
+    registry.publishSessionEvent('session-1', secondEvent);
+    const received: Array<{ sequence: number; event: typeof secondEvent }> = [];
+    registry.subscribeSession('session-1', envelope => {
+      received.push(envelope as { sequence: number; event: typeof secondEvent });
+    }, 1);
+
+    expect(controller.signal.aborted).toBe(false);
+    expect(queue.get(task.id)?.status).toBe('queued');
+    expect(received).toEqual([{ sequence: 2, event: secondEvent }]);
+    expect(registry.getSessionEvents('session-1', 0)).toEqual([
+      { sequence: 1, event: firstEvent },
+      { sequence: 2, event: secondEvent },
+    ]);
+  });
+
+  it('notifySessionRenamed 通过全局活动流广播新标题', () => {
+    const queue = new TaskQueue({ dataFile: file, autoStart: false });
+    const registry = new ActivityRegistry(queue);
+    const received: Array<{ type: string; sessionId?: string; title?: string }> = [];
+    const unsubscribe = registry.subscribe(event => {
+      received.push(event);
+    });
+
+    registry.notifySessionRenamed('session-1', '秋夜诗篇');
+    unsubscribe();
+    registry.notifySessionRenamed('session-2', '忽略我');
+
+    expect(received).toEqual([{ type: 'session:renamed', sessionId: 'session-1', title: '秋夜诗篇' }]);
+  });
 });

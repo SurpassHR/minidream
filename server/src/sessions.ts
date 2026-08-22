@@ -10,6 +10,12 @@ import { dirname } from 'node:path';
 export interface StoredMessage {
   role: 'user' | 'assistant';
   content: string;
+  thinking?: string;
+  thinkingDurationMs?: number;
+  status?: string;
+  toolCalls?: unknown[];
+  tasks?: unknown[];
+  actionCards?: unknown[];
   stages?: unknown[];
   jobId?: string;
 }

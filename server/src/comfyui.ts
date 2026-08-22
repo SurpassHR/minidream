@@ -109,9 +109,16 @@ export async function submitPrompt(prompt: Record<string, unknown>, clientId: st
     }),
   });
   if (res.node_errors && Object.keys(res.node_errors).length > 0) {
-    const first = Object.values(res.node_errors)[0] as { errors?: { message?: string }[] };
-    const msg = first?.errors?.[0]?.message ?? JSON.stringify(first);
-    throw new ComfyUIError(`工作流校验失败：${msg}`);
+    // node_errors: { [nodeId]: { errors: [{ type, message, details }] } }
+    const [nodeId, nodeError] = Object.entries(res.node_errors)[0] as [
+      string,
+      { errors?: { message?: string; details?: string }[] },
+    ];
+    const first = nodeError?.errors?.[0];
+    const msg = first?.message ?? JSON.stringify(nodeError);
+    const details = typeof first?.details === 'string' && first.details.trim() ? `（${first.details.trim().slice(0, 300)}）` : '';
+    const node = nodeId ? `（节点 ${nodeId}）` : '';
+    throw new ComfyUIError(`工作流校验失败：${msg}${details}${node}`);
   }
   return res;
 }

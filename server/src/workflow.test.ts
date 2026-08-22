@@ -95,7 +95,7 @@ const OBJECT_INFO: Record<string, any> = {
         steps: ['INT', { default: 20 }],
         cfg: ['FLOAT', { default: 7 }],
         sampler_name: [['euler', 'dpmpp_2m'], {}],
-        scheduler: [['normal', 'karras'], {}],
+        scheduler: [['normal', 'karras', 'simple', 'exponential', 'sgm_uniform', 'ddim_uniform', 'beta'], {}],
         denoise: ['FLOAT', { default: 1 }],
       },
     },
@@ -125,7 +125,14 @@ const OBJECT_INFO: Record<string, any> = {
     output: ['INT', 'INT', 'INT'],
   },
   VAELoader: {
-    input: { required: { vae_name: [['a.safetensors'], {}] } },
+    input: {
+      required: {
+        vae_name: [
+          ['a.safetensors', 'minimax_h3_video_vae_fp16.safetensors', 'minimax_h3_audio_vae_fp32.safetensors', 'qwen_image_vae.safetensors'],
+          {},
+        ],
+      },
+    },
     output: ['VAE'],
   },
   VAEDecode: {
@@ -153,7 +160,22 @@ const OBJECT_INFO: Record<string, any> = {
     output: ['LATENT', 'LATENT'],
   },
   UNETLoader: {
-    input: { required: { unet_name: [['a.safetensors'], {}], weight_dtype: ['COMBO', {}] } },
+    input: {
+      required: {
+        unet_name: [
+          [
+            'a.safetensors',
+            // 模板实际引用的模型（与 ComfyUI 常见安装目录一致，供 buildPrompt 校验）
+            'minimax_h3_fl2va_pruned_int8_convrot.safetensors',
+            'minimax_h3_ref2va_pruned_int8_convrot.safetensors',
+            'krea2_turbo_fp8_scaled.safetensors',
+            'KREA2/krea2_turbo_int8_convrot.safetensors',
+          ],
+          {},
+        ],
+        weight_dtype: ['COMBO', {}],
+      },
+    },
     output: ['MODEL'],
   },
   TextGenerate: {
@@ -184,7 +206,16 @@ const OBJECT_INFO: Record<string, any> = {
     output: ['*'],
   },
   CLIPLoader: {
-    input: { required: { clip_name: [['a.safetensors'], {}], type: ['COMBO', {}], device: ['COMBO', {}] } },
+    input: {
+      required: {
+        clip_name: [
+          ['a.safetensors', 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', 'qwen3vl_4b_fp8_scaled.safetensors'],
+          {},
+        ],
+        type: ['COMBO', {}],
+        device: ['COMBO', {}],
+      },
+    },
     output: ['CLIP'],
   },
   RandomNoise: {
@@ -220,7 +251,22 @@ const OBJECT_INFO: Record<string, any> = {
     output: ['*'],
   },
   LoraLoaderModelOnly: {
-    input: { required: { lora_name: [['a.safetensors'], {}], strength_model: ['FLOAT', {}] }, optional: { model: ['MODEL', {}] } },
+    input: {
+      required: {
+        lora_name: [
+          [
+            'a.safetensors',
+            'KREA2/Afterlight_v1.safetensors',
+            'krea2_style_reference.safetensors',
+            'minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors',
+            'minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors',
+          ],
+          {},
+        ],
+        strength_model: ['FLOAT', {}],
+      },
+      optional: { model: ['MODEL', {}] },
+    },
     output: ['MODEL'],
   },
   MiniMaxH3ImageToVideo: {
@@ -483,5 +529,79 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(stylePrompt['30_sg19'].inputs.value).toBe('A fantasy treehouse');
     expect(stylePrompt['69'].class_type).toBe('LoadImage');
     expect(stylePrompt['69'].inputs.image).toBe('style_input.png');
+  });
+
+  /* ---------- 提交前校验（缺失模型 / 子目录别名 / 非法 combo） ---------- */
+
+  it('模型装在子目录时按 basename 别名解析为已安装路径', () => {
+    const prompt = {
+      '1': {
+        class_type: 'UNETLoader',
+        inputs: { unet_name: 'minimax_h3_fl2va_pruned_int8_convrot.safetensors', weight_dtype: 'default' },
+      },
+    };
+    const oi = {
+      UNETLoader: {
+        input: {
+          required: {
+            unet_name: [['MINIMAX/H3/minimax_h3_fl2va_pruned_int8_convrot.safetensors'], {}],
+          },
+        },
+      },
+    };
+    workflow.resolveModelCombos(prompt, oi);
+    expect(prompt['1'].inputs.unet_name).toBe('MINIMAX/H3/minimax_h3_fl2va_pruned_int8_convrot.safetensors');
+  });
+
+  it('模型缺失时给出可读错误（含缺失文件名与同类已安装模型）', () => {
+    const prompt = {
+      '1': {
+        class_type: 'UNETLoader',
+        inputs: { unet_name: 'krea2_turbo_fp8_scaled.safetensors' },
+      },
+    };
+    const oi = {
+      UNETLoader: {
+        input: { required: { unet_name: [['KREA2/krea2_turbo_int8_convrot.safetensors'], {}] } },
+      },
+    };
+    expect(() => workflow.resolveModelCombos(prompt, oi)).toThrowError(
+      /krea2_turbo_fp8_scaled\.safetensors.*diffusion_models.*krea2_turbo_int8_convrot/s,
+    );
+  });
+
+  it('非文件 combo 值不在允许列表时给出可读错误', () => {
+    const prompt = {
+      '1': {
+        class_type: 'KSampler',
+        inputs: { sampler_name: 'not_a_sampler' },
+      },
+    };
+    const oi = {
+      KSampler: {
+        input: { required: { sampler_name: [['euler', 'dpmpp_2m'], {}] } },
+      },
+    };
+    expect(() => workflow.validateComboValues(prompt, oi)).toThrowError(/sampler_name.*not_a_sampler/);
+  });
+
+  it('buildPrompt 在 FP8 模型缺失时直接给出可读错误（而非 ComfyUI 的 Value not in list）', async () => {
+    const oiNoFp8 = JSON.parse(JSON.stringify(OBJECT_INFO)) as typeof OBJECT_INFO;
+    oiNoFp8.UNETLoader.input.required.unet_name[0] = ['KREA2/krea2_turbo_int8_convrot.safetensors'];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL | Request) => {
+        const u = String(url);
+        if (u.includes('/object_info')) {
+          return new Response(JSON.stringify(oiNoFp8), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        throw new Error(`unexpected fetch: ${u}`);
+      }),
+    );
+    workflow.invalidateComfyCaches();
+    const spec = await workflow.introspectWorkflow(krea2T2iJson, oiNoFp8);
+    await expect(workflow.buildPrompt(spec, krea2T2iJson, { prompt: '可爱的小猫' })).rejects.toThrowError(
+      /krea2_turbo_fp8_scaled\.safetensors/,
+    );
   });
 });

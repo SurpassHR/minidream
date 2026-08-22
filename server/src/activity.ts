@@ -12,11 +12,23 @@ export interface ActiveSession {
   status: ActiveSessionStatus;
 }
 
+/** 与聊天 SSE 共用的、可在连接断开后回放的会话事件。 */
+export interface SessionStreamEvent {
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface SessionEventEnvelope {
+  sequence: number;
+  event: SessionStreamEvent;
+}
+
 export type ActivityEvent =
   | { type: 'session:started'; session: ActiveSession }
   | { type: 'session:updated'; session: ActiveSession }
   | { type: 'session:canceled'; session: ActiveSession }
   | { type: 'session:finished'; session: ActiveSession }
+  | { type: 'session:renamed'; sessionId: string; title: string }
   | { type: 'task:updated'; task: TaskItem };
 
 export interface ActivitySnapshot {
@@ -27,6 +39,8 @@ export interface ActivitySnapshot {
 export class ActivityRegistry {
   private readonly sessions = new Map<string, ActiveSession>();
   private readonly controllers = new Map<string, AbortController>();
+  private readonly sessionEvents = new Map<string, SessionEventEnvelope[]>();
+  private readonly sessionSubscribers = new Map<string, Set<(event: SessionEventEnvelope) => void>>();
   private readonly emitter = new EventEmitter();
   private readonly onTaskChange: (task: TaskItem) => void;
   private readonly onTaskProgress: (task: TaskItem) => void;
@@ -52,6 +66,8 @@ export class ActivityRegistry {
     };
     this.sessions.set(sessionId, session);
     this.controllers.set(sessionId, controller);
+    this.sessionEvents.set(sessionId, []);
+    this.sessionSubscribers.set(sessionId, new Set());
     this.emit({ type: 'session:started', session: this.cloneSession(session) });
     return session;
   }
@@ -73,7 +89,11 @@ export class ActivityRegistry {
     this.emit({ type: 'session:finished', session: this.cloneSession(session) });
     setTimeout(() => {
       const current = this.sessions.get(sessionId);
-      if (current && current.status === status) this.sessions.delete(sessionId);
+      if (current && current.status === status) {
+        this.sessions.delete(sessionId);
+        this.sessionEvents.delete(sessionId);
+        this.sessionSubscribers.delete(sessionId);
+      }
     }, 60_000).unref();
   }
 
@@ -95,6 +115,43 @@ export class ActivityRegistry {
     return session ? this.cloneSession(session) : undefined;
   }
 
+  /** 将 Agent/任务事件写入当前运行实例，并广播给所有连接订阅者。 */
+  public publishSessionEvent(sessionId: string, event: SessionStreamEvent): number {
+    if (!this.sessions.has(sessionId)) return 0;
+    const events = this.sessionEvents.get(sessionId) ?? [];
+    const envelope: SessionEventEnvelope = {
+      sequence: (events.at(-1)?.sequence ?? 0) + 1,
+      event: { ...event },
+    };
+    events.push(envelope);
+    this.sessionEvents.set(sessionId, events);
+    for (const listener of this.sessionSubscribers.get(sessionId) ?? []) {
+      listener(this.cloneEnvelope(envelope));
+    }
+    return envelope.sequence;
+  }
+
+  public getSessionEvents(sessionId: string, afterSequence = 0): SessionEventEnvelope[] {
+    return (this.sessionEvents.get(sessionId) ?? [])
+      .filter(envelope => envelope.sequence > afterSequence)
+      .map(envelope => this.cloneEnvelope(envelope));
+  }
+
+  /** 订阅会话事件；订阅建立时先回放指定序号之后的事件。 */
+  public subscribeSession(
+    sessionId: string,
+    listener: (event: SessionEventEnvelope) => void,
+    afterSequence = 0,
+  ): () => void {
+    const subscribers = this.sessionSubscribers.get(sessionId);
+    if (!subscribers) return () => undefined;
+    subscribers.add(listener);
+    for (const event of this.getSessionEvents(sessionId, afterSequence)) {
+      listener(event);
+    }
+    return () => subscribers.delete(listener);
+  }
+
   public snapshot(): ActivitySnapshot {
     const tasks = this.taskQueue
       .list()
@@ -104,6 +161,11 @@ export class ActivityRegistry {
       sessions: Array.from(this.sessions.values()).map(session => this.cloneSession(session)),
       tasks,
     };
+  }
+
+  /** 会话被自动/手动重命名后广播到全局活动流（供侧边栏实时更新标题）。 */
+  public notifySessionRenamed(sessionId: string, title: string): void {
+    this.emit({ type: 'session:renamed', sessionId, title });
   }
 
   public subscribe(listener: (event: ActivityEvent) => void): () => void {
@@ -117,5 +179,9 @@ export class ActivityRegistry {
 
   private cloneSession(session: ActiveSession): ActiveSession {
     return { ...session, taskIds: [...session.taskIds] };
+  }
+
+  private cloneEnvelope(envelope: SessionEventEnvelope): SessionEventEnvelope {
+    return { sequence: envelope.sequence, event: { ...envelope.event } };
   }
 }

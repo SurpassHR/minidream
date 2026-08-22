@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, readSettings, updateStorageSettings } from './settings.js';
+import { DEFAULT_SETTINGS, readSettings, updateAgentSettings, updateStorageSettings } from './settings.js';
 
 let dir: string;
 let file: string;
@@ -14,6 +14,29 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe('agent settings', () => {
+  it('缺少配置时使用 minimal thinking 默认值', () => {
+    expect(readSettings(file).agent).toEqual(DEFAULT_SETTINGS.agent);
+  });
+
+  it('保存模型与 thinking 强度并保留其他设置', () => {
+    const updated = updateAgentSettings(file, {
+      model: ' anthropic/claude-sonnet-4 ',
+      thinking: 'off',
+    });
+
+    expect(updated.agent).toEqual({ model: 'anthropic/claude-sonnet-4', thinking: 'off' });
+    expect(readSettings(file).comfyui).toEqual(DEFAULT_SETTINGS.comfyui);
+    expect(readSettings(file).imageGen).toEqual(DEFAULT_SETTINGS.imageGen);
+  });
+
+  it('忽略无效 thinking，保留当前配置', () => {
+    updateAgentSettings(file, { thinking: 'high' });
+    const updated = updateAgentSettings(file, { thinking: 'invalid' as never });
+    expect(updated.agent.thinking).toBe('high');
+  });
 });
 
 describe('storage settings', () => {

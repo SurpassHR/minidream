@@ -26,13 +26,29 @@ describe('readSessions', () => {
   });
 
   it('完整消息（含 stages/jobId）可往返', () => {
-    const msg = asstMsg('生成完成', { stages: [{ type: 'done', logs: ['ok'] }], jobId: 'j-1' });
+    const msg = asstMsg('生成完成', {
+      stages: [{ type: 'done', logs: ['ok'] }],
+      jobId: 'j-1',
+      thinking: '已分析需求',
+      toolCalls: [{ callId: 'call-1', name: 'generation.submit' }],
+      tasks: [{ id: 'task-1', status: 'completed' }],
+      actionCards: [{ title: '再次生成' }],
+    });
     const f = appendMessage(file, null, userMsg('画一只猫'));
     appendMessage(file, f.sessionId, msg);
     const loaded = sessionMessages(file, f.sessionId);
     expect(loaded).toEqual([
       { role: 'user', content: '画一只猫' },
-      { role: 'assistant', content: '生成完成', stages: [{ type: 'done', logs: ['ok'] }], jobId: 'j-1' },
+      {
+        role: 'assistant',
+        content: '生成完成',
+        stages: [{ type: 'done', logs: ['ok'] }],
+        jobId: 'j-1',
+        thinking: '已分析需求',
+        toolCalls: [{ callId: 'call-1', name: 'generation.submit' }],
+        tasks: [{ id: 'task-1', status: 'completed' }],
+        actionCards: [{ title: '再次生成' }],
+      },
     ]);
   });
 });

@@ -15,7 +15,9 @@ import {
   updateImageGenSettings,
   updateComfyUISettings,
   updateStorageSettings,
+  updateAgentSettings,
   type ImageGenSettings,
+  type AgentSettings,
 } from './settings.js';
 import {
   buildSpecsCached,
@@ -26,8 +28,9 @@ import { cancelJob, subscribeJob, getJob, jobSnapshot } from './jobs.js';
 import { ActivityRegistry } from './activity.js';
 import { DraftStore } from './drafts.js';
 import { TaskQueue } from './tasks/queue.js';
+import type { TaskItem } from './tasks/types.js';
 import { createDirectorMCPServer, type McpServerInstance } from './mcp/server.js';
-import { runAgentStream, buildAgentInput, type AgentStreamEvent } from './agent/bridge.js';
+import { listAgentModels, runAgentStream, buildAgentInput, generateConversationTitle, type AgentStreamEvent } from './agent/bridge.js';
 import {
   SessionError,
   appendMessage,
@@ -150,6 +153,44 @@ app.post('/api/sessions/:id/cancel', (req, res) => {
   res.json({ ok: true, sessionId: id, canceledTaskIds: canceledTasks.map(task => task.id) });
 });
 
+/** 运行中会话事件流：刷新后的客户端可回放并继续订阅同一轮 Agent 输出 */
+app.get('/api/sessions/:id/events', (req, res) => {
+  if (!activityRegistry.getSession(req.params.id)) {
+    res.status(404).json({ error: 'session is not running' });
+    return;
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const parsedAfter = Number(req.query.after ?? 0);
+  const afterSequence = Number.isFinite(parsedAfter) && parsedAfter >= 0 ? parsedAfter : 0;
+  let closed = false;
+  let unsubscribe: () => void = () => undefined;
+  const send = (envelope: { sequence: number; event: Record<string, unknown> }) => {
+    if (closed) return;
+    res.write(`id: ${envelope.sequence}\nevent: session:event\ndata: ${JSON.stringify(envelope)}\n\n`);
+    if (envelope.event.type === 'agent:end') {
+      closed = true;
+      unsubscribe();
+      res.end();
+    }
+  };
+  unsubscribe = activityRegistry.subscribeSession(req.params.id, send, afterSequence);
+  if (closed) unsubscribe();
+  const heartbeat = setInterval(() => {
+    if (!closed) res.write(': ping\n\n');
+  }, 15_000);
+
+  req.on('close', () => {
+    closed = true;
+    clearInterval(heartbeat);
+    unsubscribe();
+  });
+});
+
 /** 更新会话最后一条消息（SSE 终态落库：done/error/cancelled） */
 app.post('/api/sessions/:id/messages/last', (req, res) => {
   try {
@@ -157,6 +198,12 @@ app.post('/api/sessions/:id/messages/last', (req, res) => {
     const msg: StoredMessage = {
       role: body.role === 'user' ? 'user' : 'assistant',
       content: typeof body.content === 'string' ? body.content : '',
+      thinking: typeof body.thinking === 'string' ? body.thinking : undefined,
+      thinkingDurationMs: typeof body.thinkingDurationMs === 'number' ? body.thinkingDurationMs : undefined,
+      status: typeof body.status === 'string' ? body.status : undefined,
+      toolCalls: Array.isArray(body.toolCalls) ? body.toolCalls : undefined,
+      tasks: Array.isArray(body.tasks) ? body.tasks : undefined,
+      actionCards: Array.isArray(body.actionCards) ? body.actionCards : undefined,
       stages: Array.isArray(body.stages) ? body.stages : undefined,
       jobId: typeof body.jobId === 'string' ? body.jobId : undefined,
     };
@@ -316,9 +363,29 @@ app.get('/api/settings', (_req, res) => {
   const current = readSettings(SETTINGS_FILE);
   res.json({
     comfyui: { baseUrl: COMFYUI_BASE_URL },
+    agent: current.agent,
     imageGen: current.imageGen,
     storage: current.storage,
   });
+});
+
+/** Agent 模型列表：设置弹窗按需从当前 Pi 配置读取 */
+app.get('/api/agent/models', async (_req, res) => {
+  res.json({ models: await listAgentModels() });
+});
+
+/** 更新 Agent 默认模型与 thinking 强度 */
+app.post('/api/settings/agent', (req, res) => {
+  try {
+    const partial: Partial<AgentSettings> = {
+      model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+      thinking: typeof req.body?.thinking === 'string' ? req.body.thinking as AgentSettings['thinking'] : undefined,
+    };
+    const updated = updateAgentSettings(SETTINGS_FILE, partial);
+    res.json({ ok: true, agent: updated.agent });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: (e as Error).message });
+  }
 });
 
 /** 更新生图默认设置 */
@@ -616,54 +683,80 @@ app.post('/api/chat', async (req, res) => {
   }
   const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : null;
 
-  // 1. 用户消息落库（会话不存在时自动创建）
-  const append = appendMessage(SESSIONS_FILE, sessionId, { role: 'user', content: message.trim() });
-  const sid = append.sessionId;
-
   const isStream = req.headers.accept === 'text/event-stream' || req.query.stream === 'true' || req.body?.stream === true;
 
+  // v1 时序：先建立 SSE，让浏览器立即进入流式读取，再做同步会话落盘。
   if (isStream) {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders?.();
+  }
 
-    const sendEvent = (event: string, data: any) => {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    };
+  // 1. 用户消息落库（会话不存在时自动创建）
+  const append = appendMessage(SESSIONS_FILE, sessionId, { role: 'user', content: message.trim() });
+  const sid = append.sessionId;
+
+  // 会话首条消息时，后台用 LLM 生成对话标题（不阻塞主流程；失败保留截断标题）
+  const initialTitle = append.file.sessions.find(s => s.id === sid)?.title ?? '';
+  if ((append.file.sessions.find(s => s.id === sid)?.messages.length ?? 0) === 1) {
+    void autoTitleSession(sid, message.trim(), initialTitle);
+  }
+
+  if (isStream) {
 
     let fullThinking = '';
     let fullText = '';
+    const fullToolCalls: Array<Record<string, unknown>> = [];
+    const sessionTasks = new Map<string, TaskItem>();
     const taskUnsubscribes: Array<() => void> = [];
     const agentController = new AbortController();
     let agentDone = false;
     let activeTaskCount = 0;
     let responseEnded = false;
-    let cancelRequested = false;
+    let responseConnected = true;
+    let runFinalized = false;
+    let unsubscribeResponse: () => void = () => undefined;
     activityRegistry.startSession(sid, message.trim(), agentController);
-    sendEvent('agent:started', { sessionId: sid });
+
+    const publishEvent = (type: string, data: Record<string, unknown> = {}) => {
+      activityRegistry.publishSessionEvent(sid, { type, ...data });
+    };
+    const sendEvent = (type: string, data: Record<string, unknown> = {}) => {
+      publishEvent(type, data);
+    };
+    unsubscribeResponse = activityRegistry.subscribeSession(sid, ({ event }) => {
+      if (!responseConnected || responseEnded) return;
+      res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    });
+    publishEvent('agent:started', { sessionId: sid });
 
     const cleanupAndEnd = () => {
-      if (responseEnded || !agentDone || (!cancelRequested && !agentController.signal.aborted && activeTaskCount > 0)) return;
-      responseEnded = true;
-      const canceled = cancelRequested || agentController.signal.aborted;
+      if (runFinalized || !agentDone || (!agentController.signal.aborted && activeTaskCount > 0)) return;
+      runFinalized = true;
+      const canceled = agentController.signal.aborted;
       const stages = canceled ? [{ type: 'error', logs: ['对话已终止'] }] : undefined;
       appendMessage(SESSIONS_FILE, sid, {
         role: 'assistant',
         content: fullText || (canceled ? '对话已终止。' : ''),
+        thinking: fullThinking || undefined,
+        toolCalls: fullToolCalls.length ? fullToolCalls : undefined,
+        tasks: sessionTasks.size ? [...sessionTasks.values()] : undefined,
         stages,
       });
+      publishEvent('agent:end', { sessionId: sid, canceled });
       activityRegistry.finishSession(sid, canceled ? 'canceled' : 'completed');
-      sendEvent('agent:end', { sessionId: sid, canceled });
-      res.end();
+      taskUnsubscribes.forEach(unsub => unsub());
+      unsubscribeResponse();
+      if (responseConnected && !responseEnded && !res.writableEnded) {
+        responseEnded = true;
+        res.end();
+      }
     };
 
     res.on('close', () => {
-      if (!res.writableEnded && !agentDone) {
-        cancelRequested = true;
-        activityRegistry.cancelSession(sid);
-      }
-      taskUnsubscribes.forEach(unsub => unsub());
+      responseConnected = false;
+      unsubscribeResponse();
     });
 
     const mcpUrl = mcpServer.getUrl() || `http://127.0.0.1:${PORT}/api/mcp`;
@@ -678,20 +771,35 @@ app.post('/api/chat', async (req, res) => {
         sessionId: sid,
         signal: agentController.signal,
         mcpServerUrl: mcpUrl,
+        model: typeof req.body?.agentModel === 'string' && req.body.agentModel.trim()
+          ? req.body.agentModel.trim()
+          : readSettings(SETTINGS_FILE).agent.model || undefined,
+        thinking: typeof req.body?.thinking === 'string' && req.body.thinking.trim()
+          ? req.body.thinking
+          : readSettings(SETTINGS_FILE).agent.thinking,
         onEvent: (evt: AgentStreamEvent) => {
-          if (evt.type === 'thinking') {
+          if (evt.type === 'status') {
+            sendEvent('agent:status', { status: evt.status });
+          } else if (evt.type === 'thinking') {
             fullThinking += evt.delta || '';
             sendEvent('agent:thinking', { delta: evt.delta });
           } else if (evt.type === 'text') {
             fullText += evt.delta || '';
             sendEvent('agent:text', { delta: evt.delta });
           } else if (evt.type === 'tool_call') {
+            fullToolCalls.push({
+              callId: evt.tool?.id,
+              name: evt.tool?.name,
+              args: evt.tool?.args,
+            });
             sendEvent('tool:call', {
               callId: evt.tool?.id,
               name: evt.tool?.name,
               args: evt.tool?.args,
             });
           } else if (evt.type === 'tool_result') {
+            const toolCall = fullToolCalls.find(call => call.callId === evt.result?.id);
+            if (toolCall) toolCall.result = evt.result?.content;
             sendEvent('tool:result', {
               callId: evt.result?.id,
               name: evt.result?.name,
@@ -733,6 +841,7 @@ app.post('/api/chat', async (req, res) => {
               if (task) {
                 taskQueue.bindSession(task.id, sid);
                 activityRegistry.attachTask(sid, task.id);
+                sessionTasks.set(task.id, task);
                 activeTaskCount++;
                 sendEvent('task:queued', { taskId: task.id, position: 1, task });
 
@@ -741,6 +850,7 @@ app.post('/api/chat', async (req, res) => {
                     const activeStage =
                       updatedTask.stages.find((s) => s.status === 'active') ||
                       updatedTask.stages[updatedTask.stages.length - 1];
+                    sessionTasks.set(updatedTask.id, updatedTask);
                     sendEvent('task:progress', {
                       taskId: updatedTask.id,
                       stage: activeStage?.name || 'Processing',
@@ -750,6 +860,7 @@ app.post('/api/chat', async (req, res) => {
                       task: updatedTask,
                     });
                   } else if (tEvt === 'completed') {
+                    sessionTasks.set(updatedTask.id, updatedTask);
                     activeTaskCount--;
                     if (updatedTask.outputs) {
                       for (const out of updatedTask.outputs) {
@@ -764,6 +875,7 @@ app.post('/api/chat', async (req, res) => {
                     sendEvent('task:completed', { taskId: updatedTask.id, task: updatedTask });
                     cleanupAndEnd();
                   } else if (tEvt === 'failed' || tEvt === 'canceled') {
+                    sessionTasks.set(updatedTask.id, updatedTask);
                     activeTaskCount--;
                     sendEvent(tEvt === 'failed' ? 'task:failed' : 'task:canceled', {
                       taskId: updatedTask.id,
@@ -802,19 +914,37 @@ app.post('/api/chat', async (req, res) => {
     sessionId: sid,
   });
 
-  // 3. 助手消息落库；本次新建的会话用回复标题命名
+  // 3. 助手消息落库（首条消息时自动命名已在上面触发）
   appendMessage(SESSIONS_FILE, sid, {
     role: 'assistant',
     content: reply.reply ?? '',
     stages: reply.stages,
     jobId: reply.jobId,
   });
-  if (append.created && reply.title) {
-    renameSession(SESSIONS_FILE, sid, reply.title);
-  }
 
   res.json({ ...reply, sessionId: sid });
 });
+
+/**
+ * 用 LLM 为会话生成标题并落库（fire-and-forget）。
+ * - 仅在会话标题仍是首条消息的截断值时重命名，避免覆盖用户手动修改；
+ * - 成功后通过活动事件实时推送给前端侧边栏。
+ */
+async function autoTitleSession(sid: string, firstMessage: string, initialTitle: string): Promise<void> {
+  const agent = readSettings(SETTINGS_FILE).agent;
+  const title = await generateConversationTitle(firstMessage, {
+    model: agent.model || undefined,
+    thinking: agent.thinking === 'off' ? 'off' : 'minimal',
+    timeoutMs: 12_000,
+  }).catch(() => null);
+  if (!title) return;
+  const current = sessionList(SESSIONS_FILE).sessions.find(s => s.id === sid);
+  if (!current || current.title !== initialTitle) return; // 用户可能已手动重命名
+  renameSession(SESSIONS_FILE, sid, title);
+  // 双通道通知：聊天 SSE（会话仍在流中时实时更新）+ 全局活动流（流结束后也能收到）
+  activityRegistry.publishSessionEvent(sid, { type: 'session:renamed', sessionId: sid, title });
+  activityRegistry.notifySessionRenamed(sid, title);
+}
 
 // 兼容旧 mock（保留，前端不再使用）
 app.post('/api/chat/mock', (req, res) => {

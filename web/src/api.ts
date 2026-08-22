@@ -112,13 +112,14 @@ export interface ToolCallData {
 }
 
 export type StreamChatEvent =
-  | { type: 'agent:started'; sessionId: string }
+  | { type: 'agent:started'; sessionId: string; status?: string }
+  | { type: 'agent:status'; status: string }
   | { type: 'agent:thinking'; delta: string }
   | { type: 'agent:text'; delta: string }
   | { type: 'agent:action_card'; card: ActionCardData }
   | { type: 'tool:call'; callId?: string; name: string; args?: Record<string, unknown> }
   | { type: 'tool:result'; callId?: string; name: string; result?: unknown }
-  | { type: 'task:queued'; taskId: string; position: number }
+  | { type: 'task:queued'; taskId: string; position: number; task?: TaskItem }
   | {
       type: 'task:progress';
       taskId: string;
@@ -139,6 +140,7 @@ export type StreamChatEvent =
   | { type: 'task:failed'; taskId: string; error?: string; task?: TaskItem }
   | { type: 'task:canceled'; taskId: string; task?: TaskItem }
   | { type: 'agent:error'; error: string }
+  | { type: 'session:renamed'; sessionId: string; title: string }
   | { type: 'agent:end'; sessionId?: string; totalTokens?: number; canceled?: boolean };
 
 export interface ChatMessage {
@@ -146,6 +148,8 @@ export interface ChatMessage {
   content: string;
   thinking?: string;
   thinkingDurationMs?: number;
+  /** Agent 尚未产生正文时展示的即时生命周期状态 */
+  status?: string;
   toolCalls?: ToolCallData[];
   tasks?: TaskItem[];
   actionCards?: ActionCardData[];
@@ -222,6 +226,7 @@ export interface ActivitySnapshot {
 export type ActivityStreamEvent =
   | { type: 'snapshot'; snapshot: ActivitySnapshot }
   | { type: 'session:started' | 'session:updated' | 'session:canceled' | 'session:finished'; session: ActiveSession }
+  | { type: 'session:renamed'; sessionId: string; title: string }
   | { type: 'task:updated'; task: TaskItem };
 
 export interface ComfyStatus {
@@ -294,16 +299,45 @@ export interface DraftRecord {
   createdAt: number;
 }
 
+export type AgentThinking = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface AgentSettings {
+  model: string;
+  thinking: AgentThinking;
+}
+
+export interface AgentModel {
+  id: string;
+  provider: string;
+  thinking: boolean;
+  images: boolean;
+}
+
 export interface AppSettings {
   comfyui: {
     baseUrl: string;
   };
+  agent?: AgentSettings;
   imageGen?: ImageGenSettings;
   storage?: StorageSettings;
 }
 
 export async function fetchAppSettings(): Promise<AppSettings> {
   return http('/api/settings');
+}
+
+export async function fetchAgentModels(): Promise<{ models: AgentModel[] }> {
+  return http('/api/agent/models');
+}
+
+export async function saveAgentSettings(
+  agent: Partial<AgentSettings>,
+): Promise<{ ok: boolean; agent: AgentSettings; error?: string }> {
+  return http('/api/settings/agent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(agent),
+  });
 }
 
 export async function saveStorageSettings(outputDir: string): Promise<{ ok: boolean; storage: StorageSettings; error?: string }> {
@@ -350,6 +384,8 @@ export interface SendChatOptions {
   images?: { name?: string; dataUrl: string }[];
   videos?: { name?: string; dataUrl: string }[];
   sessionId?: string | null;
+  agentModel?: string;
+  thinking?: AgentThinking;
 }
 
 export interface ChatReplyWithSession extends ChatReply {
@@ -421,11 +457,13 @@ export async function sendChatStream(
       try {
         const parsed = JSON.parse(dataStr);
         if (eventType === 'agent:started') {
-          onEvent({ type: 'agent:started', sessionId: parsed.sessionId });
+          onEvent({ type: 'agent:started', sessionId: parsed.sessionId, status: parsed.status });
+        } else if (eventType === 'agent:status') {
+          onEvent({ type: 'agent:status', status: parsed.status });
         } else if (eventType === 'agent:thinking') {
           onEvent({ type: 'agent:thinking', delta: parsed.delta });
         } else if (eventType === 'agent:text') {
-          onEvent({ type: 'agent:text', delta: parsed.delta });
+          onEvent({ type: 'agent:text', delta: parsed.delta as string });
         } else if (eventType === 'agent:action_card') {
           onEvent({ type: 'agent:action_card', card: parsed.card });
         } else if (eventType === 'tool:call') {
@@ -447,6 +485,7 @@ export async function sendChatStream(
             type: 'task:queued',
             taskId: parsed.taskId,
             position: parsed.position,
+            task: parsed.task,
           });
         } else if (eventType === 'task:progress') {
           onEvent({
@@ -490,6 +529,12 @@ export async function sendChatStream(
             type: 'agent:error',
             error: parsed.error,
           });
+        } else if (eventType === 'session:renamed') {
+          onEvent({
+            type: 'session:renamed',
+            sessionId: parsed.sessionId,
+            title: parsed.title,
+          });
         } else if (eventType === 'agent:end') {
           onEvent({
             type: 'agent:end',
@@ -513,6 +558,53 @@ export async function fetchActivity(): Promise<ActivitySnapshot> {
 
 export async function cancelSession(sessionId: string): Promise<{ ok: boolean; sessionId: string; canceledTaskIds: string[] }> {
   return http(`/api/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: 'POST' });
+}
+
+export function openSessionEvents(
+  sessionId: string,
+  onEvent: (event: StreamChatEvent, sequence: number) => void,
+): () => void {
+  let closed = false;
+  let sequence = 0;
+  let es: EventSource | null = null;
+  let retryTimer: number | null = null;
+
+  const close = () => {
+    closed = true;
+    if (retryTimer != null) window.clearTimeout(retryTimer);
+    es?.close();
+  };
+
+  const connect = () => {
+    if (closed) return;
+    es = new EventSource(`/api/sessions/${encodeURIComponent(sessionId)}/events?after=${sequence}`);
+    es.addEventListener('session:event', event => {
+      try {
+        const envelope = JSON.parse((event as MessageEvent).data) as {
+          sequence: number;
+          event: StreamChatEvent;
+        };
+        if (envelope.sequence <= sequence) return;
+        sequence = envelope.sequence;
+        onEvent(envelope.event, envelope.sequence);
+        if (envelope.event.type === 'agent:end') close();
+      } catch {
+        /* ignore malformed session event */
+      }
+    });
+    es.onerror = () => {
+      es?.close();
+      if (!closed && retryTimer == null) {
+        retryTimer = window.setTimeout(() => {
+          retryTimer = null;
+          connect();
+        }, 2000);
+      }
+    };
+  };
+
+  connect();
+  return close;
 }
 
 export function openActivityEvents(onEvent: (event: ActivityStreamEvent) => void): () => void {

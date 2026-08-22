@@ -1373,6 +1373,25 @@
   width: 100%;
 }
 
+/* Agent 启动状态 */
+.agent-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.agent-status::before {
+  width: 6px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--brand-deep);
+  content: '';
+  animation: typing-blink 1.2s infinite ease-in-out;
+}
+
 /* 打字机光标 */
 .cursor-blink {
   display: inline-block;
@@ -1993,8 +2012,9 @@
 }
 
 .settings-modal {
-  width: 640px;
-  height: 420px;
+  /* 视口占比：宽度最高约 90vw/960px，高度最高约 86vh/760px，小屏自动缩小 */
+  width: min(90vw, 960px);
+  height: min(86vh, 760px);
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 18px;

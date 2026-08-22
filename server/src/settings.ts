@@ -1,6 +1,5 @@
 /**
  * 设置持久化：JSON 文件存储（照搬 v1 会话存储的原子写方案）。
- * - 结构 { comfyui: { baseUrl: string }, imageGen: ImageGenSettings, storage: { outputDir: string } }
  * - 写入采用原子写（tmp + rename），避免半写损坏
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -12,6 +11,13 @@ export interface ComfyUISettings {
 
 export interface StorageSettings {
   outputDir: string;
+}
+
+export type AgentThinking = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface AgentSettings {
+  model: string;
+  thinking: AgentThinking;
 }
 
 export interface ImageGenSettings {
@@ -28,6 +34,7 @@ export interface ImageGenSettings {
 
 export interface AppSettings {
   comfyui: ComfyUISettings;
+  agent: AgentSettings;
   imageGen: ImageGenSettings;
   storage: StorageSettings;
 }
@@ -48,6 +55,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   comfyui: {
     baseUrl: 'http://127.0.0.1:8188',
   },
+  agent: {
+    model: '',
+    thinking: 'minimal',
+  },
   imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
   storage: {
     outputDir: resolve(process.cwd(), 'data/drafts'),
@@ -58,6 +69,7 @@ export function readSettings(file: string): AppSettings {
   if (!existsSync(file)) {
     return {
       comfyui: { ...DEFAULT_SETTINGS.comfyui },
+      agent: { ...DEFAULT_SETTINGS.agent },
       imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
       storage: { ...DEFAULT_SETTINGS.storage },
     };
@@ -67,11 +79,13 @@ export function readSettings(file: string): AppSettings {
     if (typeof data !== 'object' || data === null) {
       return {
         comfyui: { ...DEFAULT_SETTINGS.comfyui },
+        agent: { ...DEFAULT_SETTINGS.agent },
         imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
         storage: { ...DEFAULT_SETTINGS.storage },
       };
     }
     const comfyui = data.comfyui && typeof data.comfyui === 'object' ? data.comfyui : {};
+    const agent = data.agent && typeof data.agent === 'object' ? data.agent : {};
     const imageGen = data.imageGen && typeof data.imageGen === 'object' ? data.imageGen : {};
     const storage = data.storage && typeof data.storage === 'object' ? data.storage : {};
 
@@ -81,6 +95,12 @@ export function readSettings(file: string): AppSettings {
           typeof comfyui.baseUrl === 'string' && comfyui.baseUrl.trim()
             ? comfyui.baseUrl.trim()
             : DEFAULT_SETTINGS.comfyui.baseUrl,
+      },
+      agent: {
+        model: typeof agent.model === 'string' ? agent.model.trim() : DEFAULT_SETTINGS.agent.model,
+        thinking: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(agent.thinking)
+          ? agent.thinking
+          : DEFAULT_SETTINGS.agent.thinking,
       },
       imageGen: {
         seedMode: imageGen.seedMode === 'fixed' ? 'fixed' : DEFAULT_IMAGE_GEN_SETTINGS.seedMode,
@@ -112,6 +132,7 @@ export function readSettings(file: string): AppSettings {
   } catch {
     return {
       comfyui: { ...DEFAULT_SETTINGS.comfyui },
+      agent: { ...DEFAULT_SETTINGS.agent },
       imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
       storage: { ...DEFAULT_SETTINGS.storage },
     };
@@ -124,6 +145,20 @@ export function writeSettings(file: string, s: AppSettings): AppSettings {
   writeFileSync(tmp, JSON.stringify(s, null, 2), 'utf8');
   renameSync(tmp, file);
   return s;
+}
+
+export function updateAgentSettings(file: string, partial: Partial<AgentSettings>): AppSettings {
+  const current = readSettings(file);
+  const thinking = partial.thinking && ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(partial.thinking)
+    ? partial.thinking
+    : current.agent.thinking;
+  return writeSettings(file, {
+    ...current,
+    agent: {
+      model: typeof partial.model === 'string' ? partial.model.trim() : current.agent.model,
+      thinking,
+    },
+  });
 }
 
 export function updateImageGenSettings(file: string, partial: Partial<ImageGenSettings>): AppSettings {
