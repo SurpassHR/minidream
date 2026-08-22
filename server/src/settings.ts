@@ -13,6 +13,13 @@ export interface StorageSettings {
   outputDir: string;
 }
 
+/** 生成插件（工作流）配置：停用状态 + 每个工作流的 combo 参数覆盖（paramId → 值） */
+export interface PluginsSettings {
+  disabled: string[];
+  /** workflowId → { paramId: 选中值 }，仅存与默认不同的覆盖 */
+  config: Record<string, Record<string, string>>;
+}
+
 export type AgentThinking = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface AgentSettings {
@@ -37,6 +44,7 @@ export interface AppSettings {
   agent: AgentSettings;
   imageGen: ImageGenSettings;
   storage: StorageSettings;
+  plugins: PluginsSettings;
 }
 
 export const DEFAULT_IMAGE_GEN_SETTINGS: ImageGenSettings = {
@@ -63,6 +71,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   storage: {
     outputDir: resolve(process.cwd(), 'data/drafts'),
   },
+  plugins: {
+    disabled: [],
+    config: {},
+  },
 };
 
 export function readSettings(file: string): AppSettings {
@@ -72,6 +84,7 @@ export function readSettings(file: string): AppSettings {
       agent: { ...DEFAULT_SETTINGS.agent },
       imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
       storage: { ...DEFAULT_SETTINGS.storage },
+      plugins: { disabled: [], config: {} },
     };
   }
   try {
@@ -82,12 +95,14 @@ export function readSettings(file: string): AppSettings {
         agent: { ...DEFAULT_SETTINGS.agent },
         imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
         storage: { ...DEFAULT_SETTINGS.storage },
+        plugins: { disabled: [], config: {} },
       };
     }
     const comfyui = data.comfyui && typeof data.comfyui === 'object' ? data.comfyui : {};
     const agent = data.agent && typeof data.agent === 'object' ? data.agent : {};
     const imageGen = data.imageGen && typeof data.imageGen === 'object' ? data.imageGen : {};
     const storage = data.storage && typeof data.storage === 'object' ? data.storage : {};
+    const plugins = data.plugins && typeof data.plugins === 'object' ? data.plugins : {};
 
     return {
       comfyui: {
@@ -128,6 +143,12 @@ export function readSettings(file: string): AppSettings {
             ? storage.outputDir.trim()
             : DEFAULT_SETTINGS.storage.outputDir,
       },
+      plugins: {
+        disabled: Array.isArray(plugins.disabled)
+          ? plugins.disabled.filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0)
+          : [],
+        config: normalizePluginConfig(plugins.config),
+      },
     };
   } catch {
     return {
@@ -135,8 +156,24 @@ export function readSettings(file: string): AppSettings {
       agent: { ...DEFAULT_SETTINGS.agent },
       imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
       storage: { ...DEFAULT_SETTINGS.storage },
+      plugins: { disabled: [], config: {} },
     };
   }
+}
+
+/** 规整插件配置：{ workflowId: { paramId: string } } */
+function normalizePluginConfig(raw: unknown): Record<string, Record<string, string>> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, Record<string, string>> = {};
+  for (const [wfId, cfg] of Object.entries(raw as Record<string, unknown>)) {
+    if (!cfg || typeof cfg !== 'object') continue;
+    const entries: Record<string, string> = {};
+    for (const [paramId, value] of Object.entries(cfg as Record<string, unknown>)) {
+      if (paramId.trim() && typeof value === 'string' && value.trim()) entries[paramId] = value;
+    }
+    if (Object.keys(entries).length) out[wfId] = entries;
+  }
+  return out;
 }
 
 export function writeSettings(file: string, s: AppSettings): AppSettings {
@@ -194,6 +231,21 @@ export function updateStorageSettings(file: string, storage: Partial<StorageSett
   return writeSettings(file, {
     ...current,
     storage: { ...current.storage, outputDir },
+  });
+}
+
+export function updatePluginsSettings(file: string, plugins: Partial<PluginsSettings>): AppSettings {
+  const current = readSettings(file);
+  const disabled = Array.isArray(plugins.disabled)
+    ? plugins.disabled.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+    : current.plugins.disabled;
+  const config =
+    plugins.config && typeof plugins.config === 'object'
+      ? normalizePluginConfig(plugins.config)
+      : current.plugins.config;
+  return writeSettings(file, {
+    ...current,
+    plugins: { disabled, config },
   });
 }
 

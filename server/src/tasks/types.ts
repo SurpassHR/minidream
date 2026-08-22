@@ -50,6 +50,10 @@ export interface TaskItem {
   params?: Record<string, unknown>;
   sessionId?: string;
   promptGraph?: Record<string, unknown>;
+  /** 生成比例（如 16:9 / 智能），用于计算目标分辨率 */
+  ratio?: string;
+  /** 生成尺寸（MP） */
+  size?: number;
   stages: TaskStage[];
   outputs?: TaskOutput[];
   error?: string;
@@ -68,4 +72,8 @@ export interface TaskSubmitInput {
   params?: Record<string, unknown>;
   sessionId?: string;
   promptGraph?: Record<string, unknown>;
+  /** 生成比例（如 16:9 / 智能），用于计算目标分辨率 */
+  ratio?: string;
+  /** 生成尺寸（MP） */
+  size?: number;
 }

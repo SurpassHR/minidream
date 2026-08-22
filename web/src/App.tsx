@@ -228,7 +228,6 @@ export default function App() {
   const [loadedConv, setLoadedConv] = useState<string | null>(null);
   const [workflows, setWorkflows] = useState<WorkflowSpec[]>([]);
   const [comfyStatus, setComfyStatus] = useState<ComfyStatus | null>(null);
-  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme');
@@ -671,6 +670,9 @@ export default function App() {
   }
 
   const isEmpty = messages.length === 0;
+  // 会话列表只属于「生成」工作台；草稿是全局产物、其余模块未开发，均不显示
+  const isChatView = activeNav === 'generate';
+  const devLabel = data.rail.items.find(item => item.id === activeNav)?.label ?? '该模块';
 
   return (
     <div className="app">
@@ -683,16 +685,18 @@ export default function App() {
         onOpenSettings={() => setSettingsOpen(true)}
       />
       <div className="workbench">
-        <Sidebar
-          createLabel={data.sidebar.createLabel}
-          newChatLabel={data.sidebar.newChatLabel}
-          conversations={conversations}
-          activeId={activeConv}
-          onNewChat={() => void handleNewChat()}
-          onSelect={handleSelectConversation}
-          onRename={id => void handleRenameConversation(id)}
-          onDelete={id => void handleDeleteConversation(id)}
-        />
+        {isChatView && (
+          <Sidebar
+            createLabel={data.sidebar.createLabel}
+            newChatLabel={data.sidebar.newChatLabel}
+            conversations={conversations}
+            activeId={activeConv}
+            onNewChat={() => void handleNewChat()}
+            onSelect={handleSelectConversation}
+            onRename={id => void handleRenameConversation(id)}
+            onDelete={id => void handleDeleteConversation(id)}
+          />
+        )}
         <main className="main">
           <div className="main-statusbar">
             <span className={`status-dot${activity.sessions.some(s => s.status === 'running') || activity.tasks.length > 0 ? ' active' : ''}`} />
@@ -715,21 +719,34 @@ export default function App() {
           )}
           {activeNav === 'drafts' ? (
             <DraftsView />
-          ) : isEmpty ? (
-            <div className="generate-empty">
-              <h1 className="generate-title">{data.hero.title}</h1>
-              <SkillCards skills={data.skills} onTry={handleTrySkill} />
-            </div>
+          ) : activeNav === 'generate' ? (
+            isEmpty ? (
+              <div className="generate-empty">
+                <h1 className="generate-title">{data.hero.title}</h1>
+                <SkillCards skills={data.skills} onTry={handleTrySkill} />
+              </div>
+            ) : (
+              <div className="chat-scroll" ref={chatRef}>
+                <ChatView
+                  messages={messages}
+                  liveIndex={sending ? messages.length - 1 : null}
+                  onRegenerate={handleRegenerate}
+                  onCancelJob={handleCancelJob}
+                  onCancelTask={handleCancelTask}
+                  onActionCard={handleActionCard}
+                />
+              </div>
+            )
           ) : (
-            <div className="chat-scroll" ref={chatRef}>
-              <ChatView
-                messages={messages}
-                liveIndex={sending ? messages.length - 1 : null}
-                onRegenerate={handleRegenerate}
-                onCancelJob={handleCancelJob}
-                onCancelTask={handleCancelTask}
-                onActionCard={handleActionCard}
-              />
+            <div className="dev-view">
+              <div className="dev-view-icon">
+                <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+                  <rect x="6" y="6" width="32" height="32" rx="9" stroke="currentColor" strokeWidth="1.6" />
+                  <path d="M22 15v14M15 22h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                </svg>
+              </div>
+              <h1 className="dev-view-title">{devLabel} 正在开发中</h1>
+              <p className="dev-view-desc">该模块尚未上线，正在加紧建设中，敬请期待。</p>
             </div>
           )}
           {activeNav === 'generate' && <div className="composer-wrap">
@@ -741,10 +758,6 @@ export default function App() {
               onSubmit={opts => handleSend(undefined, opts)}
               onStop={handleStopConversation}
               disabled={sending}
-              workflows={workflows}
-              selectedWorkflowId={selectedWorkflowId}
-              onSelectWorkflow={setSelectedWorkflowId}
-              comfyStatus={comfyStatus}
             />
           </div>}
         </main>
@@ -753,6 +766,7 @@ export default function App() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         comfyStatus={comfyStatus}
+        workflows={workflows}
         onRefreshStatus={refreshComfyStatus}
         onRefreshWorkflows={refreshWorkflows}
       />

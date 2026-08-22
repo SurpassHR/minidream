@@ -16,6 +16,7 @@ import {
   updateComfyUISettings,
   updateStorageSettings,
   updateAgentSettings,
+  updatePluginsSettings,
   type ImageGenSettings,
   type AgentSettings,
 } from './settings.js';
@@ -70,7 +71,17 @@ export const taskQueue = new TaskQueue({
   drafts: draftStore,
 });
 
-export const mcpServer: McpServerInstance = createDirectorMCPServer(taskQueue);
+/** 启用插件（工作流）过滤：disabled 列表中的插件不参与生成 */
+function isWorkflowEnabled(id: string): boolean {
+  const disabled = readSettings(SETTINGS_FILE).plugins.disabled;
+  return !disabled.includes(id);
+}
+
+function filterEnabledWorkflows(specs: WorkflowSpec[]): WorkflowSpec[] {
+  return specs.filter(s => isWorkflowEnabled(s.id));
+}
+
+export const mcpServer: McpServerInstance = createDirectorMCPServer(taskQueue, isWorkflowEnabled);
 export const activityRegistry = new ActivityRegistry(taskQueue);
 
 
@@ -240,9 +251,9 @@ app.get('/api/comfyui/status', async (_req, res) => {
   });
 });
 
-/** workflow 列表（introspection 自动识别输入/参数/输出） */
+/** workflow 列表（introspection 自动识别输入/参数/输出，仅启用中的插件） */
 app.get('/api/workflows', async (_req, res) => {
-  const specs = await buildSpecsCached();
+  const specs = filterEnabledWorkflows(await buildSpecsCached());
   res.json(
     specs.map(s => ({
       id: s.id,
@@ -366,6 +377,7 @@ app.get('/api/settings', (_req, res) => {
     agent: current.agent,
     imageGen: current.imageGen,
     storage: current.storage,
+    plugins: current.plugins,
   });
 });
 
@@ -394,6 +406,47 @@ app.post('/api/settings/image-gen', (req, res) => {
     const partial = req.body as Partial<ImageGenSettings>;
     const updated = updateImageGenSettings(SETTINGS_FILE, partial);
     res.json({ ok: true, imageGen: updated });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: (e as Error).message });
+  }
+});
+
+/** 更新生成插件（工作流）停用状态与参数配置 */
+app.post('/api/settings/plugins', async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const specs = await buildSpecsCached();
+    const known = new Set(specs.map(s => s.id));
+
+    const requested: string[] = Array.isArray(body.disabled)
+      ? body.disabled.filter((id: unknown): id is string => typeof id === 'string')
+      : [];
+    const disabled = requested.filter(id => known.has(id));
+
+    // 参数配置：只保留「已知工作流 + 已知参数 + 值在 combo 列表中（列表为空时不校验）」的条目
+    const config: Record<string, Record<string, string>> = {};
+    const rawConfig =
+      body.config && typeof body.config === 'object'
+        ? (body.config as Record<string, Record<string, unknown>>)
+        : {};
+    for (const [wfId, cfg] of Object.entries(rawConfig)) {
+      if (!known.has(wfId) || !cfg || typeof cfg !== 'object') continue;
+      const spec = specs.find(s => s.id === wfId)!;
+      const byId = new Map(spec.params.map(p => [p.id, p]));
+      const entries: Record<string, string> = {};
+      for (const [paramId, value] of Object.entries(cfg)) {
+        if (typeof value !== 'string' || !value.trim()) continue;
+        const param = byId.get(paramId);
+        if (!param || param.type !== 'combo') continue;
+        // 有 combo 列表时校验值在列表中，避免保存非法值；无列表（ComfyUI 未连接）时放行
+        if (param.options?.length && !param.options.includes(value)) continue;
+        entries[paramId] = value;
+      }
+      if (Object.keys(entries).length) config[wfId] = entries;
+    }
+
+    const updated = updatePluginsSettings(SETTINGS_FILE, { disabled, config });
+    res.json({ ok: true, plugins: updated.plugins });
   } catch (e) {
     res.status(400).json({ ok: false, error: (e as Error).message });
   }
@@ -557,10 +610,12 @@ async function generateReply(
     images?: UploadPayload[];
     videos?: UploadPayload[];
     sessionId?: string;
+    ratio?: string;
+    size?: number;
   },
 ): Promise<ChatReply> {
   const title = message.slice(0, 12) + (message.length > 12 ? '…' : '');
-  const workflows = await buildSpecsCached();
+  const workflows = filterEnabledWorkflows(await buildSpecsCached());
   if (!workflows.length) {
     return {
       title,
@@ -647,6 +702,8 @@ async function generateReply(
       prompt: message,
       params: opts.params,
       sessionId: opts.sessionId,
+      ratio: opts.ratio,
+      size: opts.size,
       imageUploads: opts.images?.filter((item): item is UploadPayload & { dataUrl: string } => typeof item.dataUrl === 'string'),
       videoUploads: opts.videos?.filter((item): item is UploadPayload & { dataUrl: string } => typeof item.dataUrl === 'string'),
     });
@@ -760,6 +817,11 @@ app.post('/api/chat', async (req, res) => {
     });
 
     const mcpUrl = mcpServer.getUrl() || `http://127.0.0.1:${PORT}/api/mcp`;
+    const reqRatio = typeof req.body?.ratio === 'string' ? req.body.ratio.trim() : undefined;
+    const reqSize =
+      typeof req.body?.size === 'number' && Number.isFinite(req.body.size) && req.body.size > 0
+        ? req.body.size
+        : undefined;
     const agentInput = buildAgentInput({
       message: message.trim(),
       images: Array.isArray(req.body?.images) ? req.body.images : undefined,
@@ -840,6 +902,10 @@ app.post('/api/chat', async (req, res) => {
               const task = taskQueue.getTask(taskId);
               if (task) {
                 taskQueue.bindSession(task.id, sid);
+                // 注入本次对话的生成比例/尺寸偏好，执行时换算为分辨率
+                if (reqRatio !== undefined || reqSize !== undefined) {
+                  taskQueue.setGenPrefs(task.id, reqRatio, reqSize);
+                }
                 activityRegistry.attachTask(sid, task.id);
                 sessionTasks.set(task.id, task);
                 activeTaskCount++;
@@ -912,6 +978,11 @@ app.post('/api/chat', async (req, res) => {
     images: Array.isArray(req.body?.images) ? req.body.images : undefined,
     videos: Array.isArray(req.body?.videos) ? req.body.videos : undefined,
     sessionId: sid,
+    ratio: typeof req.body?.ratio === 'string' ? req.body.ratio.trim() : undefined,
+    size:
+      typeof req.body?.size === 'number' && Number.isFinite(req.body.size) && req.body.size > 0
+        ? req.body.size
+        : undefined,
   });
 
   // 3. 助手消息落库（首条消息时自动命名已在上面触发）

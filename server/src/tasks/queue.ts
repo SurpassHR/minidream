@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { TaskItem, TaskOutput, TaskOutputCandidate, TaskStage, TaskStatus, TaskSubmitInput, TaskType } from './types.js';
 import type { DraftStore } from '../drafts.js';
 import { buildPrompt, buildSpecsCached, getWorkflowJson } from '../workflow.js';
+import { computeResolution } from '../resolution.js';
 import {
   cancelPrompt,
   deleteOutput,
@@ -138,6 +139,8 @@ export class TaskQueue extends EventEmitter {
       params: input.params,
       sessionId: input.sessionId,
       promptGraph: input.promptGraph,
+      ratio: input.ratio,
+      size: input.size,
       stages: initialStages,
       createdAt: now,
       updatedAt: now,
@@ -166,6 +169,18 @@ export class TaskQueue extends EventEmitter {
     const task = this.tasks.get(id);
     if (!task || task.status !== 'queued' && task.status !== 'running') return false;
     task.sessionId = sessionId;
+    task.updatedAt = this.nextTimestamp();
+    this.persist();
+    this.emit('task:change', task);
+    return true;
+  }
+
+  /** 任务提交后补充生成偏好（比例/尺寸），执行构建 prompt 时换算为分辨率。 */
+  public setGenPrefs(id: string, ratio?: string, size?: number): boolean {
+    const task = this.tasks.get(id);
+    if (!task) return false;
+    task.ratio = ratio;
+    task.size = size;
     task.updatedAt = this.nextTimestamp();
     this.persist();
     this.emit('task:change', task);
@@ -406,11 +421,19 @@ export class TaskQueue extends EventEmitter {
 
     // 3. 读取全局 Settings，并在队列内部构建唯一 prompt 图
     const settings = this.settingsFile ? readSettings(this.settingsFile).imageGen : undefined;
+    // 插件参数覆盖（设置面板按工作流配置的 unet/clip/vae/lora/sampler/scheduler 等）
+    const pluginConfig = this.settingsFile
+      ? (readSettings(this.settingsFile).plugins.config?.[spec.id] ?? {})
+      : {};
+    // 生成比例+尺寸 → 目标宽高（视频工作流分辨率上限远小于图像）
+    const maxDimension = spec.outputs.some(o => o.kind === 'video') ? 1344 : 2048;
+    const resolution = computeResolution(task.ratio, task.size, maxDimension);
     const prompt = task.promptGraph ?? await buildPrompt(spec, workflowJson, {
       prompt: task.prompt,
       uploaded,
-      params: task.params,
+      params: { ...pluginConfig, ...task.params },
       settings,
+      resolution,
     });
 
     if (signal.aborted) return;

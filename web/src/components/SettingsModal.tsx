@@ -4,12 +4,13 @@ import {
   fetchAppSettings,
   saveAgentSettings,
   saveComfySettings,
-  saveImageGenSettings,
+  savePluginsSettings,
   saveStorageSettings,
   type AgentModel,
   type AgentThinking,
   type ComfyStatus,
-  type ImageGenSettings,
+  type WorkflowParam,
+  type WorkflowSpec,
 } from '../api';
 
 interface Category {
@@ -45,16 +46,6 @@ const CATEGORIES: Category[] = [
     ),
   },
   {
-    id: 'imageGen',
-    label: '生图默认参数',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-        <circle cx="9" cy="9" r="7.5" stroke="currentColor" strokeWidth="1.3" />
-        <path d="M9 5v4l2.5 2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    ),
-  },
-  {
     id: 'storage',
     label: '产物存储',
     icon: (
@@ -64,74 +55,32 @@ const CATEGORIES: Category[] = [
       </svg>
     ),
   },
+  {
+    id: 'plugins',
+    label: '插件',
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <path d="M6 2.5v2M12 2.5v2M4.5 4.5h9v3A2.5 2.5 0 0 1 11 10H7a2.5 2.5 0 0 1-2.5-2.5v-3Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+        <path d="M9 10v5.5M6.5 15.5h5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      </svg>
+    ),
+  },
 ];
 
-const SAMPLER_OPTIONS = [
-  'euler',
-  'euler_ancestral',
-  'heun',
-  'dpm_2',
-  'dpm_2_ancestral',
-  'lms',
-  'dpm_fast',
-  'dpm_adaptive',
-  'dpmpp_2s_ancestral',
-  'dpmpp_sde',
-  'dpmpp_sde_gpu',
-  'dpmpp_2m',
-  'dpmpp_2m_sde',
-  'dpmpp_2m_sde_gpu',
-  'dpmpp_3m_sde',
-  'dpmpp_3m_sde_gpu',
-  'ddpm',
-  'lcm',
-  'ddim',
-  'uni_pc',
-  'uni_pc_bh2',
-];
-
-const SCHEDULER_OPTIONS = [
-  'normal',
-  'karras',
-  'exponential',
-  'sgm_uniform',
-  'simple',
-  'ddim_uniform',
-  'beta',
-  'turbo',
-];
-
-const RESOLUTION_PRESETS = [
-  { label: '1024 × 1024 (1:1 正方)', width: 1024, height: 1024 },
-  { label: '832 × 1216 (2:3 竖版)', width: 832, height: 1216 },
-  { label: '1216 × 832 (3:2 横版)', width: 1216, height: 832 },
-  { label: '768 × 1344 (9:16 手机竖屏)', width: 768, height: 1344 },
-  { label: '1344 × 768 (16:9 宽屏)', width: 1344, height: 768 },
-  { label: '512 × 512 (小正方)', width: 512, height: 512 },
-];
-
-const DEFAULT_IMAGE_GEN: ImageGenSettings = {
-  seedMode: 'random',
-  seed: -1,
-  steps: 20,
-  cfg: 7.0,
-  sampler_name: 'euler',
-  scheduler: 'normal',
-  denoise: 1.0,
-  width: 1024,
-  height: 1024,
-};
+const PLUGIN_KIND_LABEL = { image: '图片', video: '视频', text: '文本' };
 
 export default function SettingsModal({
   open,
   onClose,
   comfyStatus,
+  workflows,
   onRefreshStatus,
   onRefreshWorkflows,
 }: {
   open: boolean;
   onClose: () => void;
   comfyStatus: ComfyStatus | null;
+  workflows: WorkflowSpec[];
   onRefreshStatus: () => void;
   onRefreshWorkflows?: () => void;
 }) {
@@ -143,11 +92,6 @@ export default function SettingsModal({
   const [error, setError] = useState<string | null>(null);
   const [tip, setTip] = useState<string | null>(null);
 
-  // 生图参数状态
-  const [imageGen, setImageGen] = useState<ImageGenSettings>(DEFAULT_IMAGE_GEN);
-  const [savingImageGen, setSavingImageGen] = useState(false);
-  const [imageGenTip, setImageGenTip] = useState<string | null>(null);
-  const [imageGenError, setImageGenError] = useState<string | null>(null);
   const [outputDir, setOutputDir] = useState('');
   const [savingStorage, setSavingStorage] = useState(false);
   const [storageTip, setStorageTip] = useState<string | null>(null);
@@ -160,6 +104,16 @@ export default function SettingsModal({
   const [agentError, setAgentError] = useState<string | null>(null);
   const [savingAgent, setSavingAgent] = useState(false);
 
+  // 插件（工作流）状态：停用列表 + 参数配置（workflowId → { paramId: 值 }）
+  const [pluginDisabled, setPluginDisabled] = useState<string[]>([]);
+  const [pluginDraft, setPluginDraft] = useState<Set<string> | null>(null);
+  const [pluginConfig, setPluginConfig] = useState<Record<string, Record<string, string>>>({});
+  const [pluginConfigDraft, setPluginConfigDraft] = useState<Record<string, Record<string, string>> | null>(null);
+  const [expandedConfig, setExpandedConfig] = useState<Set<string>>(new Set());
+  const [savingPlugins, setSavingPlugins] = useState(false);
+  const [pluginsTip, setPluginsTip] = useState<string | null>(null);
+  const [pluginsError, setPluginsError] = useState<string | null>(null);
+
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusRef = useRef<ComfyStatus | null>(comfyStatus);
   statusRef.current = comfyStatus;
@@ -169,12 +123,12 @@ export default function SettingsModal({
     if (!open) return;
     setError(null);
     setTip(null);
-    setImageGenTip(null);
-    setImageGenError(null);
     setStorageTip(null);
     setStorageError(null);
     setAgentTip(null);
     setAgentError(null);
+    setPluginsTip(null);
+    setPluginsError(null);
     setReconnecting(false);
     setAttempt(0);
 
@@ -185,15 +139,16 @@ export default function SettingsModal({
         } else if (comfyStatus?.baseUrl) {
           setBaseUrl(comfyStatus.baseUrl);
         }
-        if (s.imageGen) {
-          setImageGen({ ...DEFAULT_IMAGE_GEN, ...s.imageGen });
-        }
         if (s.storage?.outputDir) {
           setOutputDir(s.storage.outputDir);
         }
         if (s.agent) {
           setAgentModel(s.agent.model);
           setAgentThinking(s.agent.thinking);
+        }
+        if (s.plugins) {
+          setPluginDisabled(s.plugins.disabled);
+          setPluginConfig(s.plugins.config ?? {});
         }
         setAgentModelsLoading(true);
         void fetchAgentModels()
@@ -207,6 +162,78 @@ export default function SettingsModal({
         }
       });
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 插件开关与参数配置草稿：打开时以服务端值为初始值
+  useEffect(() => {
+    if (!open) return;
+    setPluginDraft(new Set(pluginDisabled));
+    setPluginConfigDraft(pluginConfig);
+    setExpandedConfig(new Set());
+  }, [open, pluginDisabled, pluginConfig, workflows]);
+
+  const togglePlugin = (id: string) => {
+    setPluginDraft(prev => {
+      const next = new Set(prev ?? []);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleConfig = (wfId: string) => {
+    setExpandedConfig(prev => {
+      const next = new Set(prev);
+      if (next.has(wfId)) next.delete(wfId);
+      else next.add(wfId);
+      return next;
+    });
+  };
+
+  /** 更新某工作流的参数覆盖草稿 */
+  const setPluginParam = (wfId: string, paramId: string, value: string) => {
+    setPluginConfigDraft(prev => {
+      const base = prev ?? {};
+      const wf = { ...(base[wfId] ?? {}) };
+      wf[paramId] = value;
+      return { ...base, [wfId]: wf };
+    });
+  };
+
+  /** 当前 select 显示值：覆盖配置 → 工作流默认值 → 选项首项 */
+  const configValueOf = (wfId: string, param: WorkflowParam): string => {
+    const overridden = pluginConfigDraft?.[wfId]?.[param.id];
+    if (overridden) return overridden;
+    const options = param.options ?? [];
+    const def = typeof param.default === 'string' ? param.default : undefined;
+    if (def && options.includes(def)) return def;
+    return options[0] ?? '';
+  };
+
+  /** 该工作流可配置的 combo 参数（模型/CLIP/VAE/LoRA/采样器/调度器等） */
+  const comboParamsOf = (wf: WorkflowSpec): WorkflowParam[] =>
+    wf.params.filter(p => p.type === 'combo' && (p.options?.length ?? 0) > 0);
+
+  const savePlugins = async () => {
+    setSavingPlugins(true);
+    setPluginsTip(null);
+    setPluginsError(null);
+    try {
+      const disabled = pluginDraft ? [...pluginDraft] : [];
+      const config = pluginConfigDraft ?? {};
+      const res = await savePluginsSettings(disabled, config);
+      if (res.ok) {
+        setPluginDisabled(res.plugins.disabled);
+        setPluginConfig(res.plugins.config);
+        setPluginsTip('插件配置已保存并生效');
+      } else {
+        setPluginsError('保存失败');
+      }
+    } catch (e) {
+      setPluginsError((e as Error).message);
+    } finally {
+      setSavingPlugins(false);
+    }
+  };
 
   // Esc 关闭；卸载时清理重连定时器
   useEffect(() => {
@@ -330,25 +357,6 @@ export default function SettingsModal({
       setAgentError((e as Error).message);
     } finally {
       setSavingAgent(false);
-    }
-  };
-
-  const saveImageGen = async () => {
-    setSavingImageGen(true);
-    setImageGenTip(null);
-    setImageGenError(null);
-    try {
-      const res = await saveImageGenSettings(imageGen);
-      if (res.ok) {
-        setImageGen(res.imageGen);
-        setImageGenTip('生图参数已保存并生效');
-      } else {
-        setImageGenError('保存失败');
-      }
-    } catch (e) {
-      setImageGenError((e as Error).message);
-    } finally {
-      setSavingImageGen(false);
     }
   };
 
@@ -499,179 +507,113 @@ export default function SettingsModal({
               </section>
             )}
 
-            {active === 'imageGen' && (
+            {active === 'plugins' && (
               <section className="settings-section">
-                <h3 className="settings-section-title">生图默认参数 (Krea2)</h3>
+                <h3 className="settings-section-title">生成插件（工作流）</h3>
                 <p className="settings-section-desc">
-                  配置执行生图工作流时的默认参数与采样器选项，无需在每次提问时重复配置。
+                  启用/停用生成插件，并可针对每个插件配置模型与采样参数（扩散模型、CLIP、VAE、LoRA、采样器、
+                  调度器等，选项来自 ComfyUI 节点）。停用的插件不会出现在生成流程中。
                 </p>
-
-                <div className="settings-grid">
-                  <label className="settings-field">
-                    <span className="settings-label">采样算法 (Sampler)</span>
-                    <select
-                      className="settings-select"
-                      value={imageGen.sampler_name}
-                      onChange={e => setImageGen(prev => ({ ...prev, sampler_name: e.target.value }))}
-                    >
-                      {SAMPLER_OPTIONS.map(opt => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="settings-field">
-                    <span className="settings-label">调度器 (Scheduler)</span>
-                    <select
-                      className="settings-select"
-                      value={imageGen.scheduler}
-                      onChange={e => setImageGen(prev => ({ ...prev, scheduler: e.target.value }))}
-                    >
-                      {SCHEDULER_OPTIONS.map(opt => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="settings-field">
-                    <span className="settings-label">采样步数 (Steps: {imageGen.steps})</span>
-                    <input
-                      type="range"
-                      min={1}
-                      max={100}
-                      step={1}
-                      className="settings-range"
-                      value={imageGen.steps}
-                      onChange={e => setImageGen(prev => ({ ...prev, steps: Number(e.target.value) }))}
-                    />
-                  </label>
-
-                  <label className="settings-field">
-                    <span className="settings-label">提示词引导系数 (CFG: {imageGen.cfg})</span>
-                    <input
-                      type="range"
-                      min={1}
-                      max={20}
-                      step={0.5}
-                      className="settings-range"
-                      value={imageGen.cfg}
-                      onChange={e => setImageGen(prev => ({ ...prev, cfg: Number(e.target.value) }))}
-                    />
-                  </label>
-
-                  <label className="settings-field">
-                    <span className="settings-label">重绘幅度 / Denoise: {imageGen.denoise}</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      className="settings-range"
-                      value={imageGen.denoise}
-                      onChange={e => setImageGen(prev => ({ ...prev, denoise: Number(e.target.value) }))}
-                    />
-                  </label>
-
-                  <label className="settings-field">
-                    <span className="settings-label">分辨率预设</span>
-                    <select
-                      className="settings-select"
-                      value={`${imageGen.width}x${imageGen.height}`}
-                      onChange={e => {
-                        const [w, h] = e.target.value.split('x').map(Number);
-                        if (w && h) setImageGen(prev => ({ ...prev, width: w, height: h }));
-                      }}
-                    >
-                      {RESOLUTION_PRESETS.map(p => (
-                        <option key={`${p.width}x${p.height}`} value={`${p.width}x${p.height}`}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-
-                <div className="settings-row" style={{ marginTop: '12px' }}>
-                  <label className="settings-field" style={{ flex: 1 }}>
-                    <span className="settings-label">宽度 (Width)</span>
-                    <input
-                      type="number"
-                      className="settings-input"
-                      value={imageGen.width}
-                      step={64}
-                      min={256}
-                      max={4096}
-                      onChange={e => setImageGen(prev => ({ ...prev, width: Number(e.target.value) }))}
-                    />
-                  </label>
-                  <label className="settings-field" style={{ flex: 1 }}>
-                    <span className="settings-label">高度 (Height)</span>
-                    <input
-                      type="number"
-                      className="settings-input"
-                      value={imageGen.height}
-                      step={64}
-                      min={256}
-                      max={4096}
-                      onChange={e => setImageGen(prev => ({ ...prev, height: Number(e.target.value) }))}
-                    />
-                  </label>
-                </div>
-
-                <div className="settings-field" style={{ marginTop: '12px' }}>
-                  <span className="settings-label">随机种子 (Seed)</span>
-                  <div className="settings-seed-row">
-                    <label className="settings-radio">
-                      <input
-                        type="radio"
-                        name="seedMode"
-                        checked={imageGen.seedMode === 'random'}
-                        onChange={() => setImageGen(prev => ({ ...prev, seedMode: 'random', seed: -1 }))}
-                      />
-                      <span>每次随机</span>
-                    </label>
-                    <label className="settings-radio">
-                      <input
-                        type="radio"
-                        name="seedMode"
-                        checked={imageGen.seedMode === 'fixed'}
-                        onChange={() => setImageGen(prev => ({ ...prev, seedMode: 'fixed', seed: prev.seed === -1 ? 12345678 : prev.seed }))}
-                      />
-                      <span>固定种子</span>
-                    </label>
-                    {imageGen.seedMode === 'fixed' && (
-                      <input
-                        type="number"
-                        className="settings-input settings-seed-input"
-                        placeholder="种子数值"
-                        value={imageGen.seed >= 0 ? imageGen.seed : ''}
-                        onChange={e => setImageGen(prev => ({ ...prev, seed: Number(e.target.value) }))}
-                      />
-                    )}
+                {workflows.length === 0 ? (
+                  <div className="pref-empty">暂无插件：请把 workflow 文件放到 server/workflows/</div>
+                ) : (
+                  <div className="plugin-groups">
+                    {(['image', 'video'] as const).map(kind => {
+                      const list = workflows.filter(w =>
+                        kind === 'video'
+                          ? w.outputs.some(o => o.kind === 'video')
+                          : w.outputs.some(o => o.kind === 'image'),
+                      );
+                      if (list.length === 0) return null;
+                      return (
+                        <div key={kind} className="plugin-group">
+                          <div className="plugin-group-title">{kind === 'image' ? '图像' : '视频'}</div>
+                          <div className="plugin-list">
+                            {list.map(w => {
+                              const disabled = pluginDraft?.has(w.id) ?? false;
+                              const combos = comboParamsOf(w);
+                              const configOpen = expandedConfig.has(w.id);
+                              return (
+                                <div key={w.id} className={`plugin-card${disabled ? ' off' : ''}`}>
+                                  <div className="plugin-card-head">
+                                    <span className="plugin-card-name">{w.name}</span>
+                                    <button
+                                      className={`plugin-toggle${disabled ? '' : ' on'}`}
+                                      onClick={() => togglePlugin(w.id)}
+                                      role="switch"
+                                      aria-checked={!disabled}
+                                      aria-label={`${disabled ? '启用' : '停用'} ${w.name}`}
+                                    >
+                                      <span className="plugin-toggle-knob" />
+                                    </button>
+                                  </div>
+                                  {w.description && <div className="plugin-card-desc">{w.description}</div>}
+                                  <div className="plugin-card-badges">
+                                    {w.inputs.map(i => (
+                                      <em key={i.id} className={`wf-badge in ${i.kind}`}>
+                                        输入·{PLUGIN_KIND_LABEL[i.kind]}
+                                        {i.required ? '·必传' : ''}
+                                      </em>
+                                    ))}
+                                    {w.outputs.map(o => (
+                                      <em key={o.id} className={`wf-badge out ${o.kind}`}>
+                                        输出·{PLUGIN_KIND_LABEL[o.kind]}
+                                      </em>
+                                    ))}
+                                  </div>
+                                  {combos.length > 0 && (
+                                    <div className="plugin-config">
+                                      <button
+                                        className="plugin-config-toggle"
+                                        onClick={() => toggleConfig(w.id)}
+                                        aria-expanded={configOpen}
+                                      >
+                                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                                          <path d="M2.5 4.5 6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
+                                        {configOpen ? '收起参数配置' : `参数配置（${combos.length}）`}
+                                      </button>
+                                      {configOpen && (
+                                        <div className="plugin-config-grid">
+                                          {combos.map(param => (
+                                            <label key={param.id} className="plugin-config-field">
+                                              <span className="plugin-config-label">{param.label}</span>
+                                              <select
+                                                className="settings-select plugin-config-select"
+                                                value={configValueOf(w.id, param)}
+                                                onChange={e => setPluginParam(w.id, param.id, e.target.value)}
+                                              >
+                                                {(param.options ?? []).map(opt => (
+                                                  <option key={opt} value={opt}>
+                                                    {opt}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            </label>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                </div>
-
-                {imageGenError && <div className="settings-error">{imageGenError}</div>}
-                {imageGenTip && <div className="settings-tip">{imageGenTip}</div>}
-
+                )}
+                {pluginsError && <div className="settings-error">{pluginsError}</div>}
+                {pluginsTip && <div className="settings-tip">{pluginsTip}</div>}
                 <div className="settings-actions">
-                  <button className="settings-btn primary" onClick={saveImageGen} disabled={savingImageGen}>
-                    {savingImageGen ? '保存中…' : '保存生图参数'}
-                  </button>
-                  <button
-                    className="settings-btn"
-                    onClick={() => setImageGen(DEFAULT_IMAGE_GEN)}
-                    disabled={savingImageGen}
-                  >
-                    恢复默认值
+                  <button className="settings-btn primary" onClick={savePlugins} disabled={savingPlugins}>
+                    {savingPlugins ? '保存中…' : '保存插件配置'}
                   </button>
                 </div>
               </section>
             )}
+
           </div>
         </div>
       </div>

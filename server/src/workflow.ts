@@ -22,6 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getObjectInfo, fileExists, ComfyUIError } from './comfyui.js';
 import type { ImageGenSettings } from './settings.js';
+import type { Resolution } from './resolution.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const WORKFLOWS_DIR = path.resolve(__dirname, '../workflows');
@@ -71,6 +72,13 @@ const PARAM_LABELS: Record<string, string> = {
   batch_size: '批量',
   sampler_name: '采样器',
   scheduler: '调度器',
+  unet_name: '扩散模型 (Diffusion Model)',
+  ckpt_name: '模型 (Checkpoint)',
+  clip_name: 'CLIP',
+  vae_name: 'VAE',
+  lora_name: 'LoRA',
+  control_net_name: 'ControlNet',
+  audio_name: '音频模型',
 };
 
 /* ---------- 类型定义 ---------- */
@@ -563,7 +571,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
     }
     const textFields = new Set(genericTexts.map(t => t.field));
 
-    // 参数：白名单字段 + SEED 类型字段 + 名为 seed 的字段
+    // 参数：白名单字段 + SEED 类型字段 + 名为 seed 的字段 + 文件类 combo（unet/clip/vae/lora 等）
     const allowlist = PARAM_FIELDS[cls];
     const required = (info?.required ?? {}) as Record<string, unknown>;
     const optional = (info?.optional ?? {}) as Record<string, unknown>;
@@ -571,10 +579,10 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
     for (const field of Object.keys(nodeInputs)) {
       if (textFields.has(field)) continue; // 已是文字输入，不再作为参数
       const isAllowed = allowlist?.includes(field);
+      const isFileCombo = FILE_COMBO_FIELDS.has(field);
       const def = (required[field] ?? optional[field]) as any;
       const isSeedType = Array.isArray(def) ? def[0] === 'SEED' : def?.type === 'SEED';
-      if (!isAllowed && !isSeedType && field !== 'seed') continue;
-      if (FILE_COMBO_FIELDS.has(field)) continue;
+      if (!isAllowed && !isFileCombo && !isSeedType && field !== 'seed') continue;
       if (typeof nodeInputs[field] === 'object') continue; // 连到其他节点的输入，跳过
 
       let type: WorkflowParam['type'] = 'INT';
@@ -774,6 +782,8 @@ export interface BuildValues {
   uploaded?: Record<string, string>; // { [inputId]: filename }
   params?: Record<string, unknown>;
   settings?: ImageGenSettings;
+  /** 生成比例 + 尺寸算出的目标宽高（null 时不注入，沿用工作流默认） */
+  resolution?: Resolution | null;
 }
 
 /* ---------- 提交前模型/参数可用性校验 ---------- */
@@ -972,6 +982,11 @@ export async function buildPrompt(
     prompt[p.nodeId].inputs[p.field] = v;
   }
 
+  // 生成尺寸注入：把链接型 width/height（来自 ResolutionSelector 等）替换为具体数值
+  if (values.resolution) {
+    injectResolution(prompt, values.resolution);
+  }
+
   // checkpoint 自动探测（仅当工作流含 checkpoint 节点）
   if (oi) await resolveCheckpoints(prompt, oi);
 
@@ -982,6 +997,29 @@ export async function buildPrompt(
   }
 
   return prompt;
+}
+
+/** 尺寸类节点：EmptyLatentImage / EmptySD3LatentImage 等 */
+const RESOLUTION_CLASS_RE = /Empty.*(Latent|SD3|Flux)|(Latent|SD3).*Size/i;
+
+/**
+ * 把目标宽高写入 prompt 中的分辨率节点：
+ * - 类名匹配的 latent 空节点（EmptyLatentImage/EmptySD3LatentImage 等）直接覆写；
+ * - 宽高为 link 数组（由 ResolutionSelector 接线）的节点也覆写（覆盖 ModelSamplingFlux、MiniMaxH3*ToVideo 等）。
+ */
+export function injectResolution(prompt: Record<string, any>, res: Resolution): void {
+  for (const node of Object.values(prompt)) {
+    const inputs = (node as any)?.inputs;
+    if (!inputs || typeof inputs !== 'object') continue;
+    if (typeof inputs.width === 'undefined' || typeof inputs.height === 'undefined') continue;
+    const ct = String((node as any)?.class_type ?? '');
+    const isLatentClass = RESOLUTION_CLASS_RE.test(ct);
+    const isLinked = Array.isArray(inputs.width) && Array.isArray(inputs.height);
+    if (isLatentClass || isLinked) {
+      inputs.width = res.width;
+      inputs.height = res.height;
+    }
+  }
 }
 
 /** 输入节点是否有强依赖（如必须上传参考图/视频） */

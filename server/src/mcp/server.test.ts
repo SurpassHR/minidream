@@ -121,6 +121,50 @@ describe('Director MCP Server', () => {
     expect(Array.isArray(parsed)).toBe(true);
   });
 
+  it('workflow.list 过滤已停用的插件（工作流）', async () => {
+    const filtered = createMcpServer({
+      taskQueue,
+      port: 0,
+      isWorkflowEnabled: id => id !== 'image_krea2_turbo_t2i_int8',
+    });
+    try {
+      const res = (await filtered.handleRpcMessage({
+        jsonrpc: '2.0',
+        id: 30,
+        method: 'tools/call',
+        params: { name: 'workflow.list', arguments: {} },
+      })) as any;
+      const parsed = JSON.parse(res.result.content[0].text);
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed.some((w: any) => w.id === 'image_krea2_turbo_t2i_int8')).toBe(false);
+    } finally {
+      await filtered.close();
+    }
+  });
+
+  it('generation.submit 拒绝提交已停用的插件（工作流）', async () => {
+    const filtered = createMcpServer({
+      taskQueue,
+      port: 0,
+      isWorkflowEnabled: id => id !== 'image_krea2_turbo_t2i_int8',
+    });
+    try {
+      const res = (await filtered.handleRpcMessage({
+        jsonrpc: '2.0',
+        id: 31,
+        method: 'tools/call',
+        params: {
+          name: 'generation.submit',
+          arguments: { workflowId: 'image_krea2_turbo_t2i_int8', prompt: 'should be rejected' },
+        },
+      })) as any;
+      expect(res.result.isError).toBe(true);
+      expect(JSON.stringify(res.result.content)).toMatch(/未启用/);
+    } finally {
+      await filtered.close();
+    }
+  });
+
   it('calls generation.submit and creates a queued task', async () => {
     const res = await sendRpc({
       jsonrpc: '2.0',

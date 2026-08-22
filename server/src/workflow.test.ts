@@ -531,6 +531,61 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(stylePrompt['69'].inputs.image).toBe('style_input.png');
   });
 
+  it('buildPrompt 注入生成尺寸：EmptyLatentImage 宽高由链接值替换为具体数值', async () => {
+    const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
+    const prompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, {
+      prompt: 'resolution test',
+      resolution: { width: 1344, height: 768 },
+    });
+    expect(prompt['30_sg5'].class_type).toBe('EmptyLatentImage');
+    expect(prompt['30_sg5'].inputs.width).toBe(1344);
+    expect(prompt['30_sg5'].inputs.height).toBe(768);
+  });
+
+  it('buildPrompt 不传 resolution 时保留原有链接（默认分辨率）', async () => {
+    const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
+    const prompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, { prompt: 'no resolution' });
+    expect(Array.isArray(prompt['30_sg5'].inputs.width)).toBe(true);
+    expect(Array.isArray(prompt['30_sg5'].inputs.height)).toBe(true);
+  });
+
+  it('buildPrompt 注入视频分辨率：MiniMaxH3ImageToVideo 宽高覆写', async () => {
+    const h3Spec = await workflow.introspectWorkflow(h3T2vJson, OBJECT_INFO);
+    const prompt = await workflow.buildPrompt(h3Spec, h3T2vJson, {
+      prompt: '一只发光鹿在森林里奔跑',
+      resolution: { width: 1344, height: 768 },
+    });
+    const videoNode = Object.values(prompt).find((n: any) => n.class_type === 'MiniMaxH3ImageToVideo');
+    expect(videoNode).toBeDefined();
+    expect(videoNode.inputs.width).toBe(1344);
+    expect(videoNode.inputs.height).toBe(768);
+  });
+
+  it('introspection 暴露文件类 combo 参数（unet/clip/vae/lora）供插件配置使用', async () => {
+    const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
+    const byField = Object.fromEntries(t2iSpec.params.map(p => [p.field, p]));
+    // 扩散模型 / CLIP / VAE / LoRA 均为 combo 且带选项
+    expect(byField.unet_name?.type).toBe('combo');
+    expect(byField.unet_name?.options).toContain('krea2_turbo_fp8_scaled.safetensors');
+    expect(byField.clip_name?.type).toBe('combo');
+    expect(byField.clip_name?.options?.length).toBeGreaterThan(0);
+    expect(byField.vae_name?.type).toBe('combo');
+    expect(byField.vae_name?.options?.length).toBeGreaterThan(0);
+    expect(byField.lora_name?.type).toBe('combo');
+    expect(byField.lora_name?.options).toContain('KREA2/Afterlight_v1.safetensors');
+    // 采样器/调度器仍为 combo
+    expect(byField.sampler_name?.type).toBe('combo');
+    expect(byField.scheduler?.type).toBe('combo');
+
+    // 通过 params 注入文件 combo 值
+    const prompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, {
+      prompt: 'model config test',
+      params: { [byField.unet_name!.id]: 'KREA2/krea2_turbo_int8_convrot.safetensors' },
+    });
+    expect(prompt['30_sg10'].class_type).toBe('UNETLoader');
+    expect(prompt['30_sg10'].inputs.unet_name).toBe('KREA2/krea2_turbo_int8_convrot.safetensors');
+  });
+
   /* ---------- 提交前校验（缺失模型 / 子目录别名 / 非法 combo） ---------- */
 
   it('模型装在子目录时按 basename 别名解析为已安装路径', () => {

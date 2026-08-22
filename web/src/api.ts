@@ -31,6 +31,8 @@ export interface GenerateData {
     preferences: {
       types: string[];
       ratios: string[];
+      /** 生成尺寸（MP）：滑块范围与步长 */
+      sizes: { min: number; max: number; step: number; default: number };
       models: string[];
     };
     skills: { id: string; name: string; tag?: string; desc: string }[];
@@ -320,6 +322,26 @@ export interface AppSettings {
   agent?: AgentSettings;
   imageGen?: ImageGenSettings;
   storage?: StorageSettings;
+  /** 生成插件（工作流）停用状态与参数配置 */
+  plugins?: {
+    disabled: string[];
+    /** workflowId → { paramId: 选中值 }，仅存与默认不同的覆盖 */
+    config?: Record<string, Record<string, string>>;
+  };
+}
+
+export async function savePluginsSettings(
+  disabled: string[],
+  config?: Record<string, Record<string, string>>,
+): Promise<{
+  ok: boolean;
+  plugins: { disabled: string[]; config: Record<string, Record<string, string>> };
+}> {
+  return http('/api/settings/plugins', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ disabled, config }),
+  });
 }
 
 export async function fetchAppSettings(): Promise<AppSettings> {
@@ -386,6 +408,10 @@ export interface SendChatOptions {
   sessionId?: string | null;
   agentModel?: string;
   thinking?: AgentThinking;
+  /** 生成比例（如 16:9 / 智能） */
+  ratio?: string;
+  /** 生成尺寸（MP，如 1 / 1.5 / 8） */
+  size?: number;
 }
 
 export interface ChatReplyWithSession extends ChatReply {

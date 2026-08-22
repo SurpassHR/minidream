@@ -8,6 +8,8 @@ export interface McpServerOptions {
   port?: number;
   taskQueue: TaskQueue;
   onActivity?: (text: string) => void;
+  /** 插件（工作流）启用判定：返回 false 的插件不会出现在 workflow.list，也无法提交 */
+  isWorkflowEnabled?: (id: string) => boolean;
 }
 
 export interface McpServerInstance {
@@ -92,12 +94,16 @@ const MCP_TOOLS: McpToolDescriptor[] = [
   },
 ];
 
-export function createDirectorMCPServer(taskQueue: TaskQueue): McpServerInstance {
-  return createMcpServer({ taskQueue });
+export function createDirectorMCPServer(
+  taskQueue: TaskQueue,
+  isWorkflowEnabled?: (id: string) => boolean,
+): McpServerInstance {
+  return createMcpServer({ taskQueue, isWorkflowEnabled });
 }
 
 export function createMcpServer(options: McpServerOptions): McpServerInstance {
-  const { taskQueue, onActivity } = options;
+  const { taskQueue, onActivity, isWorkflowEnabled } = options;
+  const workflowEnabled = isWorkflowEnabled ?? (() => true);
   let server: http.Server | null = null;
   let serverUrl: string | undefined;
 
@@ -110,7 +116,7 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
 
     switch (name) {
       case 'workflow.list': {
-        const specs = await buildSpecsCached();
+        const specs = (await buildSpecsCached()).filter(s => workflowEnabled(s.id));
         const simplified = specs.map(s => ({
           id: s.id,
           name: s.name,
@@ -126,6 +132,12 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
         if (!args.workflowId || !args.prompt) {
           return {
             content: [{ type: 'text', text: '错误: workflowId 与 prompt 为必填参数' }],
+            isError: true,
+          };
+        }
+        if (!workflowEnabled(String(args.workflowId))) {
+          return {
+            content: [{ type: 'text', text: `错误: 插件「${args.workflowId}」未启用，无法提交生成任务` }],
             isError: true,
           };
         }

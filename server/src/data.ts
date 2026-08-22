@@ -34,6 +34,8 @@ export interface GenerateData {
     preferences: {
       types: string[];
       ratios: string[];
+      /** 生成尺寸（MP）：滑块范围与步长 */
+      sizes: { min: number; max: number; step: number; default: number };
       models: string[];
     };
     /** 使用技能面板 */

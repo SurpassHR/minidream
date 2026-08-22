@@ -52,6 +52,7 @@ export const generateData: GenerateData = {
     preferences: {
       types: ['图片', '视频'],
       ratios: ['智能', '21:9', '16:9', '3:2', '4:3', '1:1', '3:4', '2:3', '9:16'],
+      sizes: { min: 0.5, max: 10, step: 0.5, default: 1 },
       models: ['图片 4.0'],
     },
     skills: [

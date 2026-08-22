@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
-import type { ComfyStatus, GenerateData, WorkflowSpec } from '../api';
+import { useRef, useState } from 'react';
+import type { GenerateData } from '../api';
+import { computeResolution } from '../resolution';
 
 type PanelId = 'agent' | 'preference' | 'skills' | null;
 
@@ -15,6 +16,16 @@ export interface ComposerSubmitOpts {
   params?: Record<string, unknown>;
   images?: { name?: string; dataUrl: string }[];
   videos?: { name?: string; dataUrl: string }[];
+  /** 生成比例（如 16:9 / 智能） */
+  ratio?: string;
+  /** 生成尺寸（MP，如 1 / 1.5 / 8） */
+  size?: number;
+}
+
+/** 尺寸显示：1 → 1MP，1.5 → 1.5MP */
+function formatSize(v: number): string {
+  const n = Math.round(v * 100) / 100;
+  return Number.isInteger(n) ? String(n) : String(n);
 }
 
 export default function Composer({
@@ -25,10 +36,6 @@ export default function Composer({
   onSubmit,
   onStop,
   disabled,
-  workflows,
-  selectedWorkflowId,
-  onSelectWorkflow,
-  comfyStatus,
 }: {
   placeholder: string;
   composer: GenerateData['composer'];
@@ -37,41 +44,32 @@ export default function Composer({
   onSubmit: (opts: ComposerSubmitOpts) => void;
   onStop?: () => void;
   disabled?: boolean;
-  workflows: WorkflowSpec[];
-  selectedWorkflowId: string | null;
-  onSelectWorkflow: (id: string) => void;
-  comfyStatus: ComfyStatus | null;
 }) {
   const [focused, setFocused] = useState(false);
   const [openPanel, setOpenPanel] = useState<PanelId>(null);
   const [agentMode, setAgentMode] = useState(composer.agentOptions[0] ?? 'Agent 模式');
-  const [prefType, setPrefType] = useState(composer.preferences.types[0] ?? '图片');
+  const [ratio, setRatio] = useState(composer.preferences.ratios[0] ?? '智能');
+  const sizeCfg = composer.preferences.sizes ?? { min: 0.5, max: 10, step: 0.5, default: 1 };
+  const [size, setSize] = useState(sizeCfg.default);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
-  // 当前选中 workflow（按 图片/视频 输出过滤）
-  const selected = workflows.find(w => w.id === selectedWorkflowId) ?? null;
-  const filtered = workflows.filter(w =>
-    prefType === '视频' ? w.outputs.some(o => o.kind === 'video') : w.outputs.some(o => o.kind === 'image'),
-  );
-  // 默认优先选不需要上传素材的工作流（避免默认选中强制依赖参考图的工作流）
-  const activeWorkflow =
-    (selected && filtered.some(w => w.id === selected.id) ? selected : null) ??
-    filtered.find(w => !w.inputs.some(i => i.kind !== 'text')) ??
-    filtered[0] ??
-    null;
-
   const canSend = value.trim().length > 0 && !disabled;
+
+  const clampSize = (v: number) => Math.min(sizeCfg.max, Math.max(sizeCfg.min, v));
+  // 当前比例+尺寸对应的像素预览（智能比例 → null）
+  const preview = computeResolution(ratio, size);
 
   const submit = () => {
     if (!canSend) return;
     const imageAtts = attachments.filter(a => a.kind === 'image');
     const videoAtts = attachments.filter(a => a.kind === 'video');
     onSubmit({
-      workflowId: activeWorkflow?.id,
       images: imageAtts.map(a => ({ name: a.name, dataUrl: a.dataUrl })),
       videos: videoAtts.map(a => ({ name: a.name, dataUrl: a.dataUrl })),
+      ratio,
+      size,
     });
     setAttachments([]);
   };
@@ -178,76 +176,91 @@ export default function Composer({
             )}
           </div>
 
-          {/* 自动：生成偏好（类型 + 工作流 + 动态参数） */}
+          {/* 生成比例 + 生成尺寸 */}
           <div className="composer-mode-wrap">
             <button
               className={`composer-mode${openPanel === 'preference' ? ' open' : ''}`}
               onClick={() => toggle('preference')}
+              title="生成比例 / 生成尺寸"
             >
-              自动
+              {ratio} · {formatSize(size)}MP
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                 <path d="M2.5 4.5 6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </button>
             {openPanel === 'preference' && (
               <div className="composer-panel pref-panel">
-                <div className="panel-title">生成类型</div>
-                <div className="pref-row">
-                  {composer.preferences.types.map(t => (
+                <div className="panel-title">生成比例</div>
+                <div className="pref-ratios">
+                  {composer.preferences.ratios.map(r => (
                     <button
-                      key={t}
-                      className={`pref-chip${prefType === t ? ' active' : ''}`}
-                      onClick={() => setPrefType(t)}
+                      key={r}
+                      className={`pref-ratio${ratio === r ? ' active' : ''}`}
+                      onClick={() => setRatio(r)}
                     >
-                      {t}
+                      {r}
                     </button>
                   ))}
                 </div>
 
-                <div className="panel-title">工作流（自动识别输入/输出）</div>
-                {filtered.length === 0 ? (
-                  <div className="pref-empty">
-                    {workflows.length === 0
-                      ? '暂无 workflow：请把 workflow_api.json 放到 server/workflows/'
-                      : `没有${prefType}输出的工作流`}
+                <div className="panel-title">生成尺寸</div>
+                <div className="pref-size">
+                  <div className="pref-size-row">
+                    <button
+                      className="pref-size-btn"
+                      onClick={() => setSize(prev => clampSize(Math.round((prev - sizeCfg.step) / sizeCfg.step) * sizeCfg.step))}
+                      aria-label="减小尺寸"
+                    >
+                      −
+                    </button>
+                    <div className="pref-size-input-wrap">
+                      <input
+                        className="pref-size-input"
+                        type="number"
+                        min={sizeCfg.min}
+                        max={sizeCfg.max}
+                        step={sizeCfg.step}
+                        value={size}
+                        onChange={e => {
+                          const v = parseFloat(e.target.value);
+                          setSize(Number.isFinite(v) ? clampSize(v) : sizeCfg.default);
+                        }}
+                      />
+                      <span className="pref-size-unit">MP</span>
+                    </div>
+                    <button
+                      className="pref-size-btn"
+                      onClick={() => setSize(prev => clampSize(Math.round((prev + sizeCfg.step) / sizeCfg.step) * sizeCfg.step))}
+                      aria-label="增大尺寸"
+                    >
+                      +
+                    </button>
                   </div>
-                ) : (
-                  <ul className="workflow-list">
-                    {filtered.map(w => (
-                      <li key={w.id}>
-                        <button
-                          className={`workflow-item${activeWorkflow?.id === w.id ? ' active' : ''}`}
-                          onClick={() => {
-                            onSelectWorkflow(w.id);
-                            setOpenPanel(null);
-                          }}
-                        >
-                          <span className="workflow-item-name">{w.name}</span>
-                          <span className="workflow-item-badges">
-                            {w.inputs.map(i => (
-                              <em key={i.id} className={`wf-badge in ${i.kind}`}>
-                                输入·{kindLabel[i.kind]}
-                                {i.required ? '·必传' : ''}
-                              </em>
-                            ))}
-                            {w.outputs.map(o => (
-                              <em key={o.id} className={`wf-badge out ${o.kind}`}>
-                                输出·{kindLabel[o.kind]}
-                              </em>
-                            ))}
-                          </span>
-                          {w.description && <span className="workflow-item-desc">{w.description}</span>}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-
-                {activeWorkflow?.inputs.some(i => i.kind === 'image') && (
-                  <div className="pref-hint">该工作流需要参考图：点右下角上传按钮添加</div>
-                )}
-                <div className={`pref-comfy${comfyStatus?.connected ? ' ok' : ' bad'}`}>
-                  ComfyUI：{comfyStatus?.connected ? `已连接（${comfyStatus.baseUrl}）` : '未连接'}
+                  <input
+                    className="pref-size-range"
+                    type="range"
+                    min={sizeCfg.min}
+                    max={sizeCfg.max}
+                    step={sizeCfg.step}
+                    value={size}
+                    onChange={e => setSize(clampSize(parseFloat(e.target.value)))}
+                  />
+                  <div className="pref-size-scale">
+                    <span>{formatSize(sizeCfg.min)}MP</span>
+                    <span>{formatSize(sizeCfg.max)}MP</span>
+                  </div>
+                  <div className="pref-size-preview">
+                    {preview ? (
+                      <>
+                        <span className="pref-size-preview-px">{preview.width} × {preview.height} px</span>
+                        {preview.capped && (
+                          <span className="pref-size-preview-hint">已按最大边长等比缩放</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="pref-size-preview-hint">智能比例：跟随工作流默认分辨率</span>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
