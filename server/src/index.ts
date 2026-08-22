@@ -11,6 +11,7 @@ import {
   uploadFile,
   submitPrompt,
 } from './comfyui.js';
+import { readSettings, writeSettings } from './settings.js';
 import {
   buildSpecsCached,
   buildPrompt,
@@ -232,18 +233,31 @@ app.get('/comfyui/view', async (req, res) => {
   }
 });
 
-/* ---------------- 设置 ---------------- */
+/* ---------------- 设置（JSON 文件持久化，照搬 v1 方案） ---------------- */
+
+const SETTINGS_FILE = path.resolve(__dirname, '../data/settings.json');
+
+// 启动时从文件恢复 ComfyUI 地址（环境变量仍可覆盖）
+const savedSettings = readSettings(SETTINGS_FILE);
+if (!process.env.COMFYUI_BASE_URL) {
+  try {
+    setComfyBaseUrl(savedSettings.comfyui.baseUrl);
+  } catch {
+    /* 使用默认值 */
+  }
+}
 
 /** 当前设置（前端设置弹窗初始化用） */
 app.get('/api/settings', (_req, res) => {
   res.json({ comfyui: { baseUrl: COMFYUI_BASE_URL } });
 });
 
-/** 更新 ComfyUI 地址：清空 introspection 缓存并立即做一次健康检查 */
+/** 更新 ComfyUI 地址：持久化到文件 + 清空缓存 + 健康检查 */
 app.post('/api/settings/comfyui', async (req, res) => {
   const baseUrl = typeof req.body?.baseUrl === 'string' ? req.body.baseUrl : '';
   try {
     const next = setComfyBaseUrl(baseUrl);
+    writeSettings(SETTINGS_FILE, { comfyui: { baseUrl: next } });
     invalidateComfyCaches();
     const status = await checkHealth();
     res.json({ ok: true, baseUrl: next, connected: status.connected, status });
