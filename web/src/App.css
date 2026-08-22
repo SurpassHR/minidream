@@ -930,13 +930,21 @@
   white-space: pre-wrap;
 }
 
+.chat-assistant-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  max-width: 85%;
+}
+
 .chat-bubble.assistant {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 4px 18px 18px 18px;
   padding: 16px 20px;
-  flex: 1;
-  min-width: 0;
+  width: 100%;
 }
 
 /* 打字机光标 */
@@ -1420,64 +1428,80 @@
   background: var(--bg-hover);
 }
 
-/* 生成结果 */
+/* 生成结果 (独立媒体卡片元素) */
 .generation-results {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: 2px;
+  margin-top: 10px;
+  width: 100%;
 }
 
 .result-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
 }
 
 .result-figure {
   margin: 0;
-  border-radius: 14px;
+  border-radius: 16px;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   background: var(--bg-card);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.result-figure:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
 .result-img {
   display: block;
   width: 100%;
-  aspect-ratio: 1;
-  object-fit: cover;
-  background: var(--bg-hover);
+  max-height: 520px;
+  object-fit: contain;
+  background: #09090b;
 }
 
 .result-figure figcaption {
-  padding: 8px 10px;
+  padding: 10px 14px;
   font-size: 12px;
   color: var(--text-secondary);
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
 }
 
 .result-videos {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
 .result-video-wrap {
-  max-width: 420px;
+  max-width: 560px;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  background: #000;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
 }
 
 .result-video {
   display: block;
   width: 100%;
-  border-radius: 14px;
-  border: 1px solid var(--border);
+  max-height: 520px;
   background: #000;
 }
 
 .result-video-label {
-  margin-top: 6px;
+  padding: 8px 12px;
   font-size: 12px;
   color: var(--text-secondary);
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
 }
 
 .result-texts {

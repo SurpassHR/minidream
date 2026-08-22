@@ -486,9 +486,6 @@ function AssistantMessageBody({
         )
       )}
 
-      {/* 多模态生成产物展示 */}
-      {allOutputs.length > 0 && <GenerationOutputsView outputs={allOutputs} />}
-
       {/* 错误展示 */}
       {legacyErrorStage && <div className="chat-error">{legacyErrorStage.logs?.join('\n')}</div>}
 
@@ -505,6 +502,30 @@ function AssistantMessageBody({
       )}
     </div>
   );
+}
+
+/* ==================== 提取助手消息中的生成产物 ==================== */
+function extractOutputs(message: ChatMessage): GenerationOutput[] {
+  const outputs: GenerationOutput[] = [];
+  if (message.tasks) {
+    for (const t of message.tasks) {
+      if (t.outputs) {
+        for (const out of t.outputs) {
+          outputs.push({
+            kind: out.kind,
+            url: out.url,
+            label: out.filename,
+          });
+        }
+      }
+    }
+  }
+  if (message.stages) {
+    for (const s of message.stages) {
+      if (s.outputs) outputs.push(...s.outputs);
+    }
+  }
+  return outputs;
 }
 
 /* ==================== 主组件 ==================== */
@@ -536,8 +557,9 @@ export default function ChatView({
 
   return (
     <div className="chat">
-      {messages.map((m, i) =>
-        m.role === 'user' ? (
+      {messages.map((m, i) => {
+        const outputs = extractOutputs(m);
+        return m.role === 'user' ? (
           <div key={i} className="chat-row user">
             <div className="chat-bubble user">
               <div className="bubble-content">{m.content}</div>
@@ -548,20 +570,26 @@ export default function ChatView({
             <div className="chat-avatar">
               <AgentAvatar />
             </div>
-            <div className="chat-bubble assistant">
-              <AssistantMessageBody
-                message={m}
-                live={liveIndex === i || (!m.content && !m.tasks?.length && !m.stages?.length)}
-                onRegenerate={onRegenerate}
-                onCancelJob={onCancelJob}
-                onCancelTask={onCancelTask}
-                onActionCard={onActionCard}
-                index={i}
-              />
+            <div className="chat-assistant-container">
+              {/* 对话气泡：包含思维链、导演阐述文字与任务进度 */}
+              <div className="chat-bubble assistant">
+                <AssistantMessageBody
+                  message={m}
+                  live={liveIndex === i || (!m.content && !m.tasks?.length && !m.stages?.length)}
+                  onRegenerate={onRegenerate}
+                  onCancelJob={onCancelJob}
+                  onCancelTask={onCancelTask}
+                  onActionCard={onActionCard}
+                  index={i}
+                />
+              </div>
+
+              {/* 独立的图像/视频媒体元素：完全与对话气泡分离，独立全宽展示 */}
+              {outputs.length > 0 && <GenerationOutputsView outputs={outputs} />}
             </div>
           </div>
-        ),
-      )}
+        );
+      })}
       <div ref={bottomRef} />
     </div>
   );
