@@ -22,11 +22,20 @@ export interface PluginsSettings {
 
 export type AgentThinking = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+export type FabricatedRole = 'system' | 'user' | 'assistant';
+
+export interface FabricatedHistoryMessage {
+  role: FabricatedRole;
+  content: string;
+}
+
 export interface AgentSettings {
   model: string;
   thinking: AgentThinking;
   /** Agent 是否轮询生成任务状态（关闭时移除 generation.status 工具，进度走 SSE 推送） */
   pollTaskStatus: boolean;
+  /** 虚构对话历史：新会话首条消息时注入 Agent 输入（内容与条数均可配置；空数组 = 关闭） */
+  fabricatedHistory: FabricatedHistoryMessage[];
 }
 
 export interface ImageGenSettings {
@@ -69,6 +78,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     model: '',
     thinking: 'minimal',
     pollTaskStatus: false,
+    fabricatedHistory: [],
   },
   imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
   storage: {
@@ -123,6 +133,7 @@ export function readSettings(file: string): AppSettings {
           typeof agent.pollTaskStatus === 'boolean'
             ? agent.pollTaskStatus
             : DEFAULT_SETTINGS.agent.pollTaskStatus,
+        fabricatedHistory: normalizeFabricatedHistory(agent.fabricatedHistory),
       },
       imageGen: {
         seedMode: imageGen.seedMode === 'fixed' ? 'fixed' : DEFAULT_IMAGE_GEN_SETTINGS.seedMode,
@@ -191,6 +202,22 @@ export function writeSettings(file: string, s: AppSettings): AppSettings {
   return s;
 }
 
+/** 规整虚构对话历史：仅保留合法角色 + 非空内容，去除首尾空白 */
+function normalizeFabricatedHistory(raw: unknown): FabricatedHistoryMessage[] {
+  if (!Array.isArray(raw)) return [];
+  const out: FabricatedHistoryMessage[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const m = item as Partial<FabricatedHistoryMessage>;
+    const role = m.role;
+    const content = typeof m.content === 'string' ? m.content.trim() : '';
+    if (role !== 'system' && role !== 'user' && role !== 'assistant') continue;
+    if (!content) continue;
+    out.push({ role, content });
+  }
+  return out;
+}
+
 export function updateAgentSettings(file: string, partial: Partial<AgentSettings>): AppSettings {
   const current = readSettings(file);
   const thinking = partial.thinking && ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(partial.thinking)
@@ -205,6 +232,9 @@ export function updateAgentSettings(file: string, partial: Partial<AgentSettings
         typeof partial.pollTaskStatus === 'boolean'
           ? partial.pollTaskStatus
           : current.agent.pollTaskStatus,
+      fabricatedHistory: normalizeFabricatedHistory(
+        partial.fabricatedHistory === undefined ? current.agent.fabricatedHistory : partial.fabricatedHistory,
+      ),
     },
   });
 }

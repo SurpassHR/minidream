@@ -391,13 +391,14 @@ app.get('/api/agent/models', async (_req, res) => {
   res.json({ models: await listAgentModels() });
 });
 
-/** 更新 Agent 默认模型与 thinking 强度 */
+/** 更新 Agent 默认模型、thinking 强度与虚构对话历史 */
 app.post('/api/settings/agent', (req, res) => {
   try {
     const partial: Partial<AgentSettings> = {
       model: typeof req.body?.model === 'string' ? req.body.model : undefined,
       thinking: typeof req.body?.thinking === 'string' ? req.body.thinking as AgentSettings['thinking'] : undefined,
       pollTaskStatus: typeof req.body?.pollTaskStatus === 'boolean' ? req.body.pollTaskStatus : undefined,
+      fabricatedHistory: Array.isArray(req.body?.fabricatedHistory) ? req.body.fabricatedHistory : undefined,
     };
     const updated = updateAgentSettings(SETTINGS_FILE, partial);
     res.json({ ok: true, agent: updated.agent });
@@ -789,9 +790,15 @@ app.post('/api/chat', async (req, res) => {
 
   // 会话首条消息时，后台用 LLM 生成对话标题（不阻塞主流程；失败保留截断标题）
   const initialTitle = append.file.sessions.find(s => s.id === sid)?.title ?? '';
-  if ((append.file.sessions.find(s => s.id === sid)?.messages.length ?? 0) === 1) {
+  const isFirstMessage = (append.file.sessions.find(s => s.id === sid)?.messages.length ?? 0) === 1;
+  if (isFirstMessage) {
     void autoTitleSession(sid, message.trim(), initialTitle);
   }
+
+  // 首条消息时注入虚构对话历史：让 Agent 一进上下文就处于“对话进行中”状态，省去系统角色预热
+  const fabricatedHistory = isFirstMessage
+    ? readSettings(SETTINGS_FILE).agent.fabricatedHistory
+    : [];
 
   if (isStream) {
 
@@ -859,6 +866,7 @@ app.post('/api/chat', async (req, res) => {
       message: message.trim(),
       images: Array.isArray(req.body?.images) ? req.body.images : undefined,
       videos: Array.isArray(req.body?.videos) ? req.body.videos : undefined,
+      history: fabricatedHistory.length > 0 ? fabricatedHistory : undefined,
     });
     const agentSystemPrompt = [
       '你运行在「导演工作台」中。生成结果（图片/视频）会自动展示在用户界面中，',

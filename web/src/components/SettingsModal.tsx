@@ -9,6 +9,7 @@ import {
   type AgentModel,
   type AgentThinking,
   type ComfyStatus,
+  type FabricatedHistoryMessage,
   type WorkflowParam,
   type WorkflowSpec,
 } from '../api';
@@ -119,7 +120,13 @@ export default function SettingsModal({
   const [agentModelsLoading, setAgentModelsLoading] = useState(false);
   const [agentTip, setAgentTip] = useState<string | null>(null);
   const [agentError, setAgentError] = useState<string | null>(null);
-  const [agentSaved, setAgentSaved] = useState<{ model: string; thinking: AgentThinking; pollTaskStatus: boolean } | null>(null);
+  const [agentFabricated, setAgentFabricated] = useState<FabricatedHistoryMessage[]>([]);
+  const [agentSaved, setAgentSaved] = useState<{
+    model: string;
+    thinking: AgentThinking;
+    pollTaskStatus: boolean;
+    fabricatedHistory: FabricatedHistoryMessage[];
+  } | null>(null);
 
   // 插件（工作流）状态：停用列表 + 参数配置（workflowId → { paramId: 值 }）
   const [pluginDisabled, setPluginDisabled] = useState<string[]>([]);
@@ -169,7 +176,13 @@ export default function SettingsModal({
           setAgentModel(s.agent.model);
           setAgentThinking(s.agent.thinking);
           setAgentPoll(s.agent.pollTaskStatus);
-          setAgentSaved({ model: s.agent.model, thinking: s.agent.thinking, pollTaskStatus: s.agent.pollTaskStatus });
+          setAgentFabricated(s.agent.fabricatedHistory ?? []);
+          setAgentSaved({
+            model: s.agent.model,
+            thinking: s.agent.thinking,
+            pollTaskStatus: s.agent.pollTaskStatus,
+            fabricatedHistory: s.agent.fabricatedHistory ?? [],
+          });
         }
         if (s.plugins) {
           setPluginDisabled(s.plugins.disabled);
@@ -262,7 +275,10 @@ export default function SettingsModal({
       agent:
         settingsLoaded &&
         agentSaved !== null &&
-        (agentModel !== agentSaved.model || agentThinking !== agentSaved.thinking || agentPoll !== agentSaved.pollTaskStatus),
+        (agentModel !== agentSaved.model ||
+          agentThinking !== agentSaved.thinking ||
+          agentPoll !== agentSaved.pollTaskStatus ||
+          !objEquals(agentFabricated, agentSaved.fabricatedHistory)),
       storage: settingsLoaded && outputDir.trim() !== outputDirSaved,
       plugins:
         settingsLoaded &&
@@ -270,7 +286,7 @@ export default function SettingsModal({
         (!setEquals(pluginDraft ?? new Set(), new Set(pluginsSaved.disabled)) ||
           !objEquals(pluginConfigDraft ?? {}, pluginsSaved.config)),
     }),
-    [settingsLoaded, baseUrl, baseUrlSaved, agentModel, agentThinking, agentPoll, agentSaved, outputDir, outputDirSaved, pluginDraft, pluginConfigDraft, pluginsSaved],
+    [settingsLoaded, baseUrl, baseUrlSaved, agentModel, agentThinking, agentPoll, agentFabricated, agentSaved, outputDir, outputDirSaved, pluginDraft, pluginConfigDraft, pluginsSaved],
   );
   const isDirty = dirty.comfyui || dirty.agent || dirty.storage || dirty.plugins;
 
@@ -406,7 +422,12 @@ export default function SettingsModal({
     setAgentTip(null);
     setAgentError(null);
     try {
-      const result = await saveAgentSettings({ model: agentModel, thinking: agentThinking, pollTaskStatus: agentPoll });
+      const result = await saveAgentSettings({
+        model: agentModel,
+        thinking: agentThinking,
+        pollTaskStatus: agentPoll,
+        fabricatedHistory: agentFabricated,
+      });
       if (!result.ok) {
         setAgentError(result.error ?? '保存失败');
         return false;
@@ -414,13 +435,38 @@ export default function SettingsModal({
       setAgentModel(result.agent.model);
       setAgentThinking(result.agent.thinking);
       setAgentPoll(result.agent.pollTaskStatus);
-      setAgentSaved({ model: result.agent.model, thinking: result.agent.thinking, pollTaskStatus: result.agent.pollTaskStatus });
+      setAgentFabricated(result.agent.fabricatedHistory ?? []);
+      setAgentSaved({
+        model: result.agent.model,
+        thinking: result.agent.thinking,
+        pollTaskStatus: result.agent.pollTaskStatus,
+        fabricatedHistory: result.agent.fabricatedHistory ?? [],
+      });
       setAgentTip('Agent 配置已保存并生效');
       return true;
     } catch (e) {
       setAgentError((e as Error).message);
       return false;
     }
+  };
+
+  /** 更新某条虚构历史消息 */
+  const updateFabricated = (index: number, patch: Partial<FabricatedHistoryMessage>) => {
+    setAgentFabricated(prev => prev.map((m, i) => (i === index ? { ...m, ...patch } : m)));
+  };
+
+  const addFabricated = () => {
+    setAgentFabricated(prev => [...prev, { role: 'user', content: '' }]);
+  };
+
+  const removeFabricated = (index: number) => {
+    setAgentFabricated(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const FABRICATED_ROLE_LABEL: Record<FabricatedHistoryMessage['role'], string> = {
+    system: '系统',
+    user: '用户',
+    assistant: '助手',
   };
 
   if (!open) return null;
@@ -671,6 +717,49 @@ export default function SettingsModal({
                     开启后 Agent 会主动查询任务状态，并在完成后输出结果摘要（更慢、更耗 token）；关闭则依赖实时事件流推送进度与产物，响应更快。
                   </span>
                 </label>
+                <div className="settings-field">
+                  <span className="settings-label">新会话虚构对话历史</span>
+                  <span className="settings-field-hint">
+                    新会话首条消息时，先把下面的虚构对话注入 Agent 输入，让模型一进上下文就处于“对话进行中”状态，省去一次系统角色预热交互。内容和条数都可自由配置；留空则不注入。
+                  </span>
+                  <div className="fabricated-list">
+                    {agentFabricated.length === 0 && (
+                      <div className="fabricated-empty">尚未配置，新会话将直接使用真实首条消息。</div>
+                    )}
+                    {agentFabricated.map((m, i) => (
+                      <div key={i} className="fabricated-row">
+                        <select
+                          className="settings-select fabricated-role"
+                          value={m.role}
+                          onChange={e => updateFabricated(i, { role: e.target.value as FabricatedHistoryMessage['role'] })}
+                          aria-label={`第 ${i + 1} 条虚构历史角色`}
+                        >
+                          {(Object.keys(FABRICATED_ROLE_LABEL) as FabricatedHistoryMessage['role'][]).map(r => (
+                            <option key={r} value={r}>
+                              {FABRICATED_ROLE_LABEL[r]}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          className="settings-input fabricated-content"
+                          value={m.content}
+                          onChange={e => updateFabricated(i, { content: e.target.value })}
+                          placeholder="消息内容"
+                        />
+                        <button
+                          className="fabricated-del"
+                          onClick={() => removeFabricated(i)}
+                          aria-label={`删除第 ${i + 1} 条虚构历史`}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button className="settings-btn fabricated-add" onClick={addFabricated}>
+                    + 添加消息
+                  </button>
+                </div>
                 {agentError && <div className="settings-error">{agentError}</div>}
                 {agentTip && <div className="settings-tip">{agentTip}</div>}
               </section>

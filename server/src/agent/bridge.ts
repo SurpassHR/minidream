@@ -179,8 +179,26 @@ export interface RunAgentOptions {
   onEvent?: (event: AgentStreamEvent) => void;
 }
 
+export interface FabricatedTurn {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+/** 虚构对话历史渲染：每条消息按角色标记前缀，模拟已发生的对话 */
+function renderFabricatedHistory(history: FabricatedTurn[]): string {
+  const label: Record<FabricatedTurn['role'], string> = {
+    system: '系统',
+    user: '用户',
+    assistant: '助手',
+  };
+  return history
+    .filter(t => t.content?.trim())
+    .map(t => `${label[t.role]}：${t.content.trim()}`)
+    .join('\n');
+}
+
 /**
- * 将用户消息和多模态素材/上下文组装为发送给 Pi Agent 的输入文本
+ * 将用户消息和多模态素材/上下文/虚构历史组装为发送给 Pi Agent 的输入文本
  */
 export function buildAgentInput(
   optionsOrMessage:
@@ -191,12 +209,15 @@ export function buildAgentInput(
         images?: Array<string | { name?: string; dataUrl?: string }>;
         videos?: Array<string | { name?: string; dataUrl?: string }>;
         context?: string;
+        /** 虚构对话历史：仅新会话首条消息注入 */
+        history?: FabricatedTurn[];
       },
   options: {
     sessionId?: string;
     images?: Array<string | { name?: string; dataUrl?: string }>;
     videos?: Array<string | { name?: string; dataUrl?: string }>;
     context?: string;
+    history?: FabricatedTurn[];
   } = {}
 ): string {
   const message =
@@ -207,6 +228,9 @@ export function buildAgentInput(
     typeof optionsOrMessage === 'string' ? options : optionsOrMessage;
 
   const parts: string[] = [];
+  if (opts.history && opts.history.length > 0) {
+    parts.push(`【对话历史】\n${renderFabricatedHistory(opts.history)}`);
+  }
   if (opts.context?.trim()) {
     parts.push(`【上下文信息】\n${opts.context.trim()}`);
   }

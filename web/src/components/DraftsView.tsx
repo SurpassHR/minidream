@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { deleteDraft, fetchDrafts, type DraftRecord } from '../api';
+import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 
 function formatDate(value: number): string {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -13,6 +14,7 @@ function formatDate(value: number): string {
 export default function DraftsView() {
   const [drafts, setDrafts] = useState<DraftRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [lightbox, setLightbox] = useState<LightboxImage | null>(null);
 
   const refresh = () => {
     setLoading(true);
@@ -59,7 +61,12 @@ export default function DraftsView() {
                 {draft.kind === 'video' ? (
                   <video src={`/api/drafts/${draft.id}/file`} controls preload="metadata" />
                 ) : (
-                  <img src={`/api/drafts/${draft.id}/file`} alt={draft.filename} loading="lazy" />
+                  <img
+                    src={`/api/drafts/${draft.id}/file`}
+                    alt={draft.filename}
+                    loading="lazy"
+                    onClick={() => setLightbox({ url: `/api/drafts/${draft.id}/file`, alt: draft.filename })}
+                  />
                 )}
                 <button className="draft-delete" onClick={() => void remove(draft.id)} title="删除草稿" aria-label="删除草稿">×</button>
               </div>
@@ -72,6 +79,8 @@ export default function DraftsView() {
           ))}
         </div>
       )}
+
+      {lightbox && <ImageLightbox image={lightbox} onClose={() => setLightbox(null)} />}
     </section>
   );
 }

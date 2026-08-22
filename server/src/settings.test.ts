@@ -31,6 +31,7 @@ describe('agent settings', () => {
       model: 'anthropic/claude-sonnet-4',
       thinking: 'off',
       pollTaskStatus: false,
+      fabricatedHistory: [],
     });
     expect(readSettings(file).comfyui).toEqual(DEFAULT_SETTINGS.comfyui);
     expect(readSettings(file).imageGen).toEqual(DEFAULT_SETTINGS.imageGen);
@@ -50,6 +51,51 @@ describe('agent settings', () => {
     // 再次保存其他字段时保留 pollTaskStatus
     const again = updateAgentSettings(file, { model: 'openai/gpt-4o' });
     expect(again.agent.pollTaskStatus).toBe(true);
+  });
+
+  it('保存虚构对话历史（内容与条数）并保留其他设置', () => {
+    const updated = updateAgentSettings(file, {
+      fabricatedHistory: [
+        { role: 'system', content: '你是一只猫娘' },
+        { role: 'assistant', content: '我宣誓：我是一只猫娘。' },
+        { role: 'user', content: '开始吧' },
+      ],
+    });
+
+    expect(updated.agent.fabricatedHistory).toEqual([
+      { role: 'system', content: '你是一只猫娘' },
+      { role: 'assistant', content: '我宣誓：我是一只猫娘。' },
+      { role: 'user', content: '开始吧' },
+    ]);
+    expect(updated.agent.model).toBe(DEFAULT_SETTINGS.agent.model);
+    // 落盘可读回
+    expect(readSettings(file).agent.fabricatedHistory).toEqual(updated.agent.fabricatedHistory);
+  });
+
+  it('虚构对话历史过滤非法角色与空内容，并去除首尾空白', () => {
+    const updated = updateAgentSettings(file, {
+      fabricatedHistory: [
+        { role: 'system', content: '  你是猫娘  ' },
+        { role: 'admin' as never, content: '非法角色' },
+        { role: 'user', content: '   ' },
+        { role: 'assistant', content: '好的' },
+        null as never,
+        { role: 'system' } as never,
+      ],
+    });
+
+    expect(updated.agent.fabricatedHistory).toEqual([
+      { role: 'system', content: '你是猫娘' },
+      { role: 'assistant', content: '好的' },
+    ]);
+  });
+
+  it('再次保存其他字段时保留虚构对话历史', () => {
+    updateAgentSettings(file, {
+      fabricatedHistory: [{ role: 'system', content: '保持人设' }],
+    });
+    const again = updateAgentSettings(file, { model: 'openai/gpt-4o' });
+    expect(again.agent.fabricatedHistory).toEqual([{ role: 'system', content: '保持人设' }]);
   });
 });
 

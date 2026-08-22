@@ -143,6 +143,35 @@ describe('Agent Bridge', () => {
     expect(input).toBe('【用户指令】\n测试指令');
   });
 
+  it('buildAgentInput 前置渲染虚构对话历史，角色标记为系统/用户/助手', () => {
+    const input = buildAgentInput({
+      message: '画一只猫',
+      history: [
+        { role: 'system', content: '你是一只猫娘' },
+        { role: 'assistant', content: '我宣誓：我是一只猫娘。' },
+        { role: 'user', content: '开始吧' },
+      ],
+    });
+
+    expect(input).toContain('【对话历史】\n系统：你是一只猫娘\n助手：我宣誓：我是一只猫娘。\n用户：开始吧');
+    expect(input).toContain('【用户指令】\n画一只猫');
+    // 对话历史在用户指令之前
+    expect(input.indexOf('【对话历史】')).toBeLessThan(input.indexOf('【用户指令】'));
+  });
+
+  it('buildAgentInput 过滤虚构历史中的空白内容', () => {
+    const input = buildAgentInput({
+      message: '画一只猫',
+      history: [
+        { role: 'system', content: '你是一只猫娘' },
+        { role: 'user', content: '   ' },
+      ],
+    });
+
+    expect(input).toContain('【对话历史】\n系统：你是一只猫娘');
+    expect(input).not.toContain('用户：');
+  });
+
   it('message_start 不生成用户可见占位状态，并转发 message_end 错误', () => {
     const events: AgentStreamEvent[] = [];
 

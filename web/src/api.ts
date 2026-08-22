@@ -296,11 +296,20 @@ export interface DraftRecord {
 
 export type AgentThinking = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+export type FabricatedRole = 'system' | 'user' | 'assistant';
+
+export interface FabricatedHistoryMessage {
+  role: FabricatedRole;
+  content: string;
+}
+
 export interface AgentSettings {
   model: string;
   thinking: AgentThinking;
   /** Agent 是否轮询生成任务状态（关闭时移除 generation.status 工具，进度走 SSE 推送） */
   pollTaskStatus: boolean;
+  /** 虚构对话历史：新会话首条消息注入 Agent 输入（内容与条数均可配置；空数组 = 关闭） */
+  fabricatedHistory: FabricatedHistoryMessage[];
 }
 
 export interface AgentModel {
