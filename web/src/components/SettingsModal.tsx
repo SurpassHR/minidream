@@ -718,13 +718,13 @@ export default function SettingsModal({
                   </span>
                 </label>
                 <div className="settings-field">
-                  <span className="settings-label">新会话虚构对话历史</span>
+                  <span className="settings-label">虚构对话历史（每请求注入）</span>
                   <span className="settings-field-hint">
-                    新会话首条消息时，先把下面的虚构对话注入 Agent 输入，让模型一进上下文就处于“对话进行中”状态，省去一次系统角色预热交互。内容和条数都可自由配置；留空则不注入。
+                    只要有配置，就**每个对话请求**都注入：把下面的虚构对话构建为真实交替的用户/助手消息，在每次 LLM 调用前注入请求头部（参考 custom-first-control-prompt 请求路径注入——种子消息只在请求路径上、不写入会话日志，因此必须每次请求重新注入，否则后续轮次模型会“遗忘”准则；前缀字节级一致，保持缓存复用）。内容和条数都可自由配置；留空则不注入。
                   </span>
                   <div className="fabricated-list">
                     {agentFabricated.length === 0 && (
-                      <div className="fabricated-empty">尚未配置，新会话将直接使用真实首条消息。</div>
+                      <div className="fabricated-empty">尚未配置，将不注入参考对话，模型直接使用真实消息。</div>
                     )}
                     {agentFabricated.map((m, i) => (
                       <div key={i} className="fabricated-row">

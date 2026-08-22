@@ -34,7 +34,7 @@ export interface AgentSettings {
   thinking: AgentThinking;
   /** Agent 是否轮询生成任务状态（关闭时移除 generation.status 工具，进度走 SSE 推送） */
   pollTaskStatus: boolean;
-  /** 虚构对话历史：新会话首条消息时注入 Agent 输入（内容与条数均可配置；空数组 = 关闭） */
+  /** 虚构对话历史：只要有配置就每个请求注入（构建为真实交替 user/assistant 消息，经 Pi 扩展注入请求头部） */
   fabricatedHistory: FabricatedHistoryMessage[];
 }
 

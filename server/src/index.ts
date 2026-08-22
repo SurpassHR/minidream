@@ -795,10 +795,11 @@ app.post('/api/chat', async (req, res) => {
     void autoTitleSession(sid, message.trim(), initialTitle);
   }
 
-  // 首条消息时注入虚构对话历史：让 Agent 一进上下文就处于“对话进行中”状态，省去系统角色预热
-  const fabricatedHistory = isFirstMessage
-    ? readSettings(SETTINGS_FILE).agent.fabricatedHistory
-    : [];
+  // 虚构对话历史：只要有配置就**每个请求**都注入（参考 custom-first-control-prompt 的
+  // “every request re-injects it”设计——种子消息只在请求路径上，不写入会话日志，
+  // 因此必须每次请求都重新前置注入，否则后续轮次模型从 session 恢复的历史中
+  // 看不到种子，准则/参考对话会“遗忘”；每次注入字节级一致，保持前缀缓存复用）
+  const fabricatedHistory = readSettings(SETTINGS_FILE).agent.fabricatedHistory;
 
   if (isStream) {
 
@@ -866,7 +867,6 @@ app.post('/api/chat', async (req, res) => {
       message: message.trim(),
       images: Array.isArray(req.body?.images) ? req.body.images : undefined,
       videos: Array.isArray(req.body?.videos) ? req.body.videos : undefined,
-      history: fabricatedHistory.length > 0 ? fabricatedHistory : undefined,
     });
     const agentSystemPrompt = [
       '你运行在「导演工作台」中。生成结果（图片/视频）会自动展示在用户界面中，',
@@ -879,6 +879,7 @@ app.post('/api/chat', async (req, res) => {
         sessionId: sid,
         signal: agentController.signal,
         mcpServerUrl: mcpUrl,
+        seedHistory: fabricatedHistory.length > 0 ? fabricatedHistory : undefined,
         systemPrompt: agentSystemPrompt,
         model: typeof req.body?.agentModel === 'string' && req.body.agentModel.trim()
           ? req.body.agentModel.trim()

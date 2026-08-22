@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { writeSeedExtension } from './seed.js';
 
 export interface AgentStreamEvent {
   type: 'status' | 'thinking' | 'text' | 'tool_call' | 'tool_result' | 'error' | 'end';
@@ -170,6 +171,8 @@ export interface RunAgentOptions {
   sessionId?: string;
   mcpServerUrl?: string;
   systemPrompt?: string;
+  /** 虚构对话历史：构建为真实交替 user/assistant 消息，经动态生成的 Pi 扩展在每次 LLM 调用前注入请求头部 */
+  seedHistory?: FabricatedTurn[];
   cwd?: string;
   env?: Record<string, string>;
   signal?: AbortSignal;
@@ -184,21 +187,11 @@ export interface FabricatedTurn {
   content: string;
 }
 
-/** 虚构对话历史渲染：每条消息按角色标记前缀，模拟已发生的对话 */
-function renderFabricatedHistory(history: FabricatedTurn[]): string {
-  const label: Record<FabricatedTurn['role'], string> = {
-    system: '系统',
-    user: '用户',
-    assistant: '助手',
-  };
-  return history
-    .filter(t => t.content?.trim())
-    .map(t => `${label[t.role]}：${t.content.trim()}`)
-    .join('\n');
-}
-
 /**
- * 将用户消息和多模态素材/上下文/虚构历史组装为发送给 Pi Agent 的输入文本
+ * 将用户消息和多模态素材/上下文组装为发送给 Pi Agent 的输入文本。
+ * 虚构对话历史不再拼接进文本——改由 seed.ts 构建真实交替 user/assistant
+ * 消息、经动态生成的 Pi 扩展注入请求头部（参考 custom-first-control-prompt
+ * 的请求路径注入机制，零会话日志写入、保持前缀缓存复用）。
  */
 export function buildAgentInput(
   optionsOrMessage:
@@ -209,15 +202,12 @@ export function buildAgentInput(
         images?: Array<string | { name?: string; dataUrl?: string }>;
         videos?: Array<string | { name?: string; dataUrl?: string }>;
         context?: string;
-        /** 虚构对话历史：仅新会话首条消息注入 */
-        history?: FabricatedTurn[];
       },
   options: {
     sessionId?: string;
     images?: Array<string | { name?: string; dataUrl?: string }>;
     videos?: Array<string | { name?: string; dataUrl?: string }>;
     context?: string;
-    history?: FabricatedTurn[];
   } = {}
 ): string {
   const message =
@@ -228,9 +218,6 @@ export function buildAgentInput(
     typeof optionsOrMessage === 'string' ? options : optionsOrMessage;
 
   const parts: string[] = [];
-  if (opts.history && opts.history.length > 0) {
-    parts.push(`【对话历史】\n${renderFabricatedHistory(opts.history)}`);
-  }
   if (opts.context?.trim()) {
     parts.push(`【上下文信息】\n${opts.context.trim()}`);
   }
@@ -318,18 +305,38 @@ export async function runAgentStream(
     args.push('--mcp-config', mcpConfigFile);
   }
 
+  // 虚构对话历史：构建为真实交替 user/assistant 消息，经动态生成的 Pi 扩展
+  // 在每次 LLM 调用前注入请求头部（参考 custom-first-control-prompt 的请求路径注入：
+  // 零会话日志写入、字节级一致保持前缀缓存复用）。扩展文件随进程结束一并清理。
+  let seedExtensionFile: string | null = null;
+  if (options.seedHistory && options.seedHistory.length > 0) {
+    seedExtensionFile = writeSeedExtension(options.seedHistory);
+    if (seedExtensionFile) {
+      args.push('--extension', seedExtensionFile);
+    }
+  }
+
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
     ...(options.env ?? {}),
   };
   const cleanupMcpConfig = () => {
-    if (!mcpConfigFile) return;
-    try {
-      fs.rmSync(mcpConfigFile, { force: true });
-    } catch {
-      // 清理失败不应覆盖 Agent 的原始结果
+    if (mcpConfigFile) {
+      try {
+        fs.rmSync(mcpConfigFile, { force: true });
+      } catch {
+        // 清理失败不应覆盖 Agent 的原始结果
+      }
+      mcpConfigFile = null;
     }
-    mcpConfigFile = null;
+    if (seedExtensionFile) {
+      try {
+        fs.rmSync(seedExtensionFile, { force: true });
+      } catch {
+        // 清理失败不应覆盖 Agent 的原始结果
+      }
+      seedExtensionFile = null;
+    }
   };
 
   return new Promise((resolve) => {
