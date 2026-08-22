@@ -220,11 +220,38 @@ function expandSubgraphs(json: Record<string, any>): { nodes: any[]; links: any[
     const extIn = links.filter(l => l[3] === inst.id); // 指向实例的外链
     const extOut = links.filter(l => l[1] === inst.id); // 从实例出发的外链
 
-    // 解析每个子图输入槽位：实例输入有外链 → 转发；否则取实例 widget 值（named 优先）
+    // 构建子图实例 widget 输入到值的映射：
+    // 1) 优先使用 widgets_values_named
+    // 2) 若 inst.widgets_values 长度与 def.inputs 相同，说明 widgets_values 与 def.inputs 槽位 1:1 对齐
+    // 3) 否则若 inst.inputs 中带有 widget 定义，且 widget 数量与 inst.widgets_values 相同，则按 widget 输入槽位顺序映射
+    // 4) 否则回退到按 slot 索引映射
+    const widgetValueMap = new Map<string, any>();
+    if (inst.widgets_values_named && typeof inst.widgets_values_named === 'object') {
+      for (const [k, v] of Object.entries(inst.widgets_values_named)) {
+        widgetValueMap.set(k, v);
+      }
+    } else if (Array.isArray(inst.widgets_values)) {
+      const defInputs = def.inputs ?? [];
+      const widgetInputs = (instInputs as any[]).filter(i => i.widget != null);
+      if (inst.widgets_values.length === defInputs.length) {
+        defInputs.forEach((si: any, idx: number) => {
+          widgetValueMap.set(si.name, inst.widgets_values[idx]);
+        });
+      } else if (widgetInputs.length === inst.widgets_values.length) {
+        widgetInputs.forEach((wi, idx) => {
+          widgetValueMap.set(wi.name, inst.widgets_values[idx]);
+        });
+      } else {
+        defInputs.forEach((si: any, idx: number) => {
+          widgetValueMap.set(si.name, inst.widgets_values[idx]);
+        });
+      }
+    }
+
+    // 解析每个子图输入槽位：实例输入有外链 → 转发；否则取实例 widget 值
     const sgiFeed = new Map<number, { kind: 'ext'; link: any } | { kind: 'value'; value: unknown }>();
     for (const [slot, si] of (def.inputs ?? []).entries()) {
-      const idx = (instInputs as any[]).findIndex((i: any) => i.name === si.name);
-      const instIn = idx >= 0 ? instInputs[idx] : null;
+      const instIn = (instInputs as any[]).find((i: any) => i.name === si.name);
       if (instIn?.link != null) {
         const ext = extIn.find((e: any) => e[0] === instIn.link);
         if (ext) {
@@ -232,15 +259,7 @@ function expandSubgraphs(json: Record<string, any>): { nodes: any[]; links: any[
           continue;
         }
       }
-      // 优先取 widgets_values_named（官方模板按子图输入名给出全部值）；
-      // 仅当 named 缺失（旧模板）才用 widgets_values 位置回退。
-      const namedMap = inst.widgets_values_named;
-      const value =
-        namedMap && typeof namedMap === 'object'
-          ? namedMap[si.name]
-          : instIn
-            ? inst.widgets_values?.[idx]
-            : undefined;
+      const value = widgetValueMap.has(si.name) ? widgetValueMap.get(si.name) : undefined;
       sgiFeed.set(slot, { kind: 'value', value });
     }
 
@@ -449,6 +468,11 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
     }
     // 官方模板常用 PrimitiveString / PrimitiveStringMultiline 承载提示词（经 link 注入到生成节点）
     if (/^PrimitiveString/.test(cls)) {
+      // 忽略 System Prompt 等模板内部系统提示词节点
+      const title = String(node._meta?.title || '');
+      if (title.toLowerCase().includes('system prompt')) {
+        continue;
+      }
       inputs.push({
         id: `text-${nodeId}`,
         kind: 'text',
@@ -631,6 +655,13 @@ export interface WorkflowFile {
   json: Record<string, any>;
 }
 
+function formatWorkflowName(id: string): string {
+  if (id === 'image_krea2_turbo_t2i') return 'Krea2 Turbo 文生图 (FP8)';
+  if (id === 'image_krea2_turbo_t2i_int8') return 'Krea2 Turbo 文生图 (INT8)';
+  if (id === 'image_krea2_turbo_int8_image_style_reference') return 'Krea2 Turbo 风格参考生图 (INT8)';
+  return id;
+}
+
 export function loadWorkflowFiles(): WorkflowFile[] {
   if (!fs.existsSync(WORKFLOWS_DIR)) return [];
   return fs
@@ -641,7 +672,7 @@ export function loadWorkflowFiles(): WorkflowFile[] {
       const meta = (raw._meta ?? {}) as { name?: string; description?: string };
       return {
         id: f.replace(/\.json$/, ''),
-        name: meta.name || f.replace(/\.json$/, ''),
+        name: meta.name || formatWorkflowName(f.replace(/\.json$/, '')),
         description: meta.description,
         json: raw,
       };

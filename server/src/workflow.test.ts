@@ -12,6 +12,9 @@ const img2imgJson = readWf('img2img.json');
 const h3T2vJson = readWf('video-minimax-h3-t2v.json');
 const h3I2vJson = readWf('video-minimax-h3-i2v.json');
 const h3R2vJson = readWf('video-minimax-h3-r2v.json');
+const krea2T2iJson = readWf('image_krea2_turbo_t2i.json');
+const krea2T2iInt8Json = readWf('image_krea2_turbo_t2i_int8.json');
+const krea2StyleRefJson = readWf('image_krea2_turbo_int8_image_style_reference.json');
 
 /** 手写的最小 UI 格式（LiteGraph）工作流：全部是纯本地节点 */
 const uiFixtureJson = {
@@ -154,6 +157,33 @@ const OBJECT_INFO: Record<string, any> = {
   UNETLoader: {
     input: { required: { unet_name: [['a.safetensors'], {}], weight_dtype: ['COMBO', {}] } },
     output: ['MODEL'],
+  },
+  TextGenerate: {
+    input: {
+      required: {
+        system_prompt: ['STRING', {}],
+        user_prompt: ['STRING', {}],
+      },
+    },
+    output: ['STRING'],
+  },
+  StringConcatenate: {
+    input: {
+      required: {
+        string_a: ['STRING', {}],
+        string_b: ['STRING', {}],
+        delimiter: ['STRING', {}],
+      },
+    },
+    output: ['STRING'],
+  },
+  ConditioningZeroOut: {
+    input: { required: { conditioning: ['CONDITIONING', {}] } },
+    output: ['CONDITIONING'],
+  },
+  PreviewAny: {
+    input: { required: { source: ['*', {}] } },
+    output: ['*'],
   },
   CLIPLoader: {
     input: { required: { clip_name: [['a.safetensors'], {}], type: ['COMBO', {}], device: ['COMBO', {}] } },
@@ -466,5 +496,36 @@ describe('workflow 引擎（通用自动适配）', () => {
     const r2vPrompt = await workflow.buildPrompt(r2vSpec, h3R2vJson, { prompt: '参考图上的人物望向镜头' });
     expect(r2vPrompt['138'].inputs.value).toBe('参考图上的人物望向镜头');
     expect(r2vPrompt['136'].inputs.prompt).toEqual(['138', 0]);
+  });
+
+  it('Krea2 Turbo 模板 introspection 与 buildPrompt 正确处理子图展开、提示词与参考图注入', async () => {
+    // 1. Krea2 T2I (FP8)
+    const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
+    expect(t2iSpec.inputs.some(i => i.kind === 'image')).toBe(false);
+    expect(t2iSpec.inputs.some(i => i.kind === 'text')).toBe(true);
+    expect(t2iSpec.outputs).toEqual([expect.objectContaining({ kind: 'image', classType: 'SaveImage' })]);
+
+    const t2iPrompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, { prompt: 'A futuristic city in neon rain' });
+    expect(t2iPrompt['30_sg19'].class_type).toBe('PrimitiveStringMultiline');
+    expect(t2iPrompt['30_sg19'].inputs.value).toBe('A futuristic city in neon rain');
+    expect(t2iPrompt['29'].class_type).toBe('SaveImage');
+
+    // 2. Krea2 T2I (INT8)
+    const t2iInt8Spec = await workflow.introspectWorkflow(krea2T2iInt8Json, OBJECT_INFO);
+    const t2iInt8Prompt = await workflow.buildPrompt(t2iInt8Spec, krea2T2iInt8Json, { prompt: 'Int8 test prompt' });
+    expect(t2iInt8Prompt['30_sg19'].inputs.value).toBe('Int8 test prompt');
+
+    // 3. Krea2 Style Reference (INT8)
+    const styleSpec = await workflow.introspectWorkflow(krea2StyleRefJson, OBJECT_INFO);
+    expect(styleSpec.inputs.some(i => i.kind === 'image')).toBe(true);
+    expect(styleSpec.outputs).toEqual([expect.objectContaining({ kind: 'image', classType: 'SaveImage' })]);
+
+    const stylePrompt = await workflow.buildPrompt(styleSpec, krea2StyleRefJson, {
+      prompt: 'A fantasy treehouse',
+      uploaded: { 'image-69': 'style_input.png' },
+    });
+    expect(stylePrompt['30_sg19'].inputs.value).toBe('A fantasy treehouse');
+    expect(stylePrompt['69'].class_type).toBe('LoadImage');
+    expect(stylePrompt['69'].inputs.image).toBe('style_input.png');
   });
 });
