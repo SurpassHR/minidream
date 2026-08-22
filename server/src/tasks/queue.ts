@@ -140,8 +140,16 @@ export class TaskQueue extends EventEmitter {
     return this.tasks.get(id);
   }
 
+  public getTask(id: string): TaskItem | undefined {
+    return this.get(id);
+  }
+
   public list(): TaskItem[] {
     return Array.from(this.tasks.values()).sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  public listTasks(): TaskItem[] {
+    return this.list();
   }
 
   public cancel(id: string): boolean {
@@ -171,6 +179,35 @@ export class TaskQueue extends EventEmitter {
     }
 
     return false;
+  }
+
+  public cancelTask(id: string): TaskItem | undefined {
+    const task = this.get(id);
+    if (!task) return undefined;
+    this.cancel(id);
+    return this.get(id);
+  }
+
+  public subscribeTask(
+    id: string,
+    listener: (event: 'updated' | 'completed' | 'failed' | 'canceled', task: TaskItem) => void,
+  ): () => void {
+    const handler = (task: TaskItem) => {
+      if (task.id !== id) return;
+      if (task.status === 'completed') {
+        listener('completed', task);
+      } else if (task.status === 'failed') {
+        listener('failed', task);
+      } else if (task.status === 'canceled') {
+        listener('canceled', task);
+      } else {
+        listener('updated', task);
+      }
+    };
+    this.on('task:change', handler);
+    return () => {
+      this.off('task:change', handler);
+    };
   }
 
   private updateTask(id: string, updater: (task: TaskItem) => void): TaskItem | undefined {

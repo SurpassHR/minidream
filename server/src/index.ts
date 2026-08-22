@@ -26,6 +26,9 @@ import {
   type WorkflowSpec,
 } from './workflow.js';
 import { startJob, cancelJob, subscribeJob, getJob, jobSnapshot } from './jobs.js';
+import { TaskQueue } from './tasks/queue.js';
+import { createDirectorMCPServer, type McpServerInstance } from './mcp/server.js';
+import { runAgentStream, buildAgentInput, type AgentStreamEvent } from './agent/bridge.js';
 import {
   SessionError,
   appendMessage,
@@ -48,6 +51,18 @@ app.use(express.json({ limit: '50mb' }));
 
 // Static assets (downloaded images)
 app.use('/assets', express.static(path.resolve(__dirname, '../assets')));
+
+/* ---------------- 统一任务队列与 MCP Server ---------------- */
+
+const SETTINGS_FILE = path.resolve(__dirname, '../data/settings.json');
+const TASKS_FILE = path.resolve(__dirname, '../data/tasks.json');
+export const taskQueue = new TaskQueue({
+  dataFile: TASKS_FILE,
+  settingsFile: SETTINGS_FILE,
+});
+
+export const mcpServer: McpServerInstance = createDirectorMCPServer(taskQueue);
+
 
 /* ---------------- 会话（JSON 文件持久化，照搬 v1 方案） ---------------- */
 
@@ -241,8 +256,6 @@ app.get('/comfyui/view', async (req, res) => {
 
 /* ---------------- 设置（JSON 文件持久化，照搬 v1 方案） ---------------- */
 
-const SETTINGS_FILE = path.resolve(__dirname, '../data/settings.json');
-
 // 启动时从文件恢复 ComfyUI 地址（环境变量仍可覆盖）
 const savedSettings = readSettings(SETTINGS_FILE);
 if (!process.env.COMFYUI_BASE_URL) {
@@ -286,6 +299,94 @@ app.post('/api/settings/comfyui', async (req, res) => {
     res.status(400).json({ ok: false, error: (e as Error).message });
   }
 });
+
+/* ---------------- MCP HTTP 协议端点 ---------------- */
+
+app.post('/api/mcp', async (req, res) => {
+  try {
+    const jsonRpcRes = await mcpServer.handleRpcMessage(req.body);
+    res.json(jsonRpcRes);
+  } catch (err: any) {
+    res.status(500).json({
+      jsonrpc: '2.0',
+      id: req.body?.id ?? null,
+      error: { code: -32603, message: `Internal server error: ${err?.message || String(err)}` },
+    });
+  }
+});
+
+/* ---------------- 统一任务 API (/api/tasks) ---------------- */
+
+/** 获取所有任务列表 */
+app.get('/api/tasks', (_req, res) => {
+  res.json({ tasks: taskQueue.listTasks() });
+});
+
+/** 获取单个任务详情 */
+app.get('/api/tasks/:id', (req, res) => {
+  const task = taskQueue.getTask(req.params.id);
+  if (!task) {
+    res.status(404).json({ error: 'Task not found' });
+    return;
+  }
+  res.json({ task });
+});
+
+/** 取消任务 */
+app.post('/api/tasks/:id/cancel', (req, res) => {
+  const task = taskQueue.cancelTask(req.params.id);
+  if (!task) {
+    res.status(404).json({ error: 'Task not found' });
+    return;
+  }
+  res.json({ ok: true, task });
+});
+
+/** 单个任务的独立 SSE 事件流 */
+app.get('/api/tasks/:id/events', (req, res) => {
+  const task = taskQueue.getTask(req.params.id);
+  if (!task) {
+    res.status(404).json({ error: 'Task not found' });
+    return;
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const sendEvent = (event: string, data: any) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  // 初始推送当前快照
+  sendEvent('task:snapshot', task);
+
+  if (task.status === 'completed' || task.status === 'failed' || task.status === 'canceled') {
+    res.end();
+    return;
+  }
+
+  const unsubscribe = taskQueue.subscribeTask(task.id, (event, updatedTask) => {
+    if (event === 'updated') {
+      sendEvent('task:updated', updatedTask);
+    } else if (event === 'completed') {
+      sendEvent('task:completed', updatedTask);
+      res.end();
+    } else if (event === 'failed') {
+      sendEvent('task:failed', updatedTask);
+      res.end();
+    } else if (event === 'canceled') {
+      sendEvent('task:canceled', updatedTask);
+      res.end();
+    }
+  });
+
+  req.on('close', () => {
+    unsubscribe();
+  });
+});
+
 
 /* ---------------- 生成对话（对接 ComfyUI 的 /api/chat） ---------------- */
 
@@ -498,7 +599,133 @@ app.post('/api/chat', async (req, res) => {
   const append = appendMessage(SESSIONS_FILE, sessionId, { role: 'user', content: message.trim() });
   const sid = append.sessionId;
 
-  // 2. 生成回复
+  const isStream = req.headers.accept === 'text/event-stream' || req.query.stream === 'true' || req.body?.stream === true;
+
+  if (isStream) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+
+    const sendEvent = (event: string, data: any) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    let fullThinking = '';
+    let fullText = '';
+    const taskUnsubscribes: Array<() => void> = [];
+    let agentDone = false;
+    let activeTaskCount = 0;
+
+    const cleanupAndEnd = () => {
+      if (!agentDone || activeTaskCount > 0) return;
+      // 保存助手消息
+      appendMessage(SESSIONS_FILE, sid, {
+        role: 'assistant',
+        content: fullText,
+      });
+      sendEvent('agent:end', { sessionId: sid });
+      res.end();
+    };
+
+    req.on('close', () => {
+      taskUnsubscribes.forEach(unsub => unsub());
+    });
+
+    const mcpUrl = mcpServer.getUrl() || `http://127.0.0.1:${PORT}/api/mcp`;
+    const agentInput = buildAgentInput({
+      message: message.trim(),
+      images: Array.isArray(req.body?.images) ? req.body.images : undefined,
+      videos: Array.isArray(req.body?.videos) ? req.body.videos : undefined,
+    });
+
+    try {
+      await runAgentStream(agentInput, {
+        mcpServerUrl: mcpUrl,
+        onEvent: (evt: AgentStreamEvent) => {
+          if (evt.type === 'thinking') {
+            fullThinking += evt.delta || '';
+            sendEvent('agent:thinking', { delta: evt.delta });
+          } else if (evt.type === 'text') {
+            fullText += evt.delta || '';
+            sendEvent('agent:text', { delta: evt.delta });
+          } else if (evt.type === 'tool_call') {
+            sendEvent('tool:call', {
+              callId: evt.tool?.id,
+              name: evt.tool?.name,
+              args: evt.tool?.args,
+            });
+          } else if (evt.type === 'tool_result') {
+            sendEvent('tool:result', {
+              callId: evt.result?.id,
+              name: evt.result?.name,
+              result: evt.result?.content,
+            });
+
+            // 如果提交了任务，自动订阅 TaskQueue 并转发进度
+            const resObj = evt.result?.content as any;
+            const taskId = resObj?.taskId;
+            if (taskId && typeof taskId === 'string') {
+              const task = taskQueue.getTask(taskId);
+              if (task) {
+                activeTaskCount++;
+                sendEvent('task:queued', { taskId: task.id, position: resObj.position ?? 1 });
+
+                const unsub = taskQueue.subscribeTask(task.id, (tEvt, updatedTask) => {
+                  if (tEvt === 'updated') {
+                    const activeStage =
+                      updatedTask.stages.find((s) => s.status === 'active') ||
+                      updatedTask.stages[updatedTask.stages.length - 1];
+                    sendEvent('task:progress', {
+                      taskId: updatedTask.id,
+                      stage: activeStage?.name || 'Processing',
+                      step: activeStage?.step ?? 0,
+                      total: activeStage?.totalSteps ?? 0,
+                      percent: activeStage?.progress ?? 0,
+                      task: updatedTask,
+                    });
+                  } else if (tEvt === 'completed') {
+                    activeTaskCount--;
+                    if (updatedTask.outputs) {
+                      for (const out of updatedTask.outputs) {
+                        sendEvent('task:artifact', {
+                          taskId: updatedTask.id,
+                          kind: out.kind,
+                          url: out.url,
+                          filename: out.filename,
+                        });
+                      }
+                    }
+                    sendEvent('task:completed', { taskId: updatedTask.id, task: updatedTask });
+                    cleanupAndEnd();
+                  } else if (tEvt === 'failed' || tEvt === 'canceled') {
+                    activeTaskCount--;
+                    sendEvent(tEvt === 'failed' ? 'task:failed' : 'task:canceled', {
+                      taskId: updatedTask.id,
+                      error: updatedTask.error,
+                      task: updatedTask,
+                    });
+                    cleanupAndEnd();
+                  }
+                });
+                taskUnsubscribes.push(unsub);
+              }
+            }
+          } else if (evt.type === 'error') {
+            sendEvent('agent:error', { error: evt.error });
+          }
+        },
+      });
+    } catch (err: any) {
+      sendEvent('agent:error', { error: err.message || String(err) });
+    } finally {
+      agentDone = true;
+      cleanupAndEnd();
+    }
+    return;
+  }
+
+  // 2. 非流式 fallback（调用现有 generateReply）
   const reply = await generateReply(message.trim(), {
     workflowId: typeof req.body?.workflowId === 'string' ? req.body.workflowId : undefined,
     params: req.body?.params && typeof req.body.params === 'object' ? req.body.params : undefined,

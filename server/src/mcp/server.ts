@@ -14,6 +14,7 @@ export interface McpServerInstance {
   start(): Promise<{ port: number; url: string }>;
   close(): Promise<void>;
   getUrl(): string | undefined;
+  handleRpcMessage(reqBody: any): Promise<JsonRpcResponse>;
 }
 
 const MCP_TOOLS: McpToolDescriptor[] = [
@@ -85,6 +86,10 @@ const MCP_TOOLS: McpToolDescriptor[] = [
     },
   },
 ];
+
+export function createDirectorMCPServer(taskQueue: TaskQueue): McpServerInstance {
+  return createMcpServer({ taskQueue });
+}
 
 export function createMcpServer(options: McpServerOptions): McpServerInstance {
   const { taskQueue, onActivity } = options;
@@ -341,6 +346,10 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
 
     getUrl(): string | undefined {
       return serverUrl;
+    },
+
+    handleRpcMessage(reqBody: any): Promise<JsonRpcResponse> {
+      return handleRpcMessage(reqBody);
     },
   };
 }

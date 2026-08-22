@@ -25,25 +25,60 @@ export interface RunAgentOptions {
   env?: Record<string, string>;
   signal?: AbortSignal;
   idleTimeoutMs?: number;
+  onEvent?: (event: AgentStreamEvent) => void;
 }
 
 /**
  * 将用户消息和多模态素材/上下文组装为发送给 Pi Agent 的输入文本
  */
-export function buildAgentInput(params: {
-  message: string;
-  images?: string[];
-  context?: string;
-}): string {
+export function buildAgentInput(
+  optionsOrMessage:
+    | string
+    | {
+        message: string;
+        sessionId?: string;
+        images?: Array<string | { name?: string; dataUrl?: string }>;
+        videos?: Array<string | { name?: string; dataUrl?: string }>;
+        context?: string;
+      },
+  options: {
+    sessionId?: string;
+    images?: Array<string | { name?: string; dataUrl?: string }>;
+    videos?: Array<string | { name?: string; dataUrl?: string }>;
+    context?: string;
+  } = {}
+): string {
+  const message =
+    typeof optionsOrMessage === 'string'
+      ? optionsOrMessage
+      : optionsOrMessage.message;
+  const opts =
+    typeof optionsOrMessage === 'string' ? options : optionsOrMessage;
+
   const parts: string[] = [];
-  if (params.context?.trim()) {
-    parts.push(`【上下文信息】\n${params.context.trim()}\n`);
+  if (opts.context?.trim()) {
+    parts.push(`【上下文信息】\n${opts.context.trim()}`);
   }
-  if (params.images && params.images.length > 0) {
-    parts.push(`【用户上传参考图】\n${params.images.map((img, i) => `[Image ${i + 1}]: ${img}`).join('\n')}\n`);
+  if (opts.images && opts.images.length > 0) {
+    parts.push(
+      `【参考图片】\n${opts.images
+        .map((img, i) =>
+          `[Image ${i + 1}]: ${typeof img === 'string' ? img : img.name || 'image' + (i + 1)}`
+        )
+        .join('\n')}`
+    );
   }
-  parts.push(`【用户指令】\n${params.message}`);
-  return parts.join('\n');
+  if (opts.videos && opts.videos.length > 0) {
+    parts.push(
+      `【参考视频】\n${opts.videos
+        .map((vid, i) =>
+          `[Video ${i + 1}]: ${typeof vid === 'string' ? vid : vid.name || 'video' + (i + 1)}`
+        )
+        .join('\n')}`
+    );
+  }
+  parts.push(`【用户指令】\n${message}`);
+  return parts.join('\n\n');
 }
 
 /**
@@ -51,9 +86,20 @@ export function buildAgentInput(params: {
  */
 export async function runAgentStream(
   prompt: string,
-  onEvent: (event: AgentStreamEvent) => void,
-  options: RunAgentOptions = {}
+  onEventOrOptions: ((event: AgentStreamEvent) => void) | RunAgentOptions,
+  legacyOptions?: RunAgentOptions
 ): Promise<{ exitCode: number | null; error?: string }> {
+  let onEvent: (event: AgentStreamEvent) => void;
+  let options: RunAgentOptions;
+
+  if (typeof onEventOrOptions === 'function') {
+    onEvent = onEventOrOptions;
+    options = legacyOptions ?? {};
+  } else {
+    options = onEventOrOptions ?? {};
+    onEvent = options.onEvent ?? (() => {});
+  }
+
   const idleTimeoutMs = options.idleTimeoutMs ?? 60_000;
   const args: string[] = ['--mode', 'json', '--print'];
 
@@ -67,10 +113,21 @@ export async function runAgentStream(
     args.push('--append-system-prompt', options.systemPrompt.trim());
   }
 
-  const env = {
-    ...process.env,
+  const env: Record<string, string> = {
+    ...process.env as Record<string, string>,
     ...(options.env ?? {}),
   };
+
+  if (options.mcpServerUrl) {
+    env.MCP_CONFIG = JSON.stringify({
+      mcpServers: {
+        director: {
+          url: options.mcpServerUrl,
+        },
+      },
+    });
+  }
+
 
   return new Promise((resolve) => {
     let child: ChildProcess;
