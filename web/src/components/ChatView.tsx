@@ -471,8 +471,19 @@ function AssistantMessageBody({
       )}
 
       {/* 正文内容 (Markdown 打字机) */}
-      {message.content && (
+      {message.content ? (
         <MarkdownContent content={message.content} animate={live} />
+      ) : (
+        /* 当既没有内容、没有思维链、也没有任务时，在气泡内显示平滑呼吸打字指示器 */
+        !hasThinking && !hasTasks && !legacyThinkingLogs.length && !legacyTaskStage && live && (
+          <div className="chat-typing-inline">
+            <span className="chat-typing">
+              <i />
+              <i />
+              <i />
+            </span>
+          </div>
+        )
       )}
 
       {/* 多模态生成产物展示 */}

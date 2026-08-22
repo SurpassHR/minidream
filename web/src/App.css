@@ -955,6 +955,12 @@
   50% { opacity: 0; }
 }
 
+.chat-typing-inline {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+}
+
 .chat-typing {
   display: inline-flex;
   align-items: center;
