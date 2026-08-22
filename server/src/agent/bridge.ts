@@ -119,20 +119,26 @@ export async function runAgentStream(
     args.push('--append-system-prompt', options.systemPrompt.trim());
   }
 
-  const env: Record<string, string> = {
-    ...process.env as Record<string, string>,
-    ...(options.env ?? {}),
-  };
-
+  let mcpConfigFile: string | null = null;
   if (options.mcpServerUrl) {
-    env.MCP_CONFIG = JSON.stringify({
+    // 写入临时的独立 MCP 配置文件，并使用 --mcp-config 显式指定，彻底隔离用户全局 ~/.pi/mcp.json（如 openreel/codegraph 等）
+    const tmpDir = path.resolve(process.cwd(), 'server/data/.mcp-tmp');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    mcpConfigFile = path.resolve(tmpDir, `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
+    fs.writeFileSync(mcpConfigFile, JSON.stringify({
       mcpServers: {
         director: {
           url: options.mcpServerUrl,
         },
       },
-    });
+    }, null, 2), 'utf8');
+    args.push('--mcp-config', mcpConfigFile);
   }
+
+  const env: Record<string, string> = {
+    ...process.env as Record<string, string>,
+    ...(options.env ?? {}),
+  };
 
 
   return new Promise((resolve) => {
@@ -259,27 +265,8 @@ function handlePiJsonEvent(json: Record<string, unknown>, onEvent: (event: Agent
     return;
   }
 
-  // 3. 处理整条 message（如果是非流式或者完成包）
+  // 3. 处理整条 message（注意：避免和 message_update 重复追加完整 text）
   if (json.type === 'message') {
-    const msg = json.message as Record<string, unknown> | undefined;
-    if (msg && Array.isArray(msg.content)) {
-      for (const item of msg.content) {
-        if (item.type === 'text' && typeof item.text === 'string') {
-          onEvent({ type: 'text', delta: item.text });
-        } else if (item.type === 'thinking' && typeof item.thinking === 'string') {
-          onEvent({ type: 'thinking', delta: item.thinking });
-        } else if (item.type === 'toolCall') {
-          onEvent({
-            type: 'tool_call',
-            tool: {
-              id: item.id as string,
-              name: item.name as string,
-              args: item.arguments as Record<string, unknown>,
-            },
-          });
-        }
-      }
-    }
     return;
   }
 
