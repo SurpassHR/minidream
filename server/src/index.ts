@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import { createReadStream, existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { generateData, mockReply } from './mock.js';
 import {
@@ -497,6 +498,33 @@ app.delete('/api/drafts/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+/** 在系统文件管理器中打开草稿文件所在位置 */
+app.post('/api/drafts/:id/open-location', (req, res) => {
+  const draft = draftStore.get(req.params.id);
+  if (!draft) {
+    res.status(404).json({ error: 'draft not found' });
+    return;
+  }
+  try {
+    openFileLocation(draft.path);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: (e as Error).message });
+  }
+});
+
+/** 跨平台调用系统文件管理器定位文件（explorer / open -R / xdg-open） */
+function openFileLocation(filePath: string): void {
+  const platform = process.platform;
+  if (platform === 'win32') {
+    spawn('explorer', ['/select,' + filePath], { detached: true, stdio: 'ignore' }).unref();
+  } else if (platform === 'darwin') {
+    spawn('open', ['-R', filePath], { detached: true, stdio: 'ignore' }).unref();
+  } else {
+    spawn('xdg-open', [path.dirname(filePath)], { detached: true, stdio: 'ignore' }).unref();
+  }
+}
+
 /** 更新 ComfyUI 地址：持久化到文件 + 清空缓存 + 健康检查 */
 app.post('/api/settings/comfyui', async (req, res) => {
   const baseUrl = typeof req.body?.baseUrl === 'string' ? req.body.baseUrl : '';
@@ -832,12 +860,18 @@ app.post('/api/chat', async (req, res) => {
       images: Array.isArray(req.body?.images) ? req.body.images : undefined,
       videos: Array.isArray(req.body?.videos) ? req.body.videos : undefined,
     });
+    const agentSystemPrompt = [
+      '你运行在「导演工作台」中。生成结果（图片/视频）会自动展示在用户界面中，',
+      '不要向用户报告内部文件名、存储路径、接口地址或任务 ID 等实现细节，',
+      '任务完成后简短确认即可，保持输出简洁。',
+    ].join('\n');
 
     try {
       await runAgentStream(agentInput, {
         sessionId: sid,
         signal: agentController.signal,
         mcpServerUrl: mcpUrl,
+        systemPrompt: agentSystemPrompt,
         model: typeof req.body?.agentModel === 'string' && req.body.agentModel.trim()
           ? req.body.agentModel.trim()
           : readSettings(SETTINGS_FILE).agent.model || undefined,

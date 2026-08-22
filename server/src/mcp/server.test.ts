@@ -220,6 +220,46 @@ describe('Director MCP Server', () => {
     expect(['queued', 'running']).toContain(task.status);
   });
 
+  it('generation.status 返回脱敏数据，不暴露文件名/路径/URL', async () => {
+    const queue = new TaskQueue({
+      dataFile: path.resolve(__dirname, '../../data/test-mcp-tasks-sanitize.json'),
+      autoStart: true,
+      executor: async () => ({
+        outputs: [{ kind: 'image', url: '/api/drafts/draft-abc/file', filename: 'draft-abc.png', data: Buffer.from('x') }],
+      }),
+    });
+    const server = createMcpServer({ taskQueue: queue, port: 0 });
+    try {
+      const submitRes = (await server.handleRpcMessage({
+        jsonrpc: '2.0',
+        id: 50,
+        method: 'tools/call',
+        params: { name: 'generation.submit', arguments: { workflowId: 'image_krea2_turbo_t2i', prompt: 'test' } },
+      })) as any;
+      const { taskId } = JSON.parse(submitRes.result.content[0].text);
+
+      // 等待任务完成
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        if (queue.get(taskId)?.status === 'completed') break;
+        await new Promise(r => setTimeout(r, 50));
+      }
+
+      const statusRes = (await server.handleRpcMessage({
+        jsonrpc: '2.0',
+        id: 51,
+        method: 'tools/call',
+        params: { name: 'generation.status', arguments: { taskId } },
+      })) as any;
+      const text = statusRes.result.content[0].text;
+      expect(text).toContain('"status": "completed"');
+      expect(text).toContain('"outputCount": 1');
+      expect(text).not.toMatch(/draft-abc|"url"|"filename"|subfolder/);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('关闭状态轮询时 tools/list 不暴露 generation.status', async () => {
     const noPoll = createMcpServer({
       taskQueue,

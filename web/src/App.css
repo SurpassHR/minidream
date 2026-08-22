@@ -1838,12 +1838,40 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
+.result-media {
+  position: relative;
+}
+
 .result-img {
   display: block;
   width: 100%;
   max-height: 520px;
   object-fit: contain;
   background: #09090b;
+  cursor: zoom-in;
+}
+
+/* 图像上的「打开文件位置」按钮 */
+.result-open-location {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: pointer;
+  z-index: 2;
+  transition: background-color 0.15s;
+}
+
+.result-open-location:hover {
+  background: rgba(0, 0, 0, 0.72);
 }
 
 .result-figure figcaption {
@@ -1874,6 +1902,73 @@
   width: 100%;
   max-height: 520px;
   background: #000;
+}
+
+/* ============ 图片大图灯箱（光标中心缩放 + 拖拽平移） ============ */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.82);
+  overflow: hidden;
+  cursor: grab;
+  animation: settings-fade 0.15s ease;
+}
+
+.lightbox.dragging {
+  cursor: grabbing;
+}
+
+.lightbox-img {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: none;
+  max-height: none;
+  transform-origin: 0 0;
+  user-select: none;
+  -webkit-user-drag: none;
+  background: #000;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
+
+.lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 5;
+  transition: background-color 0.15s;
+}
+
+.lightbox-close:hover {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.lightbox-hint {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 5;
 }
 
 .result-video-label {

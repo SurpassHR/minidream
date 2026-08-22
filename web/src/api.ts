@@ -251,6 +251,11 @@ export async function deleteDraft(id: string): Promise<{ ok: boolean }> {
   return http(`/api/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
+/** 在系统文件管理器中打开草稿文件所在位置 */
+export async function openDraftLocation(id: string): Promise<{ ok: boolean }> {
+  return http(`/api/drafts/${encodeURIComponent(id)}/open-location`, { method: 'POST' });
+}
+
 export async function fetchGenerateData(): Promise<GenerateData> {
   return http('/api/generate');
 }

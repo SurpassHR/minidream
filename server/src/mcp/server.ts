@@ -189,8 +189,23 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
             isError: true,
           };
         }
+        // 脱敏返回：产物会自动展示在界面上，不向 Agent 暴露内部文件名/路径/URL
+        const safeTask = {
+          id: task.id,
+          type: task.type,
+          status: task.status,
+          workflowId: task.workflowId,
+          prompt: task.prompt,
+          error: task.error,
+          stages: task.stages,
+          ratio: task.ratio,
+          size: task.size,
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt,
+          outputCount: task.outputs?.length ?? 0,
+        };
         return {
-          content: [{ type: 'text', text: JSON.stringify(task, null, 2) }],
+          content: [{ type: 'text', text: JSON.stringify(safeTask, null, 2) }],
         };
       }
 

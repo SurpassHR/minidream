@@ -1,14 +1,9 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type {
-  ChatMessage,
-  ChatStage,
-  GenerationOutput,
-  TaskItem,
-  ToolCallData,
-  ActionCardData,
-} from '../api';
+import remarkBreaks from 'remark-breaks';
+import { openDraftLocation, type ChatMessage, type ChatStage, type GenerationOutput, type TaskItem, type ToolCallData, type ActionCardData } from '../api';
+import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 
 /* ==================== 工具函数 ==================== */
 
@@ -32,7 +27,7 @@ function MarkdownContent({ content, animate }: { content: string; animate?: bool
   // 流式 chunk 到达后直接渲染，保持 v1 的首字节体验；不再叠加二次打字机动画。
   return (
     <div className="markdown-body">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{content}</ReactMarkdown>
       {animate && <span className="cursor-blink" />}
     </div>
   );
@@ -91,10 +86,9 @@ function ThinkingChain({
           </span>
         )}
       </button>
-      {expanded && (
-        <div className="thinking-logs">
+      {expanded && (          <div className="thinking-logs">
           <div className="thinking-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{thinking}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{thinking}</ReactMarkdown>
           </div>
         </div>
       )}
@@ -246,7 +240,19 @@ function ActionCardItem({
 
 /* ==================== 生成结果渲染 ==================== */
 
-function GenerationOutputsView({ outputs }: { outputs: GenerationOutput[] }) {
+/** 从草稿文件 URL 中提取 id（非草稿产物返回 null，不展示打开位置按钮） */
+function draftIdOf(url?: string): string | null {
+  const m = url?.match(/\/api\/drafts\/([^/]+)\/file/);
+  return m ? (m[1] ?? null) : null;
+}
+
+function GenerationOutputsView({
+  outputs,
+  onOpenImage,
+}: {
+  outputs: GenerationOutput[];
+  onOpenImage?: (img: LightboxImage) => void;
+}) {
   if (!outputs?.length) return null;
   const images = outputs.filter(o => o.kind === 'image');
   const videos = outputs.filter(o => o.kind === 'video');
@@ -256,12 +262,42 @@ function GenerationOutputsView({ outputs }: { outputs: GenerationOutput[] }) {
     <div className="generation-results">
       {images.length > 0 && (
         <div className="result-grid">
-          {images.map((img, i) => (
-            <figure key={`${img.url ?? i}`} className="result-figure">
-              <img className="result-img" src={img.url} alt={img.label ?? `生成图片 ${i + 1}`} loading="lazy" />
-              {img.label && <figcaption>{img.label}</figcaption>}
-            </figure>
-          ))}
+          {images.map((img, i) => {
+            const draftId = draftIdOf(img.url);
+            const alt = img.label ?? `生成图片 ${i + 1}`;
+            return (
+              <figure key={`${img.url ?? i}`} className="result-figure">
+                <div className="result-media">
+                  <img
+                    className="result-img"
+                    src={img.url}
+                    alt={alt}
+                    loading="lazy"
+                    onClick={() => {
+                      if (img.url) onOpenImage?.({ url: img.url, alt });
+                    }}
+                  />
+                  {draftId && (
+                    <button
+                      className="result-open-location"
+                      title="打开文件位置"
+                      aria-label="打开文件位置"
+                      onClick={e => {
+                        e.stopPropagation();
+                        void openDraftLocation(draftId).catch(() => undefined);
+                      }}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
+                        <path d="M2.5 5.5A1.5 1.5 0 0 1 4 4h3l1.5 1.5H14A1.5 1.5 0 0 1 15.5 7v6A1.5 1.5 0 0 1 14 14.5H4A1.5 1.5 0 0 1 2.5 13v-7.5Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+                        <path d="M5.5 9.5h7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+                {img.label && <figcaption>{img.label}</figcaption>}
+              </figure>
+            );
+          })}
         </div>
       )}
       {videos.length > 0 && (
@@ -350,7 +386,7 @@ function AssistantMessageBody({
   const hasTasks = Boolean(message.tasks && message.tasks.length > 0);
   const hasActionCards = Boolean(message.actionCards && message.actionCards.length > 0);
 
-  // 2. 提取任务产物
+  // 2. 提取任务产物（不展示内部文件名，产物以独立媒体卡片呈现）
   const taskOutputs: GenerationOutput[] = [];
   if (message.tasks) {
     for (const t of message.tasks) {
@@ -359,7 +395,6 @@ function AssistantMessageBody({
           taskOutputs.push({
             kind: out.kind,
             url: out.url,
-            label: out.filename,
           });
         }
       }
@@ -474,7 +509,6 @@ function extractOutputs(message: ChatMessage): GenerationOutput[] {
           outputs.push({
             kind: out.kind,
             url: out.url,
-            label: out.filename,
           });
         }
       }
@@ -506,6 +540,7 @@ export default function ChatView({
   onActionCard?: (card: ActionCardData) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [lightbox, setLightbox] = useState<LightboxImage | null>(null);
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -545,12 +580,13 @@ export default function ChatView({
               </div>
 
               {/* 独立的图像/视频媒体元素：完全与对话气泡分离，独立全宽展示 */}
-              {outputs.length > 0 && <GenerationOutputsView outputs={outputs} />}
+              {outputs.length > 0 && <GenerationOutputsView outputs={outputs} onOpenImage={setLightbox} />}
             </div>
           </div>
         );
       })}
       <div ref={bottomRef} />
+      {lightbox && <ImageLightbox image={lightbox} onClose={() => setLightbox(null)} />}
     </div>
   );
 }
