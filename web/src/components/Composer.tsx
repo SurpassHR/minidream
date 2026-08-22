@@ -53,7 +53,7 @@ export default function Composer({
   const filtered = workflows.filter(w =>
     prefType === '视频' ? w.outputs.some(o => o.kind === 'video') : w.outputs.some(o => o.kind === 'image'),
   );
-  // 默认优先选不需要上传素材的工作流（避免默认选中 img2img 等强制依赖参考图的）
+  // 默认优先选不需要上传素材的工作流（避免默认选中强制依赖参考图的工作流）
   const activeWorkflow =
     (selected && filtered.some(w => w.id === selected.id) ? selected : null) ??
     filtered.find(w => !w.inputs.some(i => i.kind !== 'text')) ??

@@ -328,7 +328,7 @@ export default function SettingsModal({
 
             {active === 'imageGen' && (
               <section className="settings-section">
-                <h3 className="settings-section-title">生图默认参数 (Krea / SD)</h3>
+                <h3 className="settings-section-title">生图默认参数 (Krea2)</h3>
                 <p className="settings-section-desc">
                   配置执行生图工作流时的默认参数与采样器选项，无需在每次提问时重复配置。
                 </p>

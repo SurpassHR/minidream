@@ -876,7 +876,7 @@ export async function buildPrompt(
   return prompt;
 }
 
-/** 输入节点是否有强依赖（如 img2img 必须有参考图） */
+/** 输入节点是否有强依赖（如必须上传参考图/视频） */
 export function requiredInputKinds(spec: WorkflowSpec): Set<'image' | 'video'> {
   const kinds = new Set<'image' | 'video'>();
   for (const input of spec.inputs) {

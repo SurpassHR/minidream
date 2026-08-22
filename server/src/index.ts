@@ -331,7 +331,7 @@ async function generateReply(
     };
   }
 
-  // 选 workflow：显式指定 → 否则优先选不需要上传素材的（避免默认选中 img2img）
+  // 选 workflow：显式指定 → 否则优先选不需要上传素材的（避免默认选中强制依赖参考图的工作流）
   let spec: WorkflowSpec | null = workflows.find(w => w.id === opts.workflowId) ?? null;
   if (!spec) {
     spec =

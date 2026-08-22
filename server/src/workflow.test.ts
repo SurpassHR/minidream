@@ -7,8 +7,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const wfDir = path.resolve(__dirname, '../workflows');
 const readWf = (name: string) => JSON.parse(fs.readFileSync(path.join(wfDir, name), 'utf8'));
 
-const txt2imgJson = readWf('txt2img.json');
-const img2imgJson = readWf('img2img.json');
 const h3T2vJson = readWf('video-minimax-h3-t2v.json');
 const h3I2vJson = readWf('video-minimax-h3-i2v.json');
 const h3R2vJson = readWf('video-minimax-h3-r2v.json');
@@ -286,95 +284,10 @@ describe('workflow 引擎（通用自动适配）', () => {
     vi.unstubAllGlobals();
   });
 
-  /* ---------- API 格式基础 ---------- */
-
-  it('识别 txt2img 的文字输入与图片输出', async () => {
-    const spec = await workflow.introspectWorkflow(txt2imgJson);
-    expect(spec.inputs.filter(i => i.kind === 'text')).toHaveLength(2);
-    expect(spec.outputs).toEqual([expect.objectContaining({ kind: 'image', classType: 'SaveImage' })]);
-  });
-
-  it('提取 KSampler/EmptyLatentImage 参数且类型正确', async () => {
-    const spec = await workflow.introspectWorkflow(txt2imgJson);
-    const byField = Object.fromEntries(spec.params.map(p => [p.field, p]));
-    expect(byField.seed?.type).toBe('INT');
-    expect(byField.denoise?.type).toBe('FLOAT');
-    expect(byField.sampler_name?.type).toBe('combo');
-    expect(byField.width?.default).toBe(1024);
-  });
-
-  it('用户提示词注入正向 CLIPTextEncode（node 6）而非负向（node 7）', async () => {
-    const spec = await workflow.introspectWorkflow(txt2imgJson);
-    const prompt = await workflow.buildPrompt(spec, txt2imgJson, { prompt: '一只发光鹿在森林里' });
-    expect(prompt['6'].inputs.text).toBe('一只发光鹿在森林里');
-    expect(prompt['7'].inputs.text).toBe('lowres, bad anatomy, bad hands, blurry');
-  });
-
-  it('ckpt_name 为空时自动选第一个已安装 checkpoint', async () => {
-    const spec = await workflow.introspectWorkflow(txt2imgJson);
-    const prompt = await workflow.buildPrompt(spec, txt2imgJson, { prompt: '测试' });
-    expect(prompt['4'].inputs.ckpt_name).toBe('sd_xl_base.safetensors');
-  });
-
-  it('根据 imageGen settings 注入默认参数与随机/固定 seed', async () => {
-    const spec = await workflow.introspectWorkflow(txt2imgJson);
-    const promptFixed = await workflow.buildPrompt(spec, txt2imgJson, {
-      prompt: '测试固定种子',
-      settings: {
-        seedMode: 'fixed',
-        seed: 123456,
-        steps: 25,
-        cfg: 8.5,
-        sampler_name: 'dpmpp_2m',
-        scheduler: 'karras',
-        denoise: 0.8,
-        width: 768,
-        height: 768,
-      },
-    });
-    expect(promptFixed['3'].inputs.seed).toBe(123456);
-    expect(promptFixed['3'].inputs.steps).toBe(25);
-    expect(promptFixed['3'].inputs.cfg).toBe(8.5);
-    expect(promptFixed['3'].inputs.sampler_name).toBe('dpmpp_2m');
-    expect(promptFixed['3'].inputs.scheduler).toBe('karras');
-    expect(promptFixed['3'].inputs.denoise).toBe(0.8);
-    expect(promptFixed['5'].inputs.width).toBe(768);
-    expect(promptFixed['5'].inputs.height).toBe(768);
-
-    const promptRandom = await workflow.buildPrompt(spec, txt2imgJson, {
-      prompt: '测试随机种子',
-      settings: {
-        seedMode: 'random',
-        seed: -1,
-        steps: 20,
-        cfg: 7.0,
-        sampler_name: 'euler',
-        scheduler: 'normal',
-        denoise: 1.0,
-        width: 1024,
-        height: 1024,
-      },
-    });
-    expect(typeof promptRandom['3'].inputs.seed).toBe('number');
-    expect(promptRandom['3'].inputs.seed).toBeGreaterThanOrEqual(0);
-  });
-
-  it('img2img 识别图像输入并注入上传文件名', async () => {
-    const spec = await workflow.introspectWorkflow(img2imgJson);
-    const imgInput = spec.inputs.find(i => i.kind === 'image');
-    expect(imgInput).toBeDefined();
-    const prompt = await workflow.buildPrompt(spec, img2imgJson, {
-      prompt: '改成夜晚森林',
-      uploaded: { [imgInput!.id]: 'ref.png' },
-    });
-    expect(prompt['10'].inputs.image).toBe('ref.png');
-  });
-
   /* ---------- UI 格式（LiteGraph） ---------- */
 
   it('UI 格式识别与转换：链接→输入、widget→字段、seed randomize 剔除', () => {
     expect(workflow.isUiFormat(uiFixtureJson)).toBe(true);
-    expect(workflow.isUiFormat(txt2imgJson)).toBe(false);
     const api = workflow.convertUiToApi(uiFixtureJson, OBJECT_INFO);
     expect(api['4'].class_type).toBe('KSampler');
     expect(api['4'].inputs.model).toEqual(['1', 0]);
@@ -412,18 +325,61 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(prompt['2'].inputs.text).toBe('赛博朋克城市夜景');
   });
 
+  it('根据 imageGen settings 注入默认参数与随机/固定 seed', async () => {
+    const spec = await workflow.introspectWorkflow(uiFixtureJson, OBJECT_INFO);
+    const promptFixed = await workflow.buildPrompt(spec, uiFixtureJson, {
+      prompt: '测试固定种子',
+      settings: {
+        seedMode: 'fixed',
+        seed: 123456,
+        steps: 25,
+        cfg: 8.5,
+        sampler_name: 'dpmpp_2m',
+        scheduler: 'karras',
+        denoise: 0.8,
+        width: 768,
+        height: 768,
+      },
+    });
+    expect(promptFixed['4'].inputs.seed).toBe(123456);
+    expect(promptFixed['4'].inputs.steps).toBe(25);
+    expect(promptFixed['4'].inputs.cfg).toBe(8.5);
+    expect(promptFixed['4'].inputs.sampler_name).toBe('dpmpp_2m');
+    expect(promptFixed['4'].inputs.scheduler).toBe('karras');
+    expect(promptFixed['4'].inputs.denoise).toBe(0.8);
+    expect(promptFixed['5'].inputs.width).toBe(768);
+    expect(promptFixed['5'].inputs.height).toBe(768);
+
+    const promptRandom = await workflow.buildPrompt(spec, uiFixtureJson, {
+      prompt: '测试随机种子',
+      settings: {
+        seedMode: 'random',
+        seed: -1,
+        steps: 20,
+        cfg: 7.0,
+        sampler_name: 'euler',
+        scheduler: 'normal',
+        denoise: 1.0,
+        width: 1024,
+        height: 1024,
+      },
+    });
+    expect(typeof promptRandom['4'].inputs.seed).toBe('number');
+    expect(promptRandom['4'].inputs.seed).toBeGreaterThanOrEqual(0);
+  });
+
   it('buildSpecs 文件探测：占位素材缺失 → 标记必传', async () => {
     const specs = await workflow.buildSpecs();
-    const img2img = specs.find(s => s.id === 'img2img');
-    expect(img2img).toBeDefined();
-    const images = img2img!.inputs.filter(i => i.kind === 'image');
+    const styleRef = specs.find(s => s.id === 'image_krea2_turbo_int8_image_style_reference');
+    expect(styleRef).toBeDefined();
+    const images = styleRef!.inputs.filter(i => i.kind === 'image');
     expect(images).toHaveLength(1);
     for (const img of images) {
       expect(img.required).toBe(true);
       expect(String(img.defaultValue ?? '').trim()).toBe('');
     }
-    const txt2img = specs.find(s => s.id === 'txt2img');
-    expect(txt2img!.inputs.some(i => i.kind === 'image')).toBe(false);
+    const t2i = specs.find(s => s.id === 'image_krea2_turbo_t2i');
+    expect(t2i!.inputs.some(i => i.kind === 'image')).toBe(false);
   });
 
   /* ---------- MiniMax H3 本地模板（templates/video_minimax_h3_*） ---------- */
