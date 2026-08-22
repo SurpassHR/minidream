@@ -213,26 +213,64 @@ export async function runAgentStream(
  * 解析 Pi CLI --mode json 产生的事件
  */
 function handlePiJsonEvent(json: Record<string, unknown>, onEvent: (event: AgentStreamEvent) => void) {
-  // Pi 的标准 JSON event 格式解析
+  // 1. 处理流式增量事件 (message_update -> text_delta / thinking_delta)
+  if (json.type === 'message_update') {
+    const ame = json.assistantMessageEvent as Record<string, unknown> | undefined;
+    if (ame) {
+      if (ame.type === 'text_delta' && typeof ame.delta === 'string') {
+        onEvent({ type: 'text', delta: ame.delta });
+        return;
+      }
+      if (ame.type === 'thinking_delta' && typeof ame.delta === 'string') {
+        onEvent({ type: 'thinking', delta: ame.delta });
+        return;
+      }
+    }
+  }
+
+  // 2. 处理标准 toolCall / toolResult
+  if (json.type === 'tool_execution_start' || json.type === 'tool_call') {
+    onEvent({
+      type: 'tool_call',
+      tool: {
+        id: (json.toolCallId || json.id || '') as string,
+        name: (json.toolName || json.name || json.tool) as string,
+        args: (json.args || json.arguments || {}) as Record<string, unknown>,
+      },
+    });
+    return;
+  }
+
+  if (json.type === 'tool_execution_end' || json.type === 'tool_result') {
+    onEvent({
+      type: 'tool_result',
+      result: {
+        id: (json.toolCallId || json.id || '') as string,
+        name: (json.toolName || json.name || json.tool) as string,
+        content: json.result ?? json.content,
+      },
+    });
+    return;
+  }
+
+  // 3. 处理整条 message（如果是非流式或者完成包）
   if (json.type === 'message') {
     const msg = json.message as Record<string, unknown> | undefined;
-    if (msg) {
-      if (Array.isArray(msg.content)) {
-        for (const item of msg.content) {
-          if (item.type === 'text' && typeof item.text === 'string') {
-            onEvent({ type: 'text', delta: item.text });
-          } else if (item.type === 'thinking' && typeof item.thinking === 'string') {
-            onEvent({ type: 'thinking', delta: item.thinking });
-          } else if (item.type === 'toolCall') {
-            onEvent({
-              type: 'tool_call',
-              tool: {
-                id: item.id as string,
-                name: item.name as string,
-                args: item.arguments as Record<string, unknown>,
-              },
-            });
-          }
+    if (msg && Array.isArray(msg.content)) {
+      for (const item of msg.content) {
+        if (item.type === 'text' && typeof item.text === 'string') {
+          onEvent({ type: 'text', delta: item.text });
+        } else if (item.type === 'thinking' && typeof item.thinking === 'string') {
+          onEvent({ type: 'thinking', delta: item.thinking });
+        } else if (item.type === 'toolCall') {
+          onEvent({
+            type: 'tool_call',
+            tool: {
+              id: item.id as string,
+              name: item.name as string,
+              args: item.arguments as Record<string, unknown>,
+            },
+          });
         }
       }
     }
@@ -246,30 +284,6 @@ function handlePiJsonEvent(json: Record<string, unknown>, onEvent: (event: Agent
 
   if (json.type === 'text') {
     onEvent({ type: 'text', delta: String(json.delta ?? json.content ?? '') });
-    return;
-  }
-
-  if (json.type === 'tool_call' || json.type === 'toolCall') {
-    onEvent({
-      type: 'tool_call',
-      tool: {
-        id: json.id as string,
-        name: (json.name ?? json.tool) as string,
-        args: (json.args ?? json.arguments ?? {}) as Record<string, unknown>,
-      },
-    });
-    return;
-  }
-
-  if (json.type === 'tool_result' || json.type === 'toolResult') {
-    onEvent({
-      type: 'tool_result',
-      result: {
-        id: json.id as string,
-        name: (json.name ?? json.tool) as string,
-        content: json.content ?? json.result,
-      },
-    });
     return;
   }
 

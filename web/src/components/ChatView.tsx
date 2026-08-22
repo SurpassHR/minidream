@@ -12,32 +12,34 @@ import type {
 
 /* ==================== 工具函数 ==================== */
 
-/** 渐进式揭示文字（打字机效果） */
-function useTypewriter(text: string, enabled: boolean, speed = 15) {
+/** 渐进式揭示文字（打字机效果，动态自适应缓冲） */
+function useTypewriter(text: string, enabled: boolean, speed = 5) {
   const [shown, setShown] = useState(enabled ? 0 : text.length);
   const raf = useRef(0);
   const last = useRef(0);
+  const textRef = useRef(text);
+  textRef.current = text;
 
   useEffect(() => {
     if (!enabled) {
       setShown(text.length);
       return;
     }
-    setShown(0);
+
     last.current = performance.now();
     const tick = (now: number) => {
-      const dt = now - last.current;
-      if (dt >= speed) {
-        last.current = now;
-        setShown(prev => {
-          const next = prev + Math.max(1, Math.floor(dt / speed));
-          if (next >= text.length) return text.length;
+      const currentTarget = textRef.current;
+      setShown(prev => {
+        if (prev >= currentTarget.length) return currentTarget.length;
+        const backlog = currentTarget.length - prev;
+        // 动态步长：积压字数越多，推进越快，彻底消除限速卡顿感
+        const step = backlog > 30 ? Math.ceil(backlog / 4) : backlog > 10 ? 3 : 1;
+        const next = Math.min(currentTarget.length, prev + step);
+        if (next < currentTarget.length) {
           raf.current = requestAnimationFrame(tick);
-          return next;
-        });
-      } else {
-        raf.current = requestAnimationFrame(tick);
-      }
+        }
+        return next;
+      });
     };
     raf.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf.current);
@@ -63,7 +65,8 @@ function AgentAvatar({ size = 32 }: { size?: number }) {
 /* ==================== Markdown 渲染 ==================== */
 
 function MarkdownContent({ content, animate }: { content: string; animate?: boolean }) {
-  const shown = useTypewriter(content, !!animate);
+  // 当处于实时流式生成中时，直接跟随流式 chunk 渲染，避免二次人工限速；只有非流式大段文本才启用打字机
+  const shown = useTypewriter(content, !!animate, 5);
   const displayText = animate ? content.slice(0, shown) : content;
   const isDone = !animate || shown >= content.length;
 
