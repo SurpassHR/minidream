@@ -11,6 +11,7 @@ export const generateData: GenerateData = {
     items: [
       { id: 'inspiration', label: '灵感', icon: 'inspiration' },
       { id: 'generate', label: '生成', icon: 'generate', active: true },
+      { id: 'drafts', label: '草稿', icon: 'drafts' },
       { id: 'assets', label: '资产', icon: 'assets' },
       { id: 'canvas', label: '画布', icon: 'canvas' },
     ],

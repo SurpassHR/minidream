@@ -86,6 +86,7 @@ export interface TaskItem {
   workflowId: string;
   prompt: string;
   images?: string[];
+  videos?: string[];
   params?: Record<string, unknown>;
   sessionId?: string;
   stages: TaskStage[];
@@ -111,6 +112,7 @@ export interface ToolCallData {
 }
 
 export type StreamChatEvent =
+  | { type: 'agent:started'; sessionId: string }
   | { type: 'agent:thinking'; delta: string }
   | { type: 'agent:text'; delta: string }
   | { type: 'agent:action_card'; card: ActionCardData }
@@ -137,7 +139,7 @@ export type StreamChatEvent =
   | { type: 'task:failed'; taskId: string; error?: string; task?: TaskItem }
   | { type: 'task:canceled'; taskId: string; task?: TaskItem }
   | { type: 'agent:error'; error: string }
-  | { type: 'agent:end'; sessionId?: string; totalTokens?: number };
+  | { type: 'agent:end'; sessionId?: string; totalTokens?: number; canceled?: boolean };
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -204,6 +206,24 @@ export interface WorkflowSpec {
   outputs: WorkflowOutput[];
 }
 
+export interface ActiveSession {
+  sessionId: string;
+  message: string;
+  startedAt: number;
+  taskIds: string[];
+  status: 'running' | 'canceled' | 'completed' | 'failed';
+}
+
+export interface ActivitySnapshot {
+  sessions: ActiveSession[];
+  tasks: TaskItem[];
+}
+
+export type ActivityStreamEvent =
+  | { type: 'snapshot'; snapshot: ActivitySnapshot }
+  | { type: 'session:started' | 'session:updated' | 'session:canceled' | 'session:finished'; session: ActiveSession }
+  | { type: 'task:updated'; task: TaskItem };
+
 export interface ComfyStatus {
   connected: boolean;
   baseUrl: string;
@@ -226,6 +246,14 @@ async function http<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<T>;
+}
+
+export async function fetchDrafts(): Promise<{ drafts: DraftRecord[] }> {
+  return http('/api/drafts');
+}
+
+export async function deleteDraft(id: string): Promise<{ ok: boolean }> {
+  return http(`/api/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 export async function fetchGenerateData(): Promise<GenerateData> {
@@ -252,15 +280,38 @@ export interface ImageGenSettings {
   height: number;
 }
 
+export interface StorageSettings {
+  outputDir: string;
+}
+
+export interface DraftRecord {
+  id: string;
+  taskId?: string;
+  kind: 'image' | 'video' | 'text';
+  filename: string;
+  mime?: string;
+  size: number;
+  createdAt: number;
+}
+
 export interface AppSettings {
   comfyui: {
     baseUrl: string;
   };
   imageGen?: ImageGenSettings;
+  storage?: StorageSettings;
 }
 
 export async function fetchAppSettings(): Promise<AppSettings> {
   return http('/api/settings');
+}
+
+export async function saveStorageSettings(outputDir: string): Promise<{ ok: boolean; storage: StorageSettings; error?: string }> {
+  return http('/api/settings/storage', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ outputDir }),
+  });
 }
 
 export async function saveImageGenSettings(
@@ -369,7 +420,9 @@ export async function sendChatStream(
       if (!dataStr) continue;
       try {
         const parsed = JSON.parse(dataStr);
-        if (eventType === 'agent:thinking') {
+        if (eventType === 'agent:started') {
+          onEvent({ type: 'agent:started', sessionId: parsed.sessionId });
+        } else if (eventType === 'agent:thinking') {
           onEvent({ type: 'agent:thinking', delta: parsed.delta });
         } else if (eventType === 'agent:text') {
           onEvent({ type: 'agent:text', delta: parsed.delta });
@@ -442,6 +495,7 @@ export async function sendChatStream(
             type: 'agent:end',
             sessionId: parsed.sessionId,
             totalTokens: parsed.totalTokens,
+            canceled: parsed.canceled,
           });
         }
       } catch {
@@ -452,6 +506,27 @@ export async function sendChatStream(
 }
 
 /* ---------------- 统一任务 API (/api/tasks) ---------------- */
+
+export async function fetchActivity(): Promise<ActivitySnapshot> {
+  return http('/api/activity');
+}
+
+export async function cancelSession(sessionId: string): Promise<{ ok: boolean; sessionId: string; canceledTaskIds: string[] }> {
+  return http(`/api/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: 'POST' });
+}
+
+export function openActivityEvents(onEvent: (event: ActivityStreamEvent) => void): () => void {
+  const es = new EventSource('/api/activity/events');
+  es.addEventListener('activity', event => {
+    try {
+      onEvent(JSON.parse((event as MessageEvent).data) as ActivityStreamEvent);
+    } catch {
+      /* ignore malformed activity event */
+    }
+  });
+  es.onerror = () => es.close();
+  return () => es.close();
+}
 
 export async function getTasks(): Promise<{ tasks: TaskItem[] }> {
   return http('/api/tasks');

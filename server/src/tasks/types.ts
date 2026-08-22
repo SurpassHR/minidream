@@ -18,12 +18,23 @@ export interface TaskStage {
   logs: string[];
 }
 
+export interface TaskMediaUpload {
+  name?: string;
+  dataUrl: string;
+}
+
 export interface TaskOutput {
   kind: 'image' | 'video' | 'text';
   url: string;
   filename: string;
   subfolder?: string;
   type?: string;
+}
+
+/** 队列内部完成态输出，data 只在转存前存在，不会写入任务索引。 */
+export interface TaskOutputCandidate extends TaskOutput {
+  data?: Buffer;
+  mime?: string;
 }
 
 export interface TaskItem {
@@ -33,8 +44,12 @@ export interface TaskItem {
   workflowId: string;
   prompt: string;
   images?: string[];
+  videos?: string[];
+  imageUploads?: TaskMediaUpload[];
+  videoUploads?: TaskMediaUpload[];
   params?: Record<string, unknown>;
   sessionId?: string;
+  promptGraph?: Record<string, unknown>;
   stages: TaskStage[];
   outputs?: TaskOutput[];
   error?: string;
@@ -47,6 +62,10 @@ export interface TaskSubmitInput {
   workflowId: string;
   prompt: string;
   images?: string[];
+  videos?: string[];
+  imageUploads?: TaskMediaUpload[];
+  videoUploads?: TaskMediaUpload[];
   params?: Record<string, unknown>;
   sessionId?: string;
+  promptGraph?: Record<string, unknown>;
 }

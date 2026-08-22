@@ -1,13 +1,17 @@
 /**
  * 设置持久化：JSON 文件存储（照搬 v1 会话存储的原子写方案）。
- * - 结构 { comfyui: { baseUrl: string }, imageGen: ImageGenSettings }
+ * - 结构 { comfyui: { baseUrl: string }, imageGen: ImageGenSettings, storage: { outputDir: string } }
  * - 写入采用原子写（tmp + rename），避免半写损坏
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 
 export interface ComfyUISettings {
   baseUrl: string;
+}
+
+export interface StorageSettings {
+  outputDir: string;
 }
 
 export interface ImageGenSettings {
@@ -25,6 +29,7 @@ export interface ImageGenSettings {
 export interface AppSettings {
   comfyui: ComfyUISettings;
   imageGen: ImageGenSettings;
+  storage: StorageSettings;
 }
 
 export const DEFAULT_IMAGE_GEN_SETTINGS: ImageGenSettings = {
@@ -44,6 +49,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     baseUrl: 'http://127.0.0.1:8188',
   },
   imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
+  storage: {
+    outputDir: resolve(process.cwd(), 'data/drafts'),
+  },
 };
 
 export function readSettings(file: string): AppSettings {
@@ -51,6 +59,7 @@ export function readSettings(file: string): AppSettings {
     return {
       comfyui: { ...DEFAULT_SETTINGS.comfyui },
       imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
+      storage: { ...DEFAULT_SETTINGS.storage },
     };
   }
   try {
@@ -59,10 +68,12 @@ export function readSettings(file: string): AppSettings {
       return {
         comfyui: { ...DEFAULT_SETTINGS.comfyui },
         imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
+        storage: { ...DEFAULT_SETTINGS.storage },
       };
     }
     const comfyui = data.comfyui && typeof data.comfyui === 'object' ? data.comfyui : {};
     const imageGen = data.imageGen && typeof data.imageGen === 'object' ? data.imageGen : {};
+    const storage = data.storage && typeof data.storage === 'object' ? data.storage : {};
 
     return {
       comfyui: {
@@ -91,11 +102,18 @@ export function readSettings(file: string): AppSettings {
         width: typeof imageGen.width === 'number' && imageGen.width > 0 ? imageGen.width : DEFAULT_IMAGE_GEN_SETTINGS.width,
         height: typeof imageGen.height === 'number' && imageGen.height > 0 ? imageGen.height : DEFAULT_IMAGE_GEN_SETTINGS.height,
       },
+      storage: {
+        outputDir:
+          typeof storage.outputDir === 'string' && isAbsolute(storage.outputDir.trim())
+            ? storage.outputDir.trim()
+            : DEFAULT_SETTINGS.storage.outputDir,
+      },
     };
   } catch {
     return {
       comfyui: { ...DEFAULT_SETTINGS.comfyui },
       imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
+      storage: { ...DEFAULT_SETTINGS.storage },
     };
   }
 }
@@ -130,6 +148,18 @@ export function updateComfyUISettings(file: string, comfyui: Partial<ComfyUISett
     },
   };
   return writeSettings(file, updated);
+}
+
+export function updateStorageSettings(file: string, storage: Partial<StorageSettings>): AppSettings {
+  const outputDir = storage.outputDir?.trim() ?? '';
+  if (!isAbsolute(outputDir)) {
+    throw new Error('产物存储目录必须是绝对路径');
+  }
+  const current = readSettings(file);
+  return writeSettings(file, {
+    ...current,
+    storage: { ...current.storage, outputDir },
+  });
 }
 
 

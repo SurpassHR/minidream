@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DraftStore } from '../drafts.js';
 import { TaskQueue } from './queue.js';
 import type { TaskItem } from './types.js';
 
@@ -85,6 +86,113 @@ describe('TaskQueue 基础功能与单测', () => {
     const cancelled = queue.cancel(task.id);
     expect(cancelled).toBe(true);
     expect(queue.get(task.id)?.status).toBe('canceled');
+  });
+
+  it('运行中任务取消后 executor 返回也不会恢复为 completed', async () => {
+    let started!: () => void;
+    let release!: () => void;
+    const startedPromise = new Promise<void>(resolve => { started = resolve; });
+    const releasePromise = new Promise<void>(resolve => { release = resolve; });
+    const queue = new TaskQueue({
+      dataFile: file,
+      autoStart: true,
+      executor: async (_task, _onProgress, signal) => {
+        started();
+        await releasePromise;
+        expect(signal?.aborted).toBe(true);
+        return { outputs: [] };
+      },
+    });
+    const task = queue.submit({ workflowId: 'image_krea2_turbo_t2i', prompt: 'cancel me', sessionId: 'session-1' });
+    await startedPromise;
+    expect(queue.cancel(task.id)).toBe(true);
+    release();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(queue.get(task.id)?.status).toBe('canceled');
+  });
+
+  it('可以在提交后绑定会话归属', () => {
+    const queue = new TaskQueue({ dataFile: file, autoStart: false });
+    const task = queue.submit({ workflowId: 'image_krea2_turbo_t2i', prompt: 'bind later' });
+
+    expect(queue.bindSession(task.id, 'session-1')).toBe(true);
+    expect(queue.get(task.id)?.sessionId).toBe('session-1');
+  });
+
+  it('按 sessionId 批量取消未完成任务', () => {
+    const queue = new TaskQueue({ dataFile: file, autoStart: false });
+    const task1 = queue.submit({ workflowId: 'image_krea2_turbo_t2i', prompt: 'one', sessionId: 'session-1' });
+    const task2 = queue.submit({ workflowId: 'image_krea2_turbo_t2i', prompt: 'two', sessionId: 'session-1' });
+    const task3 = queue.submit({ workflowId: 'image_krea2_turbo_t2i', prompt: 'three', sessionId: 'session-2' });
+
+    const canceled = queue.cancelBySession('session-1');
+    expect(canceled.map(t => t.id)).toEqual(expect.arrayContaining([task1.id, task2.id]));
+    expect(queue.get(task1.id)?.status).toBe('canceled');
+    expect(queue.get(task2.id)?.status).toBe('canceled');
+    expect(queue.get(task3.id)?.status).toBe('queued');
+  });
+
+  it('订阅任务时能收到进度更新', async () => {
+    const queue = new TaskQueue({ dataFile: file, autoStart: true, executor: async (_task, onProgress) => {
+      onProgress({ stage: 'Sampling', step: 2, totalSteps: 4, progress: 50 });
+      return { outputs: [] };
+    }});
+    const events: string[] = [];
+    const task = queue.submit({ workflowId: 'image_krea2_turbo_t2i', prompt: 'progress' });
+    const unsubscribe = queue.subscribeTask(task.id, event => events.push(event));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    unsubscribe();
+    expect(events).toContain('updated');
+  });
+
+  it('任务完成前将输出转存为本地草稿 URL', async () => {
+    const draftStore = new DraftStore({ indexFile: join(dir, 'drafts.json'), outputDir: join(dir, 'drafts') });
+    const queue = new TaskQueue({
+      dataFile: file,
+      autoStart: true,
+      drafts: draftStore,
+      executor: async () => ({
+        outputs: [{
+          kind: 'image',
+          url: '/comfyui/view?filename=result.png',
+          filename: 'result.png',
+          data: Buffer.from('local-image'),
+          mime: 'image/png',
+        }],
+      }),
+    });
+    const task = queue.submit({ workflowId: 'image_krea2_turbo_t2i', prompt: 'save locally' });
+
+    await new Promise<void>(resolve => {
+      const check = () => queue.get(task.id)?.status === 'completed' ? resolve() : setTimeout(check, 10);
+      check();
+    });
+
+    const result = queue.get(task.id);
+    expect(result?.outputs?.[0]?.url).toMatch(/^\/api\/drafts\/draft-/);
+    expect(draftStore.list()).toHaveLength(1);
+    expect(result?.status).toBe('completed');
+  });
+
+  it('本地草稿保存失败时任务不能标记为完成', async () => {
+    const draftStore = new DraftStore({ indexFile: join(dir, 'drafts.json'), outputDir: join(dir, 'drafts') });
+    const originalSave = draftStore.saveFromBuffer.bind(draftStore);
+    draftStore.saveFromBuffer = async () => { throw new Error('disk full'); };
+    const queue = new TaskQueue({
+      dataFile: file,
+      autoStart: true,
+      drafts: draftStore,
+      executor: async () => ({ outputs: [{ kind: 'image', url: '/comfyui/view?filename=result.png', filename: 'result.png', data: Buffer.from('x') }] }),
+    });
+    const task = queue.submit({ workflowId: 'image_krea2_turbo_t2i', prompt: 'fail save' });
+
+    await new Promise<void>(resolve => {
+      const check = () => queue.get(task.id)?.status === 'failed' ? resolve() : setTimeout(check, 10);
+      check();
+    });
+
+    expect(queue.get(task.id)?.error).toContain('disk full');
+    draftStore.saveFromBuffer = originalSave;
   });
 
   it('串行排队执行与事件触发', async () => {

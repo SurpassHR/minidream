@@ -23,6 +23,13 @@ function RailIcon({ id }: { id: string }) {
           <path d="M15.5 12.5v2.5M15.5 15v2.5M14.2 13.8h2.6M14.2 16.3h2.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
         </svg>
       );
+    case 'drafts':
+      return (
+        <svg {...common}>
+          <path d="M3.5 5.5A1.5 1.5 0 0 1 5 4h3l1.4 1.6h5.1A1.5 1.5 0 0 1 16 7.1v6.4a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 13.5v-8Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+          <path d="M5.5 10h5M5.5 12.5h3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        </svg>
+      );
     case 'assets':
       return (
         <svg {...common}>

@@ -3,6 +3,7 @@ import {
   fetchAppSettings,
   saveComfySettings,
   saveImageGenSettings,
+  saveStorageSettings,
   type ComfyStatus,
   type ImageGenSettings,
 } from '../api';
@@ -36,6 +37,16 @@ const CATEGORIES: Category[] = [
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
         <circle cx="9" cy="9" r="7.5" stroke="currentColor" strokeWidth="1.3" />
         <path d="M9 5v4l2.5 2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'storage',
+    label: '产物存储',
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <path d="M2.5 5.5A1.5 1.5 0 0 1 4 4h3l1.5 1.5H14A1.5 1.5 0 0 1 15.5 7v6A1.5 1.5 0 0 1 14 14.5H4A1.5 1.5 0 0 1 2.5 13v-7.5Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+        <path d="M5.5 9.5h7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
       </svg>
     ),
   },
@@ -123,6 +134,10 @@ export default function SettingsModal({
   const [savingImageGen, setSavingImageGen] = useState(false);
   const [imageGenTip, setImageGenTip] = useState<string | null>(null);
   const [imageGenError, setImageGenError] = useState<string | null>(null);
+  const [outputDir, setOutputDir] = useState('');
+  const [savingStorage, setSavingStorage] = useState(false);
+  const [storageTip, setStorageTip] = useState<string | null>(null);
+  const [storageError, setStorageError] = useState<string | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusRef = useRef<ComfyStatus | null>(comfyStatus);
@@ -135,6 +150,8 @@ export default function SettingsModal({
     setTip(null);
     setImageGenTip(null);
     setImageGenError(null);
+    setStorageTip(null);
+    setStorageError(null);
     setReconnecting(false);
     setAttempt(0);
 
@@ -147,6 +164,9 @@ export default function SettingsModal({
         }
         if (s.imageGen) {
           setImageGen({ ...DEFAULT_IMAGE_GEN, ...s.imageGen });
+        }
+        if (s.storage?.outputDir) {
+          setOutputDir(s.storage.outputDir);
         }
       })
       .catch(() => {
@@ -241,6 +261,26 @@ export default function SettingsModal({
     }
   };
 
+  const saveStorage = async () => {
+    const value = outputDir.trim();
+    if (!value.startsWith('/')) {
+      setStorageError('产物存储目录必须是绝对路径');
+      return;
+    }
+    setSavingStorage(true);
+    setStorageTip(null);
+    setStorageError(null);
+    try {
+      const res = await saveStorageSettings(value);
+      setOutputDir(res.storage.outputDir);
+      setStorageTip('产物存储目录已保存并生效');
+    } catch (e) {
+      setStorageError((e as Error).message);
+    } finally {
+      setSavingStorage(false);
+    }
+  };
+
   const saveImageGen = async () => {
     setSavingImageGen(true);
     setImageGenTip(null);
@@ -322,6 +362,33 @@ export default function SettingsModal({
                       停止重试
                     </button>
                   )}
+                </div>
+              </section>
+            )}
+
+            {active === 'storage' && (
+              <section className="settings-section">
+                <h3 className="settings-section-title">生成产物存储</h3>
+                <p className="settings-section-desc">
+                  生成完成后，项目会把 ComfyUI 的临时产物转存到这里，并使用本地文件作为草稿和聊天结果。
+                </p>
+                <label className="settings-field">
+                  <span className="settings-label">本地存储目录（绝对路径）</span>
+                  <input
+                    className="settings-input"
+                    value={outputDir}
+                    onChange={e => setOutputDir(e.target.value)}
+                    placeholder="/path/to/director-workbench/server/data/drafts"
+                    spellCheck={false}
+                  />
+                </label>
+                <div className="storage-path-hint">目录不存在时会自动创建；需要当前服务进程具备读写权限。</div>
+                {storageError && <div className="settings-error">{storageError}</div>}
+                {storageTip && <div className="settings-tip">{storageTip}</div>}
+                <div className="settings-actions">
+                  <button className="settings-btn primary" onClick={saveStorage} disabled={savingStorage}>
+                    {savingStorage ? '检查并保存中…' : '保存存储目录'}
+                  </button>
                 </div>
               </section>
             )}

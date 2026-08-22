@@ -131,6 +131,38 @@ export async function getHistory(promptId: string): Promise<Record<string, any>>
   return request(`/history/${promptId}`);
 }
 
+/** 下载 ComfyUI 临时产物，供项目本地草稿存储使用。 */
+export async function downloadOutput(
+  filename: string,
+  subfolder = '',
+  type = 'output',
+): Promise<{ data: Buffer; mime?: string }> {
+  const p = new URLSearchParams({ filename, type });
+  if (subfolder) p.set('subfolder', subfolder);
+  let res: Response;
+  try {
+    res = await fetch(`${COMFYUI_BASE_URL}/view?${p.toString()}`);
+  } catch (e) {
+    throw new ComfyUIError(`无法下载 ComfyUI 产物（${filename}）：${(e as Error).message}`);
+  }
+  if (!res.ok) {
+    throw new ComfyUIError(`下载 ComfyUI 产物 ${filename} 失败：${res.status}` , res.status);
+  }
+  return {
+    data: Buffer.from(await res.arrayBuffer()),
+    mime: res.headers.get('content-type') ?? undefined,
+  };
+}
+
+/** 尽力删除 ComfyUI 临时产物；调用方决定是否忽略失败。 */
+export async function deleteOutput(filename: string, subfolder = '', type = 'output'): Promise<void> {
+  await request('/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename, subfolder, type }),
+  });
+}
+
 /** 探测 ComfyUI 目录里是否存在文件（input/output/temp），读取状态后立即断开 body */
 export async function fileExists(filename: string, type = 'input'): Promise<boolean> {
   const p = new URLSearchParams({ filename, type });

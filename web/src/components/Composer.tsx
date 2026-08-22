@@ -23,6 +23,7 @@ export default function Composer({
   value,
   onChange,
   onSubmit,
+  onStop,
   disabled,
   workflows,
   selectedWorkflowId,
@@ -34,6 +35,7 @@ export default function Composer({
   value: string;
   onChange: (v: string) => void;
   onSubmit: (opts: ComposerSubmitOpts) => void;
+  onStop?: () => void;
   disabled?: boolean;
   workflows: WorkflowSpec[];
   selectedWorkflowId: string | null;
@@ -321,17 +323,29 @@ export default function Composer({
               <path d="M11 2.5V6h3.5M6.5 9.5v4M4.5 11.5h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
             </svg>
           </button>
-          <button
-            className={`composer-send${canSend ? ' enabled' : ''}`}
-            disabled={!canSend}
-            onClick={submit}
-            title="发送"
-            aria-label="发送"
-          >
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-              <path d="M10 2.5v11m0 0 4.5-4.5M10 13.5 5.5 9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+          {disabled ? (
+            <button
+              className="composer-stop"
+              onClick={onStop}
+              title="停止生成"
+              aria-label="停止生成"
+            >
+              <span className="composer-stop-icon" />
+              停止
+            </button>
+          ) : (
+            <button
+              className={`composer-send${canSend ? ' enabled' : ''}`}
+              disabled={!canSend}
+              onClick={submit}
+              title="发送"
+              aria-label="发送"
+            >
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path d="M10 2.5v11m0 0 4.5-4.5M10 13.5 5.5 9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
     </div>

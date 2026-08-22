@@ -226,7 +226,7 @@ export async function runAgentStream(
 /**
  * 解析 Pi CLI --mode json 产生的事件
  */
-function handlePiJsonEvent(json: Record<string, unknown>, onEvent: (event: AgentStreamEvent) => void) {
+export function handlePiJsonEvent(json: Record<string, unknown>, onEvent: (event: AgentStreamEvent) => void) {
   // 1. 处理流式增量事件 (message_update -> text_delta / thinking_delta)
   if (json.type === 'message_update') {
     const ame = json.assistantMessageEvent as Record<string, unknown> | undefined;
@@ -267,8 +267,28 @@ function handlePiJsonEvent(json: Record<string, unknown>, onEvent: (event: Agent
     return;
   }
 
-  // 3. 处理整条 message（注意：避免和 message_update 重复追加完整 text）
+  // 3. 处理整条 message。不同 Pi 版本可能将内容放在 message.content 或顶层 content。
   if (json.type === 'message') {
+    const message = (json.message && typeof json.message === 'object' ? json.message : json) as Record<string, unknown>;
+    const content = message.content ?? json.content;
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (!block || typeof block !== 'object') continue;
+        const item = block as Record<string, unknown>;
+        if (item.type === 'thinking' && typeof item.thinking === 'string') {
+          onEvent({ type: 'thinking', delta: item.thinking });
+        } else if (item.type === 'text' && typeof item.text === 'string') {
+          onEvent({ type: 'text', delta: item.text });
+        }
+      }
+      return;
+    }
+    if (typeof content === 'string') {
+      onEvent({ type: 'text', delta: content });
+    }
+    if (typeof message.thinking === 'string') {
+      onEvent({ type: 'thinking', delta: message.thinking });
+    }
     return;
   }
 

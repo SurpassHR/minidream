@@ -1,31 +1,30 @@
 import express from 'express';
 import path from 'node:path';
+import { createReadStream, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
 import { generateData, mockReply } from './mock.js';
 import {
   COMFYUI_BASE_URL,
   checkHealth,
   getQueue,
   setComfyBaseUrl,
-  uploadFile,
-  submitPrompt,
 } from './comfyui.js';
 import {
   readSettings,
   writeSettings,
   updateImageGenSettings,
   updateComfyUISettings,
+  updateStorageSettings,
   type ImageGenSettings,
 } from './settings.js';
 import {
   buildSpecsCached,
-  buildPrompt,
-  getWorkflowJson,
   invalidateComfyCaches,
   type WorkflowSpec,
 } from './workflow.js';
-import { startJob, cancelJob, subscribeJob, getJob, jobSnapshot } from './jobs.js';
+import { cancelJob, subscribeJob, getJob, jobSnapshot } from './jobs.js';
+import { ActivityRegistry } from './activity.js';
+import { DraftStore } from './drafts.js';
 import { TaskQueue } from './tasks/queue.js';
 import { createDirectorMCPServer, type McpServerInstance } from './mcp/server.js';
 import { runAgentStream, buildAgentInput, type AgentStreamEvent } from './agent/bridge.js';
@@ -56,12 +55,20 @@ app.use('/assets', express.static(path.resolve(__dirname, '../assets')));
 
 const SETTINGS_FILE = path.resolve(__dirname, '../data/settings.json');
 const TASKS_FILE = path.resolve(__dirname, '../data/tasks.json');
+const DRAFTS_INDEX_FILE = path.resolve(__dirname, '../data/drafts.json');
+const initialSettings = readSettings(SETTINGS_FILE);
+export const draftStore = new DraftStore({
+  indexFile: DRAFTS_INDEX_FILE,
+  outputDir: initialSettings.storage.outputDir,
+});
 export const taskQueue = new TaskQueue({
   dataFile: TASKS_FILE,
   settingsFile: SETTINGS_FILE,
+  drafts: draftStore,
 });
 
 export const mcpServer: McpServerInstance = createDirectorMCPServer(taskQueue);
+export const activityRegistry = new ActivityRegistry(taskQueue);
 
 
 /* ---------------- 会话（JSON 文件持久化，照搬 v1 方案） ---------------- */
@@ -97,6 +104,7 @@ app.patch('/api/sessions/:id', (req, res) => {
 /** 删除会话 */
 app.delete('/api/sessions/:id', (req, res) => {
   try {
+    activityRegistry.cancelSession(req.params.id);
     const f = deleteSession(SESSIONS_FILE, req.params.id);
     res.json({
       sessions: f.sessions.map(s => ({ id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt })),
@@ -127,6 +135,19 @@ app.get('/api/sessions/:id/messages', (req, res) => {
     if (e instanceof SessionError) { res.status(404).json({ error: e.message }); return; }
     throw e;
   }
+});
+
+/** 终止活动会话，并联动取消该会话的未完成生成任务 */
+app.post('/api/sessions/:id/cancel', (req, res) => {
+  const id = req.params.id;
+  const knownSession = sessionList(SESSIONS_FILE).sessions.some(session => session.id === id);
+  const hasTask = taskQueue.list().some(task => task.sessionId === id && (task.status === 'queued' || task.status === 'running'));
+  if (!knownSession && !activityRegistry.getSession(id) && !hasTask) {
+    res.status(404).json({ error: `会话不存在: ${id}` });
+    return;
+  }
+  const canceledTasks = activityRegistry.cancelSession(id);
+  res.json({ ok: true, sessionId: id, canceledTaskIds: canceledTasks.map(task => task.id) });
 });
 
 /** 更新会话最后一条消息（SSE 终态落库：done/error/cancelled） */
@@ -187,9 +208,33 @@ app.get('/api/workflows', async (_req, res) => {
   );
 });
 
+/** 活动会话与生成任务快照 */
+app.get('/api/activity', (_req, res) => {
+  res.json(activityRegistry.snapshot());
+});
+
+/** 活动会话与生成任务实时事件流 */
+app.get('/api/activity/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const send = (event: unknown) => {
+    res.write(`event: activity\ndata: ${JSON.stringify(event)}\n\n`);
+  };
+  send({ type: 'snapshot', snapshot: activityRegistry.snapshot() });
+  const unsubscribe = activityRegistry.subscribe(send);
+  const heartbeat = setInterval(() => res.write(': ping\n\n'), 15_000);
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+  });
+});
+
 /** 生成任务实时事件流（SSE） */
 app.get('/api/generate/:jobId/events', (req, res) => {
-  const job = getJob(req.params.jobId);
+  const job = getJob(taskQueue, req.params.jobId);
   if (!job) {
     res.status(404).json({ error: 'job not found' });
     return;
@@ -205,7 +250,7 @@ app.get('/api/generate/:jobId/events', (req, res) => {
   const send = (evt: unknown) => {
     res.write(`data: ${JSON.stringify(evt)}\n\n`);
   };
-  const unsubscribe = subscribeJob(req.params.jobId, send);
+  const unsubscribe = subscribeJob(taskQueue, req.params.jobId, send);
   const heartbeat = setInterval(() => res.write(': ping\n\n'), 15_000);
 
   req.on('close', () => {
@@ -216,7 +261,7 @@ app.get('/api/generate/:jobId/events', (req, res) => {
 
 /** 任务快照（供重连/轮询） */
 app.get('/api/generate/:jobId', (req, res) => {
-  const job = getJob(req.params.jobId);
+  const job = getJob(taskQueue, req.params.jobId);
   if (!job) {
     res.status(404).json({ error: 'job not found' });
     return;
@@ -226,7 +271,7 @@ app.get('/api/generate/:jobId', (req, res) => {
 
 /** 取消生成 */
 app.post('/api/generate/:jobId/cancel', async (req, res) => {
-  const ok = await cancelJob(req.params.jobId);
+  const ok = await cancelJob(taskQueue, req.params.jobId);
   res.json({ ok });
 });
 
@@ -272,6 +317,7 @@ app.get('/api/settings', (_req, res) => {
   res.json({
     comfyui: { baseUrl: COMFYUI_BASE_URL },
     imageGen: current.imageGen,
+    storage: current.storage,
   });
 });
 
@@ -284,6 +330,46 @@ app.post('/api/settings/image-gen', (req, res) => {
   } catch (e) {
     res.status(400).json({ ok: false, error: (e as Error).message });
   }
+});
+
+/** 更新产物存储目录：持久化并检查目录可写 */
+app.post('/api/settings/storage', (req, res) => {
+  const outputDir = typeof req.body?.outputDir === 'string' ? req.body.outputDir : '';
+  try {
+    const candidate = new DraftStore({ indexFile: DRAFTS_INDEX_FILE, outputDir });
+    if (!candidate.isWritable()) throw new Error('产物存储目录不可写');
+    const updated = updateStorageSettings(SETTINGS_FILE, { outputDir });
+    draftStore.setOutputDir(updated.storage.outputDir);
+    res.json({ ok: true, storage: updated.storage });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: (e as Error).message });
+  }
+});
+
+/** 当前草稿列表 */
+app.get('/api/drafts', (_req, res) => {
+  res.json({ drafts: draftStore.list().map(({ path: _path, ...draft }) => draft) });
+});
+
+/** 读取草稿文件 */
+app.get('/api/drafts/:id/file', (req, res) => {
+  const draft = draftStore.get(req.params.id);
+  if (!draft || !existsSync(draft.path)) {
+    res.status(404).json({ error: 'draft not found' });
+    return;
+  }
+  res.setHeader('Content-Type', draft.mime ?? 'application/octet-stream');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  createReadStream(draft.path).pipe(res);
+});
+
+/** 删除草稿 */
+app.delete('/api/drafts/:id', (req, res) => {
+  if (!draftStore.delete(req.params.id)) {
+    res.status(404).json({ error: 'draft not found' });
+    return;
+  }
+  res.json({ ok: true });
 });
 
 /** 更新 ComfyUI 地址：持久化到文件 + 清空缓存 + 健康检查 */
@@ -395,24 +481,6 @@ interface UploadPayload {
   dataUrl?: string;
 }
 
-function dataUrlToBuffer(dataUrl: string): { buffer: Buffer; mime: string } {
-  const m = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl);
-  if (!m) throw new Error('素材格式无效（需 data URL）');
-  return { buffer: Buffer.from(m[2] ?? '', 'base64'), mime: m[1] ?? '' };
-}
-
-function extForMime(mime: string, name?: string): string {
-  if (name?.includes('.')) return name.split('.').pop()!;
-  const map: Record<string, string> = {
-    'image/png': 'png',
-    'image/jpeg': 'jpg',
-    'image/webp': 'webp',
-    'video/mp4': 'mp4',
-    'video/webm': 'webm',
-  };
-  return map[mime] ?? 'bin';
-}
-
 /** 生成回复：thinking 日志 + 任务卡（实时进度走 SSE） */
 async function generateReply(
   message: string,
@@ -421,6 +489,7 @@ async function generateReply(
     params?: Record<string, unknown>;
     images?: UploadPayload[];
     videos?: UploadPayload[];
+    sessionId?: string;
   },
 ): Promise<ChatReply> {
   const title = message.slice(0, 12) + (message.length > 12 ? '…' : '');
@@ -505,61 +574,15 @@ async function generateReply(
   }
 
   try {
-    // 1. 上传素材（同步，POST 返回前完成）
-    const uploaded: Record<string, string> = {};
-    const imageInputs = spec.inputs.filter(i => i.kind === 'image');
-    const videoInputs = spec.inputs.filter(i => i.kind === 'video');
-
-    for (let i = 0; i < (opts.images ?? []).length; i++) {
-      const up = opts.images![i];
-      if (!up?.dataUrl) continue;
-      const { buffer, mime } = dataUrlToBuffer(up.dataUrl);
-      const ext = extForMime(mime, up.name);
-      const input = imageInputs[i] ?? imageInputs[0];
-      if (!input) continue;
-      const filename = `upload_${Date.now()}_${i}.${ext}`;
-      const res = await uploadFile('image', filename, buffer);
-      const name = res.subfolder ? `${res.subfolder}/${res.name}` : res.name;
-      uploaded[input.id] = name;
-      logs.push(`已上传参考图「${up.name ?? filename}」`);
-    }
-    for (let i = 0; i < (opts.videos ?? []).length; i++) {
-      const up = opts.videos![i];
-      if (!up?.dataUrl) continue;
-      const { buffer, mime } = dataUrlToBuffer(up.dataUrl);
-      const ext = extForMime(mime, up.name);
-      const input = videoInputs[i] ?? videoInputs[0];
-      if (!input) continue;
-      const filename = `upload_${Date.now()}_v${i}.${ext}`;
-      const res = await uploadFile('video', filename, buffer);
-      const name = res.subfolder ? `${res.subfolder}/${res.name}` : res.name;
-      uploaded[input.id] = name;
-      logs.push(`已上传视频「${up.name ?? filename}」`);
-    }
-
-    // 2. 构建 prompt 并提交
-    logs.push('正在提交任务到 ComfyUI…');
-    const settings = readSettings(SETTINGS_FILE);
-    const prompt = await buildPrompt(spec, getWorkflowJson(spec.id)!, {
-      prompt: message,
-      uploaded,
-      params: opts.params,
-      settings: settings.imageGen,
-    });
-    const clientId = randomUUID();
-    const submit = await submitPrompt(prompt, clientId);
-    const queue = await getQueue();
-    const pending = queue.queue_pending.length;
-
-    // 3. 启动任务监听（WS → SSE）
-    const job = startJob({
+    logs.push('任务已加入项目生成队列，等待统一调度…');
+    const task = taskQueue.submit({
       workflowId: spec.id,
-      spec,
-      promptId: submit.prompt_id,
-      clientId,
+      prompt: message,
+      params: opts.params,
+      sessionId: opts.sessionId,
+      imageUploads: opts.images?.filter((item): item is UploadPayload & { dataUrl: string } => typeof item.dataUrl === 'string'),
+      videoUploads: opts.videos?.filter((item): item is UploadPayload & { dataUrl: string } => typeof item.dataUrl === 'string'),
     });
-
-    logs.push(`任务已提交（#${submit.number}）${pending > 0 ? `，${pending} 个任务排队中` : ''}`);
 
     const stages: ChatReply['stages'] = [
       { type: 'thinking', logs },
@@ -567,17 +590,15 @@ async function generateReply(
         type: 'task',
         progress: { completed: 0, total: 1 },
         taskLabel: `${spec.outputs.some(o => o.kind === 'video') ? '视频' : '图片'}生成中…`,
-        queued: pending > 0,
-        queueLabel: pending > 0 ? `${pending} 个任务排队中` : undefined,
+        queued: true,
+        queueLabel: '项目队列统一调度中',
       },
     ];
 
     return {
       title,
       reply: `已提交生成任务（工作流：${spec.name}），完成后可直接查看结果。`,
-      stages,
-      jobId: job.id,
-      promptId: submit.prompt_id,
+      jobId: task.id,
     };
   } catch (e) {
     return {
@@ -614,21 +635,34 @@ app.post('/api/chat', async (req, res) => {
     let fullThinking = '';
     let fullText = '';
     const taskUnsubscribes: Array<() => void> = [];
+    const agentController = new AbortController();
     let agentDone = false;
     let activeTaskCount = 0;
+    let responseEnded = false;
+    let cancelRequested = false;
+    activityRegistry.startSession(sid, message.trim(), agentController);
+    sendEvent('agent:started', { sessionId: sid });
 
     const cleanupAndEnd = () => {
-      if (!agentDone || activeTaskCount > 0) return;
-      // 保存助手消息
+      if (responseEnded || !agentDone || (!cancelRequested && !agentController.signal.aborted && activeTaskCount > 0)) return;
+      responseEnded = true;
+      const canceled = cancelRequested || agentController.signal.aborted;
+      const stages = canceled ? [{ type: 'error', logs: ['对话已终止'] }] : undefined;
       appendMessage(SESSIONS_FILE, sid, {
         role: 'assistant',
-        content: fullText,
+        content: fullText || (canceled ? '对话已终止。' : ''),
+        stages,
       });
-      sendEvent('agent:end', { sessionId: sid });
+      activityRegistry.finishSession(sid, canceled ? 'canceled' : 'completed');
+      sendEvent('agent:end', { sessionId: sid, canceled });
       res.end();
     };
 
-    req.on('close', () => {
+    res.on('close', () => {
+      if (!res.writableEnded && !agentDone) {
+        cancelRequested = true;
+        activityRegistry.cancelSession(sid);
+      }
       taskUnsubscribes.forEach(unsub => unsub());
     });
 
@@ -641,6 +675,8 @@ app.post('/api/chat', async (req, res) => {
 
     try {
       await runAgentStream(agentInput, {
+        sessionId: sid,
+        signal: agentController.signal,
         mcpServerUrl: mcpUrl,
         onEvent: (evt: AgentStreamEvent) => {
           if (evt.type === 'thinking') {
@@ -695,6 +731,8 @@ app.post('/api/chat', async (req, res) => {
             if (taskId && typeof taskId === 'string') {
               const task = taskQueue.getTask(taskId);
               if (task) {
+                taskQueue.bindSession(task.id, sid);
+                activityRegistry.attachTask(sid, task.id);
                 activeTaskCount++;
                 sendEvent('task:queued', { taskId: task.id, position: 1, task });
 
@@ -745,7 +783,9 @@ app.post('/api/chat', async (req, res) => {
         },
       });
     } catch (err: any) {
-      sendEvent('agent:error', { error: err.message || String(err) });
+      if (!agentController.signal.aborted) {
+        sendEvent('agent:error', { error: err.message || String(err) });
+      }
     } finally {
       agentDone = true;
       cleanupAndEnd();
@@ -759,6 +799,7 @@ app.post('/api/chat', async (req, res) => {
     params: req.body?.params && typeof req.body.params === 'object' ? req.body.params : undefined,
     images: Array.isArray(req.body?.images) ? req.body.images : undefined,
     videos: Array.isArray(req.body?.videos) ? req.body.videos : undefined,
+    sessionId: sid,
   });
 
   // 3. 助手消息落库；本次新建的会话用回复标题命名

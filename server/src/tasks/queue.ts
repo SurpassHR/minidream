@@ -2,10 +2,13 @@ import EventEmitter from 'node:events';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { TaskItem, TaskOutput, TaskStage, TaskStatus, TaskSubmitInput, TaskType } from './types.js';
+import type { TaskItem, TaskOutput, TaskOutputCandidate, TaskStage, TaskStatus, TaskSubmitInput, TaskType } from './types.js';
+import type { DraftStore } from '../drafts.js';
 import { buildPrompt, buildSpecsCached, getWorkflowJson } from '../workflow.js';
 import {
   cancelPrompt,
+  deleteOutput,
+  downloadOutput,
   COMFYUI_BASE_URL,
   getHistory,
   submitPrompt,
@@ -28,11 +31,12 @@ export type TaskExecutor = (
   task: TaskItem,
   onProgress: (update: ProgressUpdate) => void,
   signal?: AbortSignal,
-) => Promise<{ outputs?: TaskOutput[] }>;
+) => Promise<{ outputs?: TaskOutputCandidate[] }>;
 
 export interface TaskQueueOptions {
   dataFile: string;
   settingsFile?: string;
+  drafts?: DraftStore;
   autoStart?: boolean;
   executor?: TaskExecutor;
 }
@@ -40,16 +44,19 @@ export interface TaskQueueOptions {
 export class TaskQueue extends EventEmitter {
   private dataFile: string;
   private settingsFile?: string;
+  private drafts?: DraftStore;
   private tasks: Map<string, TaskItem> = new Map();
   private isProcessing = false;
   private customExecutor?: TaskExecutor;
   private currentAbortController?: AbortController;
   private currentComfyPromptId?: string;
+  private lastTimestamp = 0;
 
   constructor(options: TaskQueueOptions) {
     super();
     this.dataFile = options.dataFile;
     this.settingsFile = options.settingsFile;
+    this.drafts = options.drafts;
     this.customExecutor = options.executor;
 
     this.loadFromDisk();
@@ -73,6 +80,7 @@ export class TaskQueue extends EventEmitter {
               status: item.status === 'running' ? 'interrupted' : item.status,
             };
             this.tasks.set(task.id, task);
+            this.lastTimestamp = Math.max(this.lastTimestamp, task.createdAt, task.updatedAt);
           }
         }
       }
@@ -93,6 +101,11 @@ export class TaskQueue extends EventEmitter {
     }
   }
 
+  private nextTimestamp(): number {
+    this.lastTimestamp = Math.max(Date.now(), this.lastTimestamp + 1);
+    return this.lastTimestamp;
+  }
+
   private inferTaskType(workflowId: string): TaskType {
     if (workflowId.toLowerCase().includes('video') || workflowId.toLowerCase().includes('h3')) {
       return 'video_generation';
@@ -102,7 +115,7 @@ export class TaskQueue extends EventEmitter {
 
   public submit(input: TaskSubmitInput): TaskItem {
     const id = `task-${randomUUID().slice(0, 8)}`;
-    const now = Date.now();
+    const now = this.nextTimestamp();
     const type = input.type || this.inferTaskType(input.workflowId);
 
     const initialStages: TaskStage[] = [
@@ -119,8 +132,12 @@ export class TaskQueue extends EventEmitter {
       workflowId: input.workflowId,
       prompt: input.prompt,
       images: input.images,
+      videos: input.videos,
+      imageUploads: input.imageUploads,
+      videoUploads: input.videoUploads,
       params: input.params,
       sessionId: input.sessionId,
+      promptGraph: input.promptGraph,
       stages: initialStages,
       createdAt: now,
       updatedAt: now,
@@ -144,6 +161,17 @@ export class TaskQueue extends EventEmitter {
     return this.get(id);
   }
 
+  /** 在 Agent 工具返回任务 ID 后补充会话归属。 */
+  public bindSession(id: string, sessionId: string): boolean {
+    const task = this.tasks.get(id);
+    if (!task || task.status !== 'queued' && task.status !== 'running') return false;
+    task.sessionId = sessionId;
+    task.updatedAt = this.nextTimestamp();
+    this.persist();
+    this.emit('task:change', task);
+    return true;
+  }
+
   public list(): TaskItem[] {
     return Array.from(this.tasks.values()).sort((a, b) => b.createdAt - a.createdAt);
   }
@@ -158,7 +186,7 @@ export class TaskQueue extends EventEmitter {
 
     if (task.status === 'queued') {
       task.status = 'canceled';
-      task.updatedAt = Date.now();
+      task.updatedAt = this.nextTimestamp();
       this.persist();
       this.emit('task:change', task);
       return true;
@@ -166,7 +194,7 @@ export class TaskQueue extends EventEmitter {
 
     if (task.status === 'running') {
       task.status = 'canceled';
-      task.updatedAt = Date.now();
+      task.updatedAt = this.nextTimestamp();
       if (this.currentAbortController) {
         this.currentAbortController.abort();
       }
@@ -188,6 +216,16 @@ export class TaskQueue extends EventEmitter {
     return this.get(id);
   }
 
+  /** 取消某个会话下所有排队中或运行中的任务。 */
+  public cancelBySession(sessionId: string): TaskItem[] {
+    return this.list()
+      .filter(task => task.sessionId === sessionId && (task.status === 'queued' || task.status === 'running'))
+      .map(task => {
+        this.cancel(task.id);
+        return this.get(task.id)!;
+      });
+  }
+
   public subscribeTask(
     id: string,
     listener: (event: 'updated' | 'completed' | 'failed' | 'canceled', task: TaskItem) => void,
@@ -205,8 +243,10 @@ export class TaskQueue extends EventEmitter {
       }
     };
     this.on('task:change', handler);
+    this.on('task:progress', handler);
     return () => {
       this.off('task:change', handler);
+      this.off('task:progress', handler);
     };
   }
 
@@ -214,7 +254,7 @@ export class TaskQueue extends EventEmitter {
     const task = this.tasks.get(id);
     if (!task) return undefined;
     updater(task);
-    task.updatedAt = Date.now();
+    task.updatedAt = this.nextTimestamp();
     this.persist();
     this.emit('task:change', task);
     return task;
@@ -253,9 +293,10 @@ export class TaskQueue extends EventEmitter {
           return;
         }
 
+        const outputs = await this.persistOutputs(nextTask.id, res.outputs);
         this.updateTask(nextTask.id, t => {
           t.status = 'completed';
-          t.outputs = res.outputs;
+          t.outputs = outputs;
           t.stages.forEach(s => (s.status = 'completed'));
         });
       } else {
@@ -297,7 +338,8 @@ export class TaskQueue extends EventEmitter {
       }
     }
 
-    task.updatedAt = Date.now();
+    task.updatedAt = this.nextTimestamp();
+    this.persist();
     this.emit('task:progress', task);
   }
 
@@ -313,34 +355,58 @@ export class TaskQueue extends EventEmitter {
       throw new Error(`找不到工作流源文件: ${spec.id}`);
     }
 
-    // 1. 上传图片（如果有）
+    // 1. 上传任务携带的素材（上传也属于队列执行生命周期）
     const uploaded: Record<string, string> = {};
-    if (task.images && task.images.length > 0) {
-      const imageInputs = spec.inputs.filter(i => i.kind === 'image');
-      for (let i = 0; i < task.images.length && i < imageInputs.length; i++) {
-        const imagePath = task.images[i];
-        const inputSpec = imageInputs[i];
-        if (imagePath && inputSpec) {
-          if (imagePath.startsWith('/') || imagePath.startsWith('./')) {
-            try {
-              const fileBuf = readFileSync(imagePath);
-              const upRes = await uploadFile('image', `upload-${Date.now()}-${i}.png`, fileBuf);
-              uploaded[inputSpec.id] = upRes.name;
-            } catch {
-              uploaded[inputSpec.id] = imagePath;
-            }
-          } else {
-            uploaded[inputSpec.id] = imagePath;
-          }
-        }
-      }
+    const imageInputs = spec.inputs.filter(i => i.kind === 'image');
+    const videoInputs = spec.inputs.filter(i => i.kind === 'video');
+    for (let i = 0; i < (task.imageUploads?.length ?? 0) && i < imageInputs.length; i++) {
+      const upload = task.imageUploads?.[i];
+      const inputSpec = imageInputs[i];
+      if (!upload || !inputSpec) continue;
+      const parsed = /^data:([^;]+);base64,(.*)$/s.exec(upload.dataUrl);
+      if (!parsed) throw new Error('图片素材格式无效（需 data URL）');
+      const ext = upload.name?.includes('.') ? upload.name.split('.').pop() : 'bin';
+      const upRes = await uploadFile('image', `upload-${Date.now()}-${i}.${ext}`, Buffer.from(parsed[2] ?? '', 'base64'));
+      uploaded[inputSpec.id] = upRes.subfolder ? `${upRes.subfolder}/${upRes.name}` : upRes.name;
+    }
+    for (let i = 0; i < (task.videoUploads?.length ?? 0) && i < videoInputs.length; i++) {
+      const upload = task.videoUploads?.[i];
+      const inputSpec = videoInputs[i];
+      if (!upload || !inputSpec) continue;
+      const parsed = /^data:([^;]+);base64,(.*)$/s.exec(upload.dataUrl);
+      if (!parsed) throw new Error('视频素材格式无效（需 data URL）');
+      const ext = upload.name?.includes('.') ? upload.name.split('.').pop() : 'bin';
+      const upRes = await uploadFile('video', `upload-${Date.now()}-${i}.${ext}`, Buffer.from(parsed[2] ?? '', 'base64'));
+      uploaded[inputSpec.id] = upRes.subfolder ? `${upRes.subfolder}/${upRes.name}` : upRes.name;
     }
 
-    // 2. 读取全局 Settings
-    const settings = this.settingsFile ? readSettings(this.settingsFile).imageGen : undefined;
+    // 2. 兼容外部传入的本地路径或已上传 ComfyUI 文件名
+    for (let i = 0; i < (task.images?.length ?? 0) && i < imageInputs.length; i++) {
+      const imagePath = task.images?.[i];
+      const inputSpec = imageInputs[i];
+      if (!imagePath || !inputSpec || uploaded[inputSpec.id]) continue;
+      if (imagePath.startsWith('/') || imagePath.startsWith('./')) {
+        try {
+          const fileBuf = readFileSync(imagePath);
+          const upRes = await uploadFile('image', `upload-${Date.now()}-${i}.png`, fileBuf);
+          uploaded[inputSpec.id] = upRes.subfolder ? `${upRes.subfolder}/${upRes.name}` : upRes.name;
+        } catch {
+          uploaded[inputSpec.id] = imagePath;
+        }
+      } else {
+        uploaded[inputSpec.id] = imagePath;
+      }
+    }
+    for (let i = 0; i < (task.videos?.length ?? 0) && i < videoInputs.length; i++) {
+      const videoPath = task.videos?.[i];
+      const inputSpec = videoInputs[i];
+      if (!videoPath || !inputSpec || uploaded[inputSpec.id]) continue;
+      uploaded[inputSpec.id] = videoPath;
+    }
 
-    // 3. 构建 ComfyUI Prompt 节点图
-    const prompt = await buildPrompt(spec, workflowJson, {
+    // 3. 读取全局 Settings，并在队列内部构建唯一 prompt 图
+    const settings = this.settingsFile ? readSettings(this.settingsFile).imageGen : undefined;
+    const prompt = task.promptGraph ?? await buildPrompt(spec, workflowJson, {
       prompt: task.prompt,
       uploaded,
       params: task.params,
@@ -445,9 +511,10 @@ export class TaskQueue extends EventEmitter {
         }
       }
 
+      const localOutputs = await this.persistOutputs(task.id, outputs);
       this.updateTask(task.id, t => {
         t.status = 'completed';
-        t.outputs = outputs;
+        t.outputs = localOutputs;
         t.stages.forEach(s => (s.status = 'completed'));
       });
     } finally {
@@ -455,5 +522,41 @@ export class TaskQueue extends EventEmitter {
         stopWatch();
       }
     }
+  }
+
+  private async persistOutputs(taskId: string, outputs?: TaskOutputCandidate[]): Promise<TaskOutput[]> {
+    if (!outputs?.length || !this.drafts) return (outputs ?? []).map(({ data: _data, mime: _mime, ...output }) => output);
+    const local: TaskOutputCandidate[] = [];
+    for (const output of outputs) {
+      let data = output.data;
+      let mime = output.mime;
+      if (!data && output.filename) {
+        const downloaded = await downloadOutput(output.filename, output.subfolder ?? '', output.type ?? 'output');
+        data = downloaded.data;
+        mime = downloaded.mime;
+      }
+      if (!data) {
+        local.push(output);
+        continue;
+      }
+      const draft = await this.drafts.saveFromBuffer({
+        taskId,
+        kind: output.kind,
+        sourceName: output.filename,
+        mime,
+        data,
+      });
+      if (!output.data && output.filename) {
+        await deleteOutput(output.filename, output.subfolder ?? '', output.type ?? 'output').catch(() => undefined);
+      }
+      local.push({
+        ...output,
+        url: `/api/drafts/${draft.id}/file`,
+        filename: draft.filename,
+        data: undefined,
+        mime: undefined,
+      });
+    }
+    return local.map(({ data: _data, mime: _mime, ...output }) => output);
   }
 }

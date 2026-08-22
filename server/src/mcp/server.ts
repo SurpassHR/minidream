@@ -45,6 +45,11 @@ const MCP_TOOLS: McpToolDescriptor[] = [
           items: { type: 'string' },
           description: '可选的输入/参考图片本地路径或 URL 列表',
         },
+        videos: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '可选的输入视频本地路径或 URL 列表',
+        },
         params: {
           type: 'object',
           description: '可选的参数覆盖项（如 steps, cfg, seed 等）',
@@ -128,6 +133,7 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
           workflowId: String(args.workflowId),
           prompt: String(args.prompt),
           images: Array.isArray(args.images) ? args.images.map(String) : undefined,
+          videos: Array.isArray(args.videos) ? args.videos.map(String) : undefined,
           params: args.params && typeof args.params === 'object' ? args.params : undefined,
           sessionId: args.sessionId ? String(args.sessionId) : undefined,
         });

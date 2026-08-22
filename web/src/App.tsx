@@ -6,6 +6,9 @@ import {
   fetchComfyStatus,
   cancelJob,
   cancelTask,
+  fetchActivity,
+  openActivityEvents,
+  cancelSession as apiCancelSession,
   openJobEvents,
   createSession,
   deleteSession as apiDeleteSession,
@@ -24,6 +27,8 @@ import {
   type ActionCardData,
   type ToolCallData,
   type TaskItem,
+  type ActivitySnapshot,
+  type ActivityStreamEvent,
 } from './api';
 import Rail from './components/Rail';
 import Sidebar, { type Conversation } from './components/Sidebar';
@@ -31,7 +36,31 @@ import SettingsModal from './components/SettingsModal';
 import SkillCards from './components/SkillCards';
 import Composer, { type ComposerSubmitOpts } from './components/Composer';
 import ChatView from './components/ChatView';
+import ActivityPanel from './components/ActivityPanel';
+import DraftsView from './components/DraftsView';
 import './App.css';
+
+function mergeActivityEvent(snapshot: ActivitySnapshot, event: ActivityStreamEvent): ActivitySnapshot {
+  if (event.type === 'snapshot') return event.snapshot;
+  if (
+    event.type === 'session:started' ||
+    event.type === 'session:updated' ||
+    event.type === 'session:canceled' ||
+    event.type === 'session:finished'
+  ) {
+    const sessions = snapshot.sessions.filter(item => item.sessionId !== event.session.sessionId);
+    return {
+      ...snapshot,
+      sessions: [...sessions, event.session],
+    };
+  }
+  if (event.type !== 'task:updated') return snapshot;
+  const task = event.task;
+  const tasks = snapshot.tasks.filter(item => item.id !== task.id);
+  tasks.push(task);
+  tasks.sort((a, b) => b.updatedAt - a.updatedAt);
+  return { ...snapshot, tasks: tasks.slice(0, 50) };
+}
 
 /** 把 SSE 事件合并进消息 stages */
 function mergeJobEvent(msg: ChatMessage, evt: JobEvent): ChatMessage {
@@ -92,6 +121,8 @@ export default function App() {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
+  const [activity, setActivity] = useState<ActivitySnapshot>({ sessions: [], tasks: [] });
+  const [activityOpen, setActivityOpen] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConv, setActiveConv] = useState<string | null>(null);
   const [workflows, setWorkflows] = useState<WorkflowSpec[]>([]);
@@ -110,6 +141,7 @@ export default function App() {
     return t;
   });
   const chatRef = useRef<HTMLDivElement>(null);
+  const streamAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -138,6 +170,12 @@ export default function App() {
 
   useEffect(() => {
     let alive = true;
+    fetchActivity().then(snapshot => {
+      if (alive) setActivity(snapshot);
+    }).catch(() => undefined);
+    const unsubscribe = openActivityEvents(event => {
+      if (alive) setActivity(previous => mergeActivityEvent(previous, event));
+    });
     fetchSessions()
       .then(r => {
         if (!alive) return;
@@ -152,6 +190,7 @@ export default function App() {
       .catch(() => undefined);
     return () => {
       alive = false;
+      unsubscribe();
     };
   }, []);
 
@@ -166,6 +205,8 @@ export default function App() {
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setSending(true);
+    const streamAbort = new AbortController();
+    streamAbortRef.current = streamAbort;
 
     // 预置一条空的助手消息用于流式填充
     const initialAssistantMsg: ChatMessage = {
@@ -180,13 +221,31 @@ export default function App() {
     setMessages(prev => [...prev, initialAssistantMsg]);
 
     let sid = activeConv;
+    let receivedStreamContent = false;
 
     try {
       await sendChatStream(
         content,
         { ...opts, sessionId: activeConv },
         event => {
-          if (event.type === 'agent:end') {
+          if (
+            event.type === 'agent:thinking' ||
+            event.type === 'agent:text' ||
+            event.type === 'agent:action_card' ||
+            event.type === 'tool:call' ||
+            event.type === 'tool:result' ||
+            event.type === 'task:queued' ||
+            event.type === 'task:progress' ||
+            event.type === 'task:artifact' ||
+            event.type === 'task:completed' ||
+            event.type === 'task:failed' ||
+            event.type === 'task:canceled' ||
+            event.type === 'agent:error'
+          ) {
+            receivedStreamContent = true;
+          }
+
+          if (event.type === 'agent:started' || event.type === 'agent:end') {
             if (event.sessionId) {
               const targetId = event.sessionId;
               sid = targetId;
@@ -276,11 +335,17 @@ export default function App() {
                 ...(current.stages || []),
                 { type: 'error', logs: [event.error] },
               ];
+            } else if (event.type === 'agent:end' && !event.canceled && !receivedStreamContent) {
+              current.stages = [
+                ...(current.stages || []),
+                { type: 'error', logs: ['流式响应结束，但没有收到 Agent 输出。请检查 Pi CLI 和模型配置。'] },
+              ];
             }
 
             return prev.map((m, i) => (i === lastIdx ? current : m));
           });
         },
+        streamAbort.signal,
       );
 
       // 流结束，将最后完整的助手消息持久化落盘
@@ -293,7 +358,10 @@ export default function App() {
           return latest;
         });
       }
-    } catch {
+    } catch (err) {
+      if (streamAbort.signal.aborted) {
+        return;
+      }
       setMessages(prev => [
         ...prev,
         {
@@ -303,6 +371,7 @@ export default function App() {
         },
       ]);
     } finally {
+      if (streamAbortRef.current === streamAbort) streamAbortRef.current = null;
       setSending(false);
     }
   };
@@ -319,6 +388,19 @@ export default function App() {
       /* ignore */
     }
     setMessages(prev => prev.map(m => (m.jobId === jobId ? mergeJobEvent(m, { type: 'cancelled' }) : m)));
+  };
+
+  const handleStopConversation = () => {
+    streamAbortRef.current?.abort();
+    if (activeConv) {
+      void apiCancelSession(activeConv).catch(() => undefined);
+    }
+  };
+
+  const handleCancelSession = (sessionId: string) => {
+    void apiCancelSession(sessionId).then(() => {
+      if (sessionId === activeConv) streamAbortRef.current?.abort();
+    }).catch(() => undefined);
   };
 
   const handleCancelTask = async (taskId: string) => {
@@ -441,7 +523,28 @@ export default function App() {
           onDelete={id => void handleDeleteConversation(id)}
         />
         <main className="main">
-          {isEmpty ? (
+          <div className="main-statusbar">
+            <span className={`status-dot${activity.sessions.some(s => s.status === 'running') || activity.tasks.length > 0 ? ' active' : ''}`} />
+            <span className="main-status-label">
+              {activity.sessions.filter(s => s.status === 'running').length + activity.tasks.length > 0
+                ? `${activity.sessions.filter(s => s.status === 'running').length + activity.tasks.length} 项活动运行中`
+                : '暂无运行中的活动'}
+            </span>
+            <button className="activity-open-btn" onClick={() => setActivityOpen(true)}>
+              查看活动
+            </button>
+          </div>
+          {activityOpen && (
+            <ActivityPanel
+              snapshot={activity}
+              onClose={() => setActivityOpen(false)}
+              onCancelSession={handleCancelSession}
+              onCancelTask={handleCancelTask}
+            />
+          )}
+          {activeNav === 'drafts' ? (
+            <DraftsView />
+          ) : isEmpty ? (
             <div className="generate-empty">
               <h1 className="generate-title">{data.hero.title}</h1>
               <SkillCards skills={data.skills} onTry={handleTrySkill} />
@@ -458,20 +561,21 @@ export default function App() {
               />
             </div>
           )}
-          <div className="composer-wrap">
+          {activeNav === 'generate' && <div className="composer-wrap">
             <Composer
               placeholder={data.composer.placeholder}
               composer={data.composer}
               value={input}
               onChange={setInput}
               onSubmit={opts => handleSend(undefined, opts)}
+              onStop={handleStopConversation}
               disabled={sending}
               workflows={workflows}
               selectedWorkflowId={selectedWorkflowId}
               onSelectWorkflow={setSelectedWorkflowId}
               comfyStatus={comfyStatus}
             />
-          </div>
+          </div>}
         </main>
       </div>
       <SettingsModal
