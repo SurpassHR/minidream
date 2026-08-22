@@ -107,3 +107,29 @@ export function writeSettings(file: string, s: AppSettings): AppSettings {
   renameSync(tmp, file);
   return s;
 }
+
+export function updateImageGenSettings(file: string, partial: Partial<ImageGenSettings>): AppSettings {
+  const current = readSettings(file);
+  const updated: AppSettings = {
+    ...current,
+    imageGen: {
+      ...current.imageGen,
+      ...partial,
+    },
+  };
+  return writeSettings(file, updated);
+}
+
+export function updateComfyUISettings(file: string, comfyui: Partial<ComfyUISettings>): AppSettings {
+  const current = readSettings(file);
+  const updated: AppSettings = {
+    ...current,
+    comfyui: {
+      ...current.comfyui,
+      ...comfyui,
+    },
+  };
+  return writeSettings(file, updated);
+}
+
+

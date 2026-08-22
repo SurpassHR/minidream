@@ -15,6 +15,7 @@ import {
   readSettings,
   writeSettings,
   updateImageGenSettings,
+  updateComfyUISettings,
   type ImageGenSettings,
 } from './settings.js';
 import {
@@ -277,7 +278,7 @@ app.post('/api/settings/comfyui', async (req, res) => {
   const baseUrl = typeof req.body?.baseUrl === 'string' ? req.body.baseUrl : '';
   try {
     const next = setComfyBaseUrl(baseUrl);
-    writeSettings(SETTINGS_FILE, { comfyui: { baseUrl: next } });
+    updateComfyUISettings(SETTINGS_FILE, { baseUrl: next });
     invalidateComfyCaches();
     const status = await checkHealth();
     res.json({ ok: true, baseUrl: next, connected: status.connected, status });
