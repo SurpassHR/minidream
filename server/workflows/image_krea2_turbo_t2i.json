@@ -177,7 +177,7 @@
         1024,
         594361197674106,
         false,
-        "krea2_darkbrush.safetensors",
+        "KREA2/Afterlight_v1.safetensors",
         0.8,
         "muted minimalist sketch style",
         "krea2_turbo_fp8_scaled.safetensors",
@@ -1044,14 +1044,14 @@
               "ver": "0.25.0",
               "models": [
                 {
-                  "name": "krea2_darkbrush.safetensors",
+                  "name": "KREA2/Afterlight_v1.safetensors",
                   "url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/loras/krea2_darkbrush.safetensors",
                   "directory": "loras"
                 }
               ]
             },
             "widgets_values": [
-              "krea2_darkbrush.safetensors",
+              "KREA2/Afterlight_v1.safetensors",
               0.8
             ]
           },

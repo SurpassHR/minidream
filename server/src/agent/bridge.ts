@@ -101,7 +101,13 @@ export async function runAgentStream(
   }
 
   const idleTimeoutMs = options.idleTimeoutMs ?? 60_000;
-  const args: string[] = ['--mode', 'json', '--print'];
+  // 严格禁用宿主开发工具（bash/read/edit/write/fffind/context_tree_query等），仅允许 mcp 工具与 director 专属 skill
+  const args: string[] = [
+    '--mode', 'json',
+    '--print',
+    '--tools', 'mcp',
+    '--exclude-tools', 'bash,read,edit,write,fffind,ffgrep,grep,find,ls,context_tree_query,subagent,subagent_wait,subagent_supervisor,preview_export,studio_repl_send,studio_repl_status,studio_export_pdf,studio_export_html,ask_user_question,source_check,get_search_content,fetch_content'
+  ];
 
   if (options.sessionId) {
     args.push('--session-id', options.sessionId);

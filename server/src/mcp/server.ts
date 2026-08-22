@@ -109,9 +109,8 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
         const simplified = specs.map(s => ({
           id: s.id,
           name: s.name,
-          inputs: s.inputs,
-          outputs: s.outputs,
-          params: s.params,
+          inputs: s.inputs.map(i => ({ kind: i.kind, label: i.label, required: i.required })),
+          outputs: s.outputs.map(o => ({ kind: o.kind, label: o.label })),
         }));
         return {
           content: [{ type: 'text', text: JSON.stringify(simplified, null, 2) }],

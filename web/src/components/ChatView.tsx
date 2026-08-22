@@ -146,16 +146,20 @@ function ThinkingChain({
 
 function ToolCallsView({ toolCalls }: { toolCalls: ToolCallData[] }) {
   if (!toolCalls || toolCalls.length === 0) return null;
+  // 过滤掉内部环境发现类工具，仅向用户展示有意义的业务工具调用
+  const displayCalls = toolCalls.filter(tc => !['mcp', 'bash', 'read', 'edit', 'write', 'fffind', 'ffgrep'].includes(tc.name));
+  if (displayCalls.length === 0) return null;
+
   return (
     <div className="tool-calls-container">
-      {toolCalls.map((tc, idx) => {
+      {displayCalls.map((tc, idx) => {
         const isDone = tc.result !== undefined;
         let label = `调用工具: ${tc.name}`;
         if (tc.name === 'generation.submit') {
           const wf = (tc.args?.workflowId as string) || '';
           label = wf.includes('video') ? '🎬 正在创建 MiniMax H3 视频生成任务…' : '🎨 正在创建 Krea2 图像生成任务…';
         } else if (tc.name === 'workflow.list') {
-          label = '🔍 正在自省工作流模板能力…';
+          label = '🔍 正在适配生图/视频工作流…';
         } else if (tc.name === 'generation.status') {
           label = '⏳ 正在同步生成进度…';
         } else if (tc.name === 'generation.cancel') {

@@ -356,8 +356,13 @@ function convertUiNode(
       const full = prefix ? `${prefix}.${field}` : field;
       const def = required?.[field] ?? optional?.[field];
       if (connected.has(full) || connected.has(normalizeField(full))) {
-        // 已由 link/上游值提供且属于 widget 类型的字段：跳过其对应位置的 widget 值
-        if (def && isWidgetType(def)) wi++;
+        // 已由 link/上游值提供且属于 widget 类型的字段：跳过其对应位置的 widget 值（及可能的 control_after_generate）
+        if (def && isWidgetType(def)) {
+          wi++;
+          if (normalizeField(full) === 'seed' && wi < widgets.length && CONTROL_SET.has(String(widgets[wi]))) {
+            wi++;
+          }
+        }
         continue;
       }
       if (!isWidgetType(def)) continue; // link-only 类型没有 widget 值

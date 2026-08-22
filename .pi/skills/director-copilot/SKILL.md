@@ -52,12 +52,30 @@ description: 导演工作台 Copilot 技能库。负责解析用户创作意图�
 
 ---
 
-## 4. MCP 工具使用规范
+## 4. 严格工作流与意图路由规范 (避免误用)
 
-1. **`workflow.list`**：若不确定当前工作流 ID 或模板参数时，可先调用此工具查询。
+1. **生图意图 (Image Generation)**：
+   - 必须且只能选择 Krea2 系列工作流：
+     - `image_krea2_turbo_t2i_int8` (默认推荐文生图)
+     - `image_krea2_turbo_t2i` (文生图全精度)
+     - `image_krea2_turbo_int8_image_style_reference` (带参考图的风格图生图)
+   - **绝对不要**使用 MiniMax 视频工作流处理生图请求！
+2. **生视频意图 (Video Generation)**：
+   - 仅当用户明确要求生成“视频”、“动态”、“镜头运镜”时才选择 MiniMax H3 视频工作流：
+     - `video-minimax-h3-t2v` (文生视频)
+     - `video-minimax-h3-i2v` (首帧图生视频)
+     - `video-minimax-h3-r2v` (参考图生视频)
+
+---
+
+## 5. MCP 工具使用规范
+
+1. 优先根据以上意图路由直接调用 `generation.submit`，无需每次都反复查询 `workflow.list`。
 2. **`generation.submit`**：
-   - `workflowId`: 填入匹配的工作流 ID（如 `image_krea2_turbo_t2i_int8` 或 `video-minimax-h3-t2v` 等）。
+   - `workflowId`: 填入匹配的工作流 ID（如生图选 `image_krea2_turbo_t2i_int8`，生视频选 `video-minimax-h3-t2v`）。
    - `prompt`: 填入经过专业扩写的英文提示词。
    - `images`: 数组，包含需要传入的图片 URL 或服务器相对路径。
-3. **`generation.status`**：在需要主动轮询某任务结果时调用（通常创建后系统会自动追踪）。
+3. **`generation.status`**：在需要主动查询某任务结果时调用。
 4. **`generation.cancel`**：当用户明确要求“停止生成”、“取消任务”时调用。
+5. **绝对禁止**在回复正文中直接输出或转储 JSON 工作流定义与工具调用内部 payload。
+

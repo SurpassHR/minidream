@@ -213,10 +213,10 @@
         1024,
         45862206397178,
         false,
-        "krea2_darkbrush.safetensors",
+        "KREA2/Afterlight_v1.safetensors",
         0.8,
         "muted minimalist sketch style",
-        "krea2_turbo_int8_convrot.safetensors",
+        "KREA2/krea2_turbo_int8_convrot.safetensors",
         "qwen3vl_4b_fp8_scaled.safetensors",
         "qwen_image_vae.safetensors"
       ]
@@ -871,14 +871,14 @@
               "ver": "0.25.0",
               "models": [
                 {
-                  "name": "krea2_turbo_int8_convrot.safetensors",
+                  "name": "KREA2/krea2_turbo_int8_convrot.safetensors",
                   "url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_turbo_int8_convrot.safetensors",
                   "directory": "diffusion_models"
                 }
               ]
             },
             "widgets_values": [
-              "krea2_turbo_int8_convrot.safetensors",
+              "KREA2/krea2_turbo_int8_convrot.safetensors",
               "default"
             ]
           },
@@ -1084,14 +1084,14 @@
               "ver": "0.25.0",
               "models": [
                 {
-                  "name": "krea2_darkbrush.safetensors",
+                  "name": "KREA2/Afterlight_v1.safetensors",
                   "url": "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/loras/krea2_darkbrush.safetensors",
                   "directory": "loras"
                 }
               ]
             },
             "widgets_values": [
-              "krea2_darkbrush.safetensors",
+              "KREA2/Afterlight_v1.safetensors",
               0.8
             ]
           },
