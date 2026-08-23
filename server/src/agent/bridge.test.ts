@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { existsSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -12,6 +13,7 @@ import {
   generateConversationTitle,
   handlePiJsonEvent,
   parsePiModelList,
+  toolCallFingerprint,
   runAgentStream,
   sanitizeTitle,
   type AgentStreamEvent,
@@ -96,7 +98,8 @@ describe('Agent Bridge', () => {
     const spawnArgs = spawnMock.mock.calls[0]?.[1] as string[];
     expect(spawnArgs).toEqual(expect.arrayContaining(['--print', '--no-tools', '--no-session', '--thinking', 'off']));
     expect(spawnArgs).toEqual(expect.arrayContaining(['--model', 'deepseek/deepseek-v4-flash']));
-    expect(spawnArgs).toEqual(expect.arrayContaining(['--append-system-prompt']));
+    expect(spawnArgs).toEqual(expect.arrayContaining(['--append-system-prompt', expect.any(String)]));
+    expect(spawnArgs).toContain('--no-skills');
 
     // 模拟 pi 输出：一行状态日志 + 一行标题
     child.stdout.write('[auto-name] API 503 (...)\n');
@@ -197,6 +200,99 @@ describe('Agent Bridge', () => {
     ]);
   });
 
+  it('generation.submit 工具调用保留完整 prompt 参数', () => {
+    const events: AgentStreamEvent[] = [];
+    handlePiJsonEvent({
+      type: 'tool_execution_start',
+      toolCallId: 'call-1',
+      toolName: 'generation.submit',
+      args: {
+        workflowId: 'image_seedvr2_upscale',
+        prompt: 'Enhance the input image while preserving the original details.',
+      },
+    }, event => events.push(event));
+
+    expect(events).toEqual([
+      {
+        type: 'tool_call',
+        tool: {
+          id: 'call-1',
+          name: 'generation.submit',
+          args: {
+            workflowId: 'image_seedvr2_upscale',
+            prompt: 'Enhance the input image while preserving the original details.',
+          },
+        },
+      },
+    ]);
+  });
+
+  it('Pi 的 mcp 包装事件会展开为 generation.submit 并保留 prompt', () => {
+    const events: AgentStreamEvent[] = [];
+    handlePiJsonEvent({
+      type: 'tool_execution_start',
+      toolCallId: 'call-mcp-1',
+      toolName: 'mcp',
+      args: {
+        tool: 'director_generation_submit',
+        args: {
+          workflowId: 'image_krea2_turbo_t2i',
+          prompt: 'A cinematic image generation prompt.',
+        },
+      },
+    }, event => events.push(event));
+
+    expect(events[0]).toEqual(expect.objectContaining({
+      type: 'tool_call',
+      tool: expect.objectContaining({
+        name: 'generation.submit',
+        args: {
+          workflowId: 'image_krea2_turbo_t2i',
+          prompt: 'A cinematic image generation prompt.',
+        },
+      }),
+    }));
+  });
+
+  it('generation.submit 工具调用兼容 JSON 字符串参数和命名空间名称', () => {
+    const events: AgentStreamEvent[] = [];
+    handlePiJsonEvent({
+      type: 'tool_execution_start',
+      toolCallId: 'call-2',
+      toolName: 'director.generation.submit',
+      arguments: JSON.stringify({
+        workflowId: 'image_seedvr2_upscale',
+        prompt: 'Upscale the referenced image.',
+      }),
+    }, event => events.push(event));
+
+    expect(events[0]).toEqual(expect.objectContaining({
+      type: 'tool_call',
+      tool: expect.objectContaining({
+        name: 'director.generation.submit',
+        args: {
+          workflowId: 'image_seedvr2_upscale',
+          prompt: 'Upscale the referenced image.',
+        },
+      }),
+    }));
+  });
+
+  it('相同调用 ID 或相同规范化业务参数生成相同指纹，便于过滤 Pi 重复事件', () => {
+    expect(toolCallFingerprint({
+      id: 'call-1',
+      name: 'generation.submit',
+      args: { workflowId: 'image_krea2_turbo_t2i', prompt: '同一提示词' },
+    })).toBe('id:call-1');
+    expect(toolCallFingerprint({
+      name: 'generation.submit',
+      args: { workflowId: 'image_krea2_turbo_t2i', prompt: '同一提示词' },
+    })).toBe(toolCallFingerprint({
+      name: 'generation.submit',
+      args: { prompt: '同一提示词', workflowId: 'image_krea2_turbo_t2i' },
+    }));
+  });
+
   it('使用 v1 的 JSON 增量模式并在 agent_end 后立即终止 Pi', async () => {
     const child = createFakeChild();
     spawnMock.mockReturnValue(child);
@@ -217,6 +313,11 @@ describe('Agent Bridge', () => {
     const spawnArgs = spawnMock.mock.calls[0]?.[1] as string[];
     expect(spawnArgs).not.toContain('--print');
     expect(spawnArgs).toEqual(expect.arrayContaining(['--thinking', 'minimal']));
+    expect(spawnArgs).toContain('--no-skills');
+    const skillIndex = spawnArgs.indexOf('--skill');
+    const skillPath = spawnArgs[skillIndex + 1];
+    expect(skillPath).toMatch(/\.pi\/skills\/director-copilot\/SKILL\.md$/);
+    expect(skillPath && existsSync(skillPath)).toBe(true);
     expect(spawnArgs).not.toContain('--model');
     expect(events).toContainEqual({ type: 'text', delta: '首字' });
     expect(child.kill).toHaveBeenCalledWith('SIGTERM');

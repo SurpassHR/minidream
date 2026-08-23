@@ -17,6 +17,8 @@ export interface StoredMessage {
   tasks?: unknown[];
   actionCards?: unknown[];
   stages?: unknown[];
+  routes?: unknown[];
+  generationPrompts?: string[];
   jobId?: string;
 }
 

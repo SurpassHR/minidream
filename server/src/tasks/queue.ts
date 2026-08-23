@@ -19,6 +19,7 @@ import {
   type WsMessage,
 } from '../comfyui.js';
 import { readSettings } from '../settings.js';
+import { buildGenerationMetadata } from '../image-metadata.js';
 
 export interface ProgressUpdate {
   stage?: string;
@@ -449,6 +450,24 @@ export class TaskQueue extends EventEmitter {
       resolution,
     });
 
+    const effectiveParams: Record<string, unknown> = {};
+    for (const node of Object.values(prompt)) {
+      const inputs = (node as any)?.inputs;
+      if (!inputs || typeof inputs !== 'object') continue;
+      for (const field of ['seed', 'noise_seed', 'steps', 'cfg', 'denoise', 'sampler_name', 'scheduler', 'width', 'height', 'batch_size']) {
+        const value = (inputs as Record<string, unknown>)[field];
+        if (value !== undefined && value !== null && typeof value !== 'object' && effectiveParams[field] === undefined) {
+          effectiveParams[field] = value;
+        }
+      }
+    }
+    this.updateTask(task.id, current => {
+      current.generationParams = {
+        ...effectiveParams,
+        ...(resolution ? { width: resolution.width, height: resolution.height } : {}),
+      };
+    });
+
     if (signal.aborted) return;
 
     // 4. 连接 WebSocket 监听采样进度
@@ -565,7 +584,14 @@ export class TaskQueue extends EventEmitter {
   }
 
   private async persistOutputs(taskId: string, outputs?: TaskOutputCandidate[]): Promise<TaskOutput[]> {
-    if (!outputs?.length || !this.drafts) return (outputs ?? []).map(({ data: _data, mime: _mime, ...output }) => output);
+    const task = this.tasks.get(taskId);
+    const generation = task ? buildGenerationMetadata(task) : undefined;
+    if (!outputs?.length || !this.drafts) {
+      return (outputs ?? []).map(({ data: _data, mime: _mime, ...output }) => ({
+        ...output,
+        ...(generation ? { generation } : {}),
+      }));
+    }
     const local: TaskOutputCandidate[] = [];
     for (const output of outputs) {
       let data = output.data;
@@ -576,7 +602,10 @@ export class TaskQueue extends EventEmitter {
         mime = downloaded.mime;
       }
       if (!data) {
-        local.push(output);
+        local.push({
+          ...output,
+          ...(generation ? { generation } : {}),
+        });
         continue;
       }
       const draft = await this.drafts.saveFromBuffer({
@@ -591,6 +620,7 @@ export class TaskQueue extends EventEmitter {
       }
       local.push({
         ...output,
+        ...(generation ? { generation } : {}),
         url: `/api/drafts/${draft.id}/file`,
         filename: draft.filename,
         data: undefined,

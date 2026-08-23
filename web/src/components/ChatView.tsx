@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import { openDraftLocation, type ChatMessage, type ChatStage, type GenerationOutput, type TaskItem, type ToolCallData, type ActionCardData } from '../api';
+import { openDraftLocation, type ChatMessage, type ChatStage, type GenerationOutput, type TaskItem, type ActionCardData, type WorkflowRoute } from '../api';
 import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 
 /* ==================== 工具函数 ==================== */
@@ -98,35 +98,84 @@ function ThinkingChain({
 
 /* ==================== 工具调用状态卡片 ==================== */
 
-function ToolCallsView({ toolCalls }: { toolCalls: ToolCallData[] }) {
-  if (!toolCalls || toolCalls.length === 0) return null;
-  // 过滤掉内部环境发现类工具，仅向用户展示有意义的业务工具调用
-  const displayCalls = toolCalls.filter(tc => !['mcp', 'bash', 'read', 'edit', 'write', 'fffind', 'ffgrep'].includes(tc.name));
-  if (displayCalls.length === 0) return null;
+function routeIntentLabel(intent: WorkflowRoute['intent']): string {
+  switch (intent) {
+    case 'image_upscale': return '图像放大';
+    case 'image_to_image': return '图生图';
+    case 'image_to_video': return '图生视频';
+    case 'text_to_video': return '文生视频';
+    case 'text_to_image': return '文生图';
+    default: return '未识别';
+  }
+}
 
+function workflowLabel(id: string): string {
+  if (id === 'image_seedvr2_upscale') return 'SeedVR2 图像放大';
+  if (id === 'image_krea2_turbo_t2i') return 'Krea2 图像生成';
+  if (id.includes('video-minimax')) return 'MiniMax H3 视频生成';
+  return id;
+}
+
+function extractGenerationPrompts(message: ChatMessage): string[] {
+  const prompts = [...(message.generationPrompts || [])];
+  for (const call of message.toolCalls || []) {
+    const args = call.args || {};
+    const nested = call.name === 'mcp' && typeof args.tool === 'string'
+      ? (args.args && typeof args.args === 'object' ? args.args as Record<string, unknown> : {})
+      : args;
+    const isGenerationSubmit = call.name === 'generation.submit'
+      || call.name.endsWith('.generation.submit')
+      || (call.name === 'mcp' && String(args.tool).endsWith('generation_submit'));
+    const prompt = typeof nested.prompt === 'string' ? nested.prompt.trim() : '';
+    if (isGenerationSubmit && prompt && !prompts.includes(prompt)) prompts.push(prompt);
+  }
+  return prompts;
+}
+
+function GenerationPromptView({ prompts }: { prompts: string[] }) {
+  if (!prompts.length) return null;
   return (
-    <div className="tool-calls-container">
-      {displayCalls.map((tc, idx) => {
-        const isDone = tc.result !== undefined;
-        let label = `调用工具: ${tc.name}`;
-        if (tc.name === 'generation.submit') {
-          const wf = (tc.args?.workflowId as string) || '';
-          label = wf.includes('video') ? '🎬 正在创建 MiniMax H3 视频生成任务…' : '🎨 正在创建 Krea2 图像生成任务…';
-        } else if (tc.name === 'workflow.list') {
-          label = '🔍 正在适配生图/视频工作流…';
-        } else if (tc.name === 'generation.status') {
-          label = '⏳ 正在同步生成进度…';
-        } else if (tc.name === 'generation.cancel') {
-          label = '🛑 正在请求取消任务…';
-        }
+    <div className="generation-prompt-list">
+      {prompts.map((prompt, index) => (
+        <div className="generation-prompt" key={`${index}-${prompt.slice(0, 24)}`}>
+          <div className="generation-prompt-title">生成提示词{prompts.length > 1 ? ` ${index + 1}` : ''}</div>
+          <pre className="generation-prompt-code"><code>{prompt}</code></pre>
+        </div>
+      ))}
+    </div>
+  );
+}
 
-        return (
-          <div key={tc.callId ?? idx} className={`tool-call-chip${isDone ? ' done' : ' active'}`}>
-            <span className="tool-call-icon">{isDone ? '✓' : '⚡'}</span>
-            <span className="tool-call-label">{label}</span>
+function RouteSummaryView({ routes }: { routes: WorkflowRoute[] }) {
+  if (!routes.length) return null;
+  return (
+    <div className="route-summary-list">
+      {routes.map((route, index) => (
+        <div className="route-summary" key={route.taskId ?? `${route.requestedWorkflowId}-${route.finalWorkflowId}-${index}`}>
+          <div className="route-summary-title">
+            <span className="route-summary-icon">↗</span>
+            <span>工作流路由</span>
+            <span className="route-summary-status">{route.forced ? '规则强制' : 'Agent 选择'}</span>
           </div>
-        );
-      })}
+          <div className="route-summary-flow">
+            <span>{routeIntentLabel(route.intent)}</span>
+            <span className="route-summary-arrow">→</span>
+            {route.requestedWorkflowId !== route.finalWorkflowId && (
+              <>
+                <span className="route-summary-requested">{workflowLabel(route.requestedWorkflowId)}</span>
+                <span className="route-summary-arrow">→</span>
+              </>
+            )}
+            <strong>{workflowLabel(route.finalWorkflowId)}</strong>
+          </div>
+          <div className="route-summary-meta">
+            参考图 {route.referenceImageCount} 张
+            {route.referenceVideoCount > 0 ? `，参考视频 ${route.referenceVideoCount} 个` : ''}
+            {' · '}
+            {route.reason}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -320,7 +369,7 @@ function GenerationOutputsView({
                     alt={alt}
                     loading="lazy"
                     onClick={() => {
-                      if (img.url) onOpenImage?.({ url: img.url, alt });
+                      if (img.url) onOpenImage?.({ url: img.url, alt, generation: img.generation });
                     }}
                   />
                   {img.url && (
@@ -401,8 +450,10 @@ function AssistantMessageBody({
 }) {
   // 1. 新流式架构属性
   const hasThinking = Boolean(message.thinking && message.thinking.length > 0);
-  const hasToolCalls = Boolean(message.toolCalls && message.toolCalls.length > 0);
   const hasTasks = Boolean(message.tasks && message.tasks.length > 0);
+  const hasRoutes = Boolean(message.routes && message.routes.length > 0);
+  const generationPrompts = extractGenerationPrompts(message);
+  const hasGenerationPrompts = generationPrompts.length > 0;
   const hasActionCards = Boolean(message.actionCards && message.actionCards.length > 0);
 
   // 旧 stage 兼容（仅用于思考日志/错误展示）
@@ -436,8 +487,11 @@ function AssistantMessageBody({
         </div>
       )}
 
-      {/* 工具调用小标签 */}
-      {hasToolCalls && <ToolCallsView toolCalls={message.toolCalls!} />}
+      {/* 生成提示词预览：在工作流路由和任务状态之前展示 */}
+      {hasGenerationPrompts && <GenerationPromptView prompts={generationPrompts} />}
+
+      {/* 工作流路由摘要 */}
+      {hasRoutes && <RouteSummaryView routes={message.routes!} />}
 
       {/* 动作建议卡片 (Action Cards) */}
       {hasActionCards && (
@@ -492,6 +546,8 @@ function extractOutputs(message: ChatMessage): GenerationOutput[] {
           outputs.push({
             kind: out.kind,
             url: out.url,
+            filename: out.filename,
+            generation: out.generation,
           });
         }
       }

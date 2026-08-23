@@ -32,8 +32,8 @@ import { ActivityRegistry } from './activity.js';
 import { DraftStore } from './drafts.js';
 import { TaskQueue } from './tasks/queue.js';
 import type { TaskItem } from './tasks/types.js';
-import { createDirectorMCPServer, type McpServerInstance } from './mcp/server.js';
-import { listAgentModels, runAgentStream, buildAgentInput, generateConversationTitle, type AgentStreamEvent } from './agent/bridge.js';
+import { createDirectorMCPServer, type McpServerInstance, type WorkflowRoute } from './mcp/server.js';
+import { listAgentModels, runAgentStream, buildAgentInput, generateConversationTitle, toolCallFingerprint, type AgentStreamEvent } from './agent/bridge.js';
 import {
   SessionError,
   appendMessage,
@@ -83,12 +83,12 @@ function filterEnabledWorkflows(specs: WorkflowSpec[]): WorkflowSpec[] {
   return specs.filter(s => isWorkflowEnabled(s.id));
 }
 
+export const activityRegistry = new ActivityRegistry(taskQueue);
 export const mcpServer: McpServerInstance = createDirectorMCPServer(
   taskQueue,
   isWorkflowEnabled,
   () => readSettings(SETTINGS_FILE).agent.pollTaskStatus,
 );
-export const activityRegistry = new ActivityRegistry(taskQueue);
 
 /**
  * 把聊天请求携带的图片素材（data URL）预上传到 ComfyUI input 目录。
@@ -266,6 +266,8 @@ app.post('/api/sessions/:id/messages/last', (req, res) => {
       tasks: Array.isArray(body.tasks) ? body.tasks : undefined,
       actionCards: Array.isArray(body.actionCards) ? body.actionCards : undefined,
       stages: Array.isArray(body.stages) ? body.stages : undefined,
+      routes: Array.isArray(body.routes) ? body.routes : undefined,
+      generationPrompts: Array.isArray(body.generationPrompts) ? body.generationPrompts : undefined,
       jobId: typeof body.jobId === 'string' ? body.jobId : undefined,
     };
     updateLastMessage(SESSIONS_FILE, req.params.id, msg);
@@ -851,6 +853,9 @@ app.post('/api/chat', async (req, res) => {
     let fullThinking = '';
     let fullText = '';
     const fullToolCalls: Array<Record<string, unknown>> = [];
+    const seenToolCalls = new Set<string>();
+    const fullRoutes: WorkflowRoute[] = [];
+    const generationPrompts: string[] = [];
     const sessionTasks = new Map<string, TaskItem>();
     const taskUnsubscribes: Array<() => void> = [];
     const agentController = new AbortController();
@@ -885,6 +890,8 @@ app.post('/api/chat', async (req, res) => {
         thinking: fullThinking || undefined,
         toolCalls: fullToolCalls.length ? fullToolCalls : undefined,
         tasks: sessionTasks.size ? [...sessionTasks.values()] : undefined,
+        routes: fullRoutes.length ? fullRoutes : undefined,
+        generationPrompts: generationPrompts.length ? generationPrompts : undefined,
         stages,
       });
       publishEvent('agent:end', { sessionId: sid, canceled });
@@ -919,6 +926,11 @@ app.post('/api/chat', async (req, res) => {
       '你运行在「导演工作台」中。生成结果（图片/视频）会自动展示在用户界面中，',
       '不要向用户报告内部文件名、存储路径、接口地址或任务 ID 等实现细节，',
       '任务完成后简短确认即可，保持输出简洁。',
+      '不要在正文中输出“正在适配工作流”“正在提交任务”等工具执行状态；工具调用由界面结构化处理。',
+      '每次用户请求最多调用一次 generation.submit；提交成功后不要重复提交相同任务。',
+      '如果生成进度由界面事件流自动展示，不要调用 generation.status 轮询。',
+      '在调用 generation.submit 之前，先用 Markdown fenced code block（```）展示将要提交的最终 prompt；',
+      '代码块中只放实际生成提示词，不要放 workflowId、文件名、任务 ID 或其他 JSON。',
       '若用户指令中以 @图像N 提及参考图片（【参考图片】中 [图像N] 即对应文件），',
       '图生图/图生视频时必须在 generation.submit 的 images 参数中按序传入对应文件名。',
       '图像放大/超分/高清化（如「放大、放大图片、upscale、变清晰、高清化」）必须使用',
@@ -949,15 +961,26 @@ app.post('/api/chat', async (req, res) => {
             fullText += evt.delta || '';
             sendEvent('agent:text', { delta: evt.delta });
           } else if (evt.type === 'tool_call') {
+            const tool = evt.tool;
+            if (!tool) return;
+            const callFingerprint = toolCallFingerprint(tool);
+            if (seenToolCalls.has(callFingerprint)) return;
+            seenToolCalls.add(callFingerprint);
             fullToolCalls.push({
-              callId: evt.tool?.id,
-              name: evt.tool?.name,
-              args: evt.tool?.args,
+              callId: tool.id,
+              name: tool.name,
+              args: tool.args,
             });
+            const isGenerationSubmit = tool.name === 'generation.submit' || tool.name.endsWith('.generation.submit');
+            if (isGenerationSubmit && typeof tool.args.prompt === 'string' && tool.args.prompt.trim()) {
+              const prompt = tool.args.prompt;
+              if (!generationPrompts.includes(prompt)) generationPrompts.push(prompt);
+              sendEvent('agent:prompt', { prompt });
+            }
             sendEvent('tool:call', {
-              callId: evt.tool?.id,
-              name: evt.tool?.name,
-              args: evt.tool?.args,
+              callId: tool.id,
+              name: tool.name,
+              args: tool.args,
             });
           } else if (evt.type === 'tool_result') {
             const toolCall = fullToolCalls.find(call => call.callId === evt.result?.id);
@@ -974,11 +997,21 @@ app.post('/api/chat', async (req, res) => {
             if (resObj && typeof resObj === 'object') {
               taskId = resObj.taskId;
               // 处理 MCP 标准 CallToolResult 格式: { content: [{ type: 'text', text: '{...}' }] }
+              const route = resObj.route as WorkflowRoute | undefined;
+              if (route && typeof route.finalWorkflowId === 'string' && !fullRoutes.some(item => item.taskId === route.taskId)) {
+                fullRoutes.push(route);
+                sendEvent('agent:route', { route });
+              }
               if (!taskId && Array.isArray(resObj.content)) {
                 for (const c of resObj.content) {
                   if (c?.type === 'text' && typeof c.text === 'string') {
                     try {
                       const parsed = JSON.parse(c.text);
+                      if (parsed?.route && typeof parsed.route.finalWorkflowId === 'string' && !fullRoutes.some(item => item.taskId === parsed.route.taskId)) {
+                        const route = parsed.route as WorkflowRoute;
+                        fullRoutes.push(route);
+                        sendEvent('agent:route', { route });
+                      }
                       if (parsed?.taskId) {
                         taskId = parsed.taskId;
                         break;
@@ -992,6 +1025,11 @@ app.post('/api/chat', async (req, res) => {
             } else if (typeof resObj === 'string') {
               try {
                 const parsed = JSON.parse(resObj);
+                if (parsed?.route && typeof parsed.route.finalWorkflowId === 'string' && !fullRoutes.some(item => item.taskId === parsed.route.taskId)) {
+                  const route = parsed.route as WorkflowRoute;
+                  fullRoutes.push(route);
+                  sendEvent('agent:route', { route });
+                }
                 if (parsed?.taskId) taskId = parsed.taskId;
               } catch {
                 // ignore

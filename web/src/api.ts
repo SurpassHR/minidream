@@ -49,6 +49,15 @@ export interface GenerationOutput {
   subfolder?: string;
   type?: string;
   text?: string;
+  generation?: {
+    taskId: string;
+    workflowId: string;
+    prompt: string;
+    params?: Record<string, unknown>;
+    ratio?: string;
+    size?: number;
+    createdAt: number;
+  };
 }
 
 export interface TaskStage {
@@ -67,6 +76,15 @@ export interface TaskOutput {
   filename: string;
   subfolder?: string;
   type?: string;
+  generation?: {
+    taskId: string;
+    workflowId: string;
+    prompt: string;
+    params?: Record<string, unknown>;
+    ratio?: string;
+    size?: number;
+    createdAt: number;
+  };
 }
 
 export interface TaskItem {
@@ -78,6 +96,9 @@ export interface TaskItem {
   images?: string[];
   videos?: string[];
   params?: Record<string, unknown>;
+  generationParams?: Record<string, unknown>;
+  ratio?: string;
+  size?: number;
   sessionId?: string;
   stages: TaskStage[];
   outputs?: TaskOutput[];
@@ -94,6 +115,18 @@ export interface ActionCardData {
   params?: Record<string, unknown>;
 }
 
+export interface WorkflowRoute {
+  requestedWorkflowId: string;
+  finalWorkflowId: string;
+  intent: 'text_to_image' | 'image_to_image' | 'image_upscale' | 'text_to_video' | 'image_to_video' | 'unknown';
+  referenceImageCount: number;
+  referenceVideoCount: number;
+  forced: boolean;
+  reason: string;
+  taskId?: string;
+  sessionId?: string;
+}
+
 export interface ToolCallData {
   callId?: string;
   name: string;
@@ -106,6 +139,8 @@ export type StreamChatEvent =
   | { type: 'agent:status'; status: string }
   | { type: 'agent:thinking'; delta: string }
   | { type: 'agent:text'; delta: string }
+  | { type: 'agent:prompt'; prompt: string }
+  | { type: 'agent:route'; route: WorkflowRoute }
   | { type: 'agent:action_card'; card: ActionCardData }
   | { type: 'tool:call'; callId?: string; name: string; args?: Record<string, unknown> }
   | { type: 'tool:result'; callId?: string; name: string; result?: unknown }
@@ -143,6 +178,8 @@ export interface ChatMessage {
   toolCalls?: ToolCallData[];
   tasks?: TaskItem[];
   actionCards?: ActionCardData[];
+  routes?: WorkflowRoute[];
+  generationPrompts?: string[];
   stages?: ChatStage[];
   jobId?: string;
   taskId?: string;
@@ -494,6 +531,10 @@ export async function sendChatStream(
           onEvent({ type: 'agent:thinking', delta: parsed.delta });
         } else if (eventType === 'agent:text') {
           onEvent({ type: 'agent:text', delta: parsed.delta as string });
+        } else if (eventType === 'agent:prompt') {
+          onEvent({ type: 'agent:prompt', prompt: parsed.prompt as string });
+        } else if (eventType === 'agent:route') {
+          onEvent({ type: 'agent:route', route: parsed.route });
         } else if (eventType === 'agent:action_card') {
           onEvent({ type: 'agent:action_card', card: parsed.card });
         } else if (eventType === 'tool:call') {

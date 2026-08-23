@@ -3,6 +3,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 export interface LightboxImage {
   url: string;
   alt: string;
+  generation?: {
+    taskId?: string;
+    workflowId?: string;
+    prompt?: string;
+    params?: Record<string, unknown>;
+    ratio?: string;
+    size?: number;
+    createdAt?: number;
+  };
 }
 
 const MIN_ZOOM = 0.1; // 可缩小到「适配屏幕」尺寸的 10%
@@ -33,6 +42,8 @@ export default function ImageLightbox({
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   /** 原始分辨率（加载后读取，显示用） */
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
+  const [infoOpen, setInfoOpen] = useState(Boolean(image.generation));
+  const [copied, setCopied] = useState(false);
   const [dragging, setDragging] = useState(false);
   const dragStartRef = useRef({ mx: 0, my: 0, ox: 0, oy: 0 });
   const dragMovedRef = useRef(false);
@@ -43,7 +54,9 @@ export default function ImageLightbox({
     setZoom(1);
     setOffset({ x: 0, y: 0 });
     setNaturalSize(null);
-  }, [image.url]);
+    setInfoOpen(Boolean(image.generation));
+    setCopied(false);
+  }, [image.url, image.generation]);
 
   // Esc 关闭
   useEffect(() => {
@@ -118,7 +131,7 @@ export default function ImageLightbox({
   }, [zoom]);
 
   const onMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.lightbox-tools, .lightbox-close')) return;
+    if ((e.target as HTMLElement).closest('.lightbox-tools, .lightbox-close, .lightbox-info')) return;
     e.preventDefault();
     setDragging(true);
     dragMovedRef.current = false;
@@ -137,6 +150,28 @@ export default function ImageLightbox({
   const endDrag = () => setDragging(false);
 
   // 拖拽结束后浏览器会补发 click，避免误关灯箱
+  const formatValue = (value: unknown): string => {
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  };
+
+  const copyPrompt = async () => {
+    const prompt = image.generation?.prompt;
+    if (!prompt) return;
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  };
+
   const handleBackdropClick = () => {
     if (dragMovedRef.current) {
       dragMovedRef.current = false;
@@ -158,7 +193,7 @@ export default function ImageLightbox({
       onMouseLeave={endDrag}
       onClick={handleBackdropClick}
       onDoubleClick={e => {
-        if ((e.target as HTMLElement).closest('.lightbox-tools, .lightbox-close')) return;
+        if ((e.target as HTMLElement).closest('.lightbox-tools, .lightbox-close, .lightbox-info')) return;
         fitImage();
       }}
     >
@@ -209,7 +244,73 @@ export default function ImageLightbox({
         {naturalSize && (
           <span className="lightbox-size">{naturalSize.w} × {naturalSize.h} px</span>
         )}
+        {image.generation && (
+          <button
+            aria-label="查看生成信息"
+            title="查看生成信息"
+            className={`lightbox-info-toggle${infoOpen ? ' active' : ''}`}
+            onClick={e => {
+              e.stopPropagation();
+              setInfoOpen(open => !open);
+            }}
+          >
+            i
+          </button>
+        )}
       </div>
+      {infoOpen && image.generation && (
+        <aside className="lightbox-info" onClick={e => e.stopPropagation()}>
+          <div className="lightbox-info-head">
+            <strong>生成信息</strong>
+            <button
+              className="lightbox-info-close"
+              aria-label="关闭生成信息"
+              title="关闭生成信息"
+              onClick={() => setInfoOpen(false)}
+            >
+              ×
+            </button>
+          </div>
+          <div className="lightbox-info-section">
+            <div className="lightbox-info-label">提示词</div>
+            <pre className="lightbox-prompt"><code>{image.generation.prompt || '未记录'}</code></pre>
+            {image.generation.prompt && (
+              <button className="lightbox-copy" onClick={() => void copyPrompt()}>
+                {copied ? '已复制' : '复制提示词'}
+              </button>
+            )}
+          </div>
+          <dl className="lightbox-info-list">
+            {image.generation.workflowId && (
+              <div><dt>工作流</dt><dd>{image.generation.workflowId}</dd></div>
+            )}
+            {naturalSize && (
+              <div><dt>分辨率</dt><dd>{naturalSize.w} × {naturalSize.h} px</dd></div>
+            )}
+            {image.generation.ratio && (
+              <div><dt>比例</dt><dd>{image.generation.ratio}</dd></div>
+            )}
+            {image.generation.size !== undefined && (
+              <div><dt>尺寸</dt><dd>{image.generation.size} MP</dd></div>
+            )}
+            {image.generation.createdAt && (
+              <div><dt>生成时间</dt><dd>{new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(image.generation.createdAt)}</dd></div>
+            )}
+          </dl>
+          {image.generation.params && Object.keys(image.generation.params).length > 0 && (
+            <div className="lightbox-info-section">
+              <div className="lightbox-info-label">生成参数</div>
+              <dl className="lightbox-params">
+                {Object.entries(image.generation.params)
+                  .filter(([, value]) => value !== undefined && value !== null)
+                  .map(([key, value]) => (
+                    <div key={key}><dt>{key}</dt><dd>{formatValue(value)}</dd></div>
+                  ))}
+              </dl>
+            </div>
+          )}
+        </aside>
+      )}
       <button
         className="lightbox-close"
         aria-label="关闭大图"

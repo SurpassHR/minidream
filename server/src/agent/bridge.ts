@@ -66,6 +66,18 @@ export async function listAgentModels(): Promise<AgentModel[]> {
 export type AgentThinking = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 /** 会话命名提示词：要求输出简洁中文标题，直接输出标题本身 */
+const PROJECT_SKILL_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../.pi/skills/director-copilot/SKILL.md',
+);
+
+function appendSkillIsolationArgs(args: string[], includeProjectSkill: boolean): void {
+  args.push('--no-skills');
+  if (includeProjectSkill && fs.existsSync(PROJECT_SKILL_PATH)) {
+    args.push('--skill', PROJECT_SKILL_PATH);
+  }
+}
+
 const TITLE_SYSTEM_PROMPT = [
   '你是对话命名助手。根据用户的第一条消息，为这个对话生成一个简洁的中文标题。',
   '要求：',
@@ -119,6 +131,7 @@ export async function generateConversationTitle(
 ): Promise<string | null> {
   const timeoutMs = opts.timeoutMs ?? 20_000;
   const args: string[] = ['--print', '--no-tools', '--no-session', '--thinking', opts.thinking ?? 'off'];
+  appendSkillIsolationArgs(args, false);
   if (opts.model?.trim()) args.push('--model', opts.model.trim());
   args.push('--append-system-prompt', TITLE_SYSTEM_PROMPT);
 
@@ -274,6 +287,7 @@ export async function runAgentStream(
     '--mode', 'json',
     '--thinking', options.thinking ?? 'minimal',
   ];
+  appendSkillIsolationArgs(args, true);
 
   if (options.model?.trim()) {
     args.push('--model', options.model.trim());
@@ -438,6 +452,46 @@ export async function runAgentStream(
   });
 }
 
+/** 将 Pi 不同版本返回的工具参数统一为对象。 */
+function normalizeToolArgs(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // 非 JSON 字符串参数保持为空对象，避免阻断 Agent 流
+    }
+  }
+  return {};
+}
+
+/**
+ * 为工具调用生成稳定指纹：优先使用 Pi 的调用 ID；无 ID 时按名称和参数排序序列化。
+ * 用于过滤同一调用同时以 tool_execution_start/tool_call 到达的重复事件。
+ */
+export function toolCallFingerprint(tool: {
+  id?: string;
+  name: string;
+  args?: Record<string, unknown>;
+}): string {
+  if (tool.id) return `id:${tool.id}`;
+
+  const stable = (value: unknown): string => {
+    if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
+    if (value && typeof value === 'object') {
+      return `{${Object.keys(value as Record<string, unknown>).sort().map(key => `${JSON.stringify(key)}:${stable((value as Record<string, unknown>)[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value);
+  };
+
+  return `args:${tool.name}:${stable(tool.args ?? {})}`;
+}
+
 /**
  * 解析 Pi CLI --mode json 产生的事件
  */
@@ -473,14 +527,24 @@ export function handlePiJsonEvent(json: Record<string, unknown>, onEvent: (event
     }
   }
 
-  // 2. 处理标准 toolCall / toolResult
+  // 2. 处理标准 toolCall / toolResult。Pi 某些 MCP 版本会把工具包装成
+  // mcp({ tool: 'director_generation_submit', args: { ... } })。
   if (json.type === 'tool_execution_start' || json.type === 'tool_call') {
+    const rawName = String(json.toolName || json.name || json.tool || '');
+    const rawArgs = normalizeToolArgs(json.args ?? json.arguments);
+    const wrappedTool = rawName === 'mcp' && typeof rawArgs.tool === 'string'
+      ? rawArgs.tool
+      : undefined;
+    const normalizedName = wrappedTool
+      ? wrappedTool.replace(/^director_/, '').replace(/_/g, '.')
+      : rawName;
+    const normalizedArgs = wrappedTool ? normalizeToolArgs(rawArgs.args) : rawArgs;
     onEvent({
       type: 'tool_call',
       tool: {
         id: (json.toolCallId || json.id || '') as string,
-        name: (json.toolName || json.name || json.tool) as string,
-        args: (json.args || json.arguments || {}) as Record<string, unknown>,
+        name: normalizedName,
+        args: normalizedArgs,
       },
     });
     return false;

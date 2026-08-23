@@ -29,6 +29,16 @@ export interface TaskOutput {
   filename: string;
   subfolder?: string;
   type?: string;
+  /** 生成产物对应的非敏感元数据，供预览面板展示 */
+  generation?: {
+    taskId: string;
+    workflowId: string;
+    prompt: string;
+    params?: Record<string, unknown>;
+    ratio?: string;
+    size?: number;
+    createdAt: number;
+  };
 }
 
 /** 队列内部完成态输出，data 只在转存前存在，不会写入任务索引。 */
@@ -48,6 +58,8 @@ export interface TaskItem {
   imageUploads?: TaskMediaUpload[];
   videoUploads?: TaskMediaUpload[];
   params?: Record<string, unknown>;
+  /** 工作流实际执行后解析出的有效参数，供产物预览展示 */
+  generationParams?: Record<string, unknown>;
   sessionId?: string;
   promptGraph?: Record<string, unknown>;
   /** 生成比例（如 16:9 / 智能），用于计算目标分辨率 */

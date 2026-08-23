@@ -25,8 +25,8 @@ import {
   type JobEvent,
   type WorkflowSpec,
   type ActionCardData,
-  type ToolCallData,
   type TaskItem,
+  type ToolCallData,
   type ActivitySnapshot,
   type ActivityStreamEvent,
   type StreamChatEvent,
@@ -132,6 +132,8 @@ function newAssistantMessage(): ChatMessage {
     toolCalls: [],
     tasks: [],
     actionCards: [],
+    routes: [],
+    generationPrompts: [],
     stages: [],
   };
 }
@@ -158,6 +160,8 @@ function mergeStreamEvent(
     toolCalls: target.toolCalls ? [...target.toolCalls] : [],
     tasks: target.tasks ? [...target.tasks] : [],
     actionCards: target.actionCards ? [...target.actionCards] : [],
+    routes: target.routes ? [...target.routes] : [],
+    generationPrompts: target.generationPrompts ? [...target.generationPrompts] : [],
     stages: target.stages ? [...target.stages] : [],
     jobId: target.jobId,
     taskId: target.taskId,
@@ -169,6 +173,16 @@ function mergeStreamEvent(
   } else if (event.type === 'agent:text') {
     current.status = undefined;
     current.content = (current.content || '') + event.delta;
+  } else if (event.type === 'agent:prompt') {
+    current.status = undefined;
+    current.generationPrompts = [...(current.generationPrompts || []), event.prompt];
+  } else if (event.type === 'agent:route') {
+    current.status = undefined;
+    const routes = [...(current.routes || [])];
+    if (!routes.some(route => route.taskId && event.route.taskId ? route.taskId === event.route.taskId : route.finalWorkflowId === event.route.finalWorkflowId && route.requestedWorkflowId === event.route.requestedWorkflowId)) {
+      routes.push(event.route);
+    }
+    current.routes = routes;
   } else if (event.type === 'agent:action_card') {
     current.status = undefined;
     current.actionCards = [...(current.actionCards || []), event.card];
@@ -179,6 +193,11 @@ function mergeStreamEvent(
       name: event.name,
       args: event.args,
     }];
+    const isGenerationSubmit = event.name === 'generation.submit' || event.name.endsWith('.generation.submit');
+    const prompt = typeof event.args?.prompt === 'string' ? event.args.prompt.trim() : '';
+    if (isGenerationSubmit && prompt && !(current.generationPrompts || []).some(item => item === prompt)) {
+      current.generationPrompts = [...(current.generationPrompts || []), prompt];
+    }
   } else if (event.type === 'tool:result') {
     current.status = undefined;
     current.toolCalls = (current.toolCalls || []).map(tool =>
@@ -399,6 +418,8 @@ export default function App() {
           if (
             event.type === 'agent:thinking' ||
             event.type === 'agent:text' ||
+            event.type === 'agent:prompt' ||
+            event.type === 'agent:route' ||
             event.type === 'agent:action_card' ||
             event.type === 'tool:call' ||
             event.type === 'tool:result' ||
@@ -457,6 +478,8 @@ export default function App() {
               toolCalls: target.toolCalls ? [...target.toolCalls] : [],
               tasks: target.tasks ? [...target.tasks] : [],
               actionCards: target.actionCards ? [...target.actionCards] : [],
+              routes: target.routes ? [...target.routes] : [],
+              generationPrompts: target.generationPrompts ? [...target.generationPrompts] : [],
               stages: target.stages ? [...target.stages] : [],
               jobId: target.jobId,
               taskId: target.taskId,
@@ -468,6 +491,18 @@ export default function App() {
             } else if (event.type === 'agent:text') {
               current.status = undefined;
               current.content = (current.content || '') + event.delta;
+            } else if (event.type === 'agent:prompt') {
+              current.status = undefined;
+              if (!(current.generationPrompts || []).some(item => item === event.prompt)) {
+                current.generationPrompts = [...(current.generationPrompts || []), event.prompt];
+              }
+            } else if (event.type === 'agent:route') {
+              current.status = undefined;
+              const routes = [...(current.routes || [])];
+              if (!routes.some(route => route.taskId && event.route.taskId ? route.taskId === event.route.taskId : route.finalWorkflowId === event.route.finalWorkflowId && route.requestedWorkflowId === event.route.requestedWorkflowId)) {
+                routes.push(event.route);
+              }
+              current.routes = routes;
             } else if (event.type === 'agent:action_card') {
               current.status = undefined;
               current.actionCards = [...(current.actionCards || []), event.card];

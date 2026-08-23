@@ -183,6 +183,14 @@ describe('Director MCP Server', () => {
     const parsed = JSON.parse(res.result.content[0].text);
     expect(parsed.workflowId).toBe('image_seedvr2_upscale');
     expect(parsed.message).toMatch(/自动路由/);
+    expect(parsed.route).toEqual(expect.objectContaining({
+      requestedWorkflowId: 'image_krea2_turbo_t2i',
+      finalWorkflowId: 'image_seedvr2_upscale',
+      intent: 'image_upscale',
+      referenceImageCount: 1,
+      forced: true,
+    }));
+    expect(parsed.route.reason).toMatch(/放大意图/);
     expect(taskQueue.get(parsed.taskId)?.workflowId).toBe('image_seedvr2_upscale');
     expect(taskQueue.get(parsed.taskId)?.images).toEqual(['chat-1-0.png']);
   });
@@ -218,6 +226,13 @@ describe('Director MCP Server', () => {
     });
     const parsedNoIntent = JSON.parse(resNoIntent.result.content[0].text);
     expect(parsedNoIntent.workflowId).toBe('image_krea2_turbo_t2i');
+    expect(parsedNoIntent.route).toEqual(expect.objectContaining({
+      requestedWorkflowId: 'image_krea2_turbo_t2i',
+      finalWorkflowId: 'image_krea2_turbo_t2i',
+      intent: 'image_to_image',
+      referenceImageCount: 1,
+      forced: false,
+    }));
   });
 
   it('calls generation.submit and creates a queued task', async () => {

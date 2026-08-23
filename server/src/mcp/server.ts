@@ -4,6 +4,19 @@ import type { TaskQueue } from '../tasks/queue.js';
 import { buildSpecsCached } from '../workflow.js';
 import type { JsonRpcRequest, JsonRpcResponse, McpCallToolResult, McpToolDescriptor } from './types.js';
 
+export type WorkflowRouteIntent = 'text_to_image' | 'image_to_image' | 'image_upscale' | 'text_to_video' | 'image_to_video' | 'unknown';
+
+export interface WorkflowRoute {
+  requestedWorkflowId: string;
+  finalWorkflowId: string;
+  intent: WorkflowRouteIntent;
+  referenceImageCount: number;
+  referenceVideoCount: number;
+  forced: boolean;
+  reason: string;
+  taskId?: string;
+}
+
 export interface McpServerOptions {
   port?: number;
   taskQueue: TaskQueue;
@@ -63,7 +76,7 @@ const MCP_TOOLS: McpToolDescriptor[] = [
         },
         sessionId: {
           type: 'string',
-          description: '关联的对话会话 ID',
+          description: '关联的对话会话 ID，用于向当前对话展示实际工作流路由',
         },
       },
       required: ['workflowId', 'prompt'],
@@ -143,10 +156,16 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
             isError: true,
           };
         }
-        let workflowId = String(args.workflowId);
+        const requestedWorkflowId = String(args.workflowId);
+        let workflowId = requestedWorkflowId;
         const promptText = String(args.prompt || '');
         const hasImages = Array.isArray(args.images) && args.images.length > 0;
         const hasVideos = Array.isArray(args.videos) && args.videos.length > 0;
+        const intent: WorkflowRouteIntent = hasVideos
+          ? (hasImages ? 'image_to_video' : 'text_to_video')
+          : hasImages
+            ? (UPSCALE_INTENT.test(promptText) ? 'image_upscale' : 'image_to_image')
+            : 'text_to_image';
         // 用户提供参考图且意图为图像放大/超分时，确定性路由到 SeedVR2 放大工作流，
         // 避免 Agent 误用文生图工作流（其无图像输入，参考图会被丢弃）。
         const routed =
@@ -155,6 +174,19 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
           UPSCALE_INTENT.test(promptText) &&
           workflowId !== 'image_seedvr2_upscale';
         if (routed) workflowId = 'image_seedvr2_upscale';
+        const route: WorkflowRoute = {
+          requestedWorkflowId,
+          finalWorkflowId: workflowId,
+          intent,
+          referenceImageCount: hasImages ? args.images.length : 0,
+          referenceVideoCount: hasVideos ? args.videos.length : 0,
+          forced: routed,
+          reason: routed
+            ? '检测到参考图与图像放大意图，后端强制使用 SeedVR2 图像放大工作流'
+            : workflowId === requestedWorkflowId
+              ? '沿用 Agent 请求的工作流'
+              : '后端路由到兼容输入的工作流',
+        };
         if (!workflowEnabled(workflowId)) {
           return {
             content: [{ type: 'text', text: `错误: 插件「${workflowId}」未启用，无法提交生成任务` }],
@@ -170,6 +202,8 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
           sessionId: args.sessionId ? String(args.sessionId) : undefined,
         });
 
+        const routedResult = { ...route, taskId: task.id };
+
         return {
           content: [
             {
@@ -178,6 +212,7 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
                 taskId: task.id,
                 status: task.status,
                 workflowId: task.workflowId,
+                route: routedResult,
                 message: routed
                   ? '任务已提交（检测到图像放大意图，已自动路由到 SeedVR2 图像放大工作流）'
                   : '任务已成功提交至队列',
