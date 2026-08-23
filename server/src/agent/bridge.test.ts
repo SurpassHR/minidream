@@ -355,10 +355,9 @@ describe('Agent Bridge', () => {
     expect(input).toContain('test_plugin');
     expect(input).toContain('steps-3');
 
-    child.stdout.write('```markdown\n# 生成的 skill\n\n内容\n```\n');
+    child.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '```markdown\n# 生成的 skill\n\n内容\n```' } }) + '\n');
+    child.stdout.write(JSON.stringify({ type: 'agent_end' }) + '\n');
     child.stdin.end();
-    await new Promise(r => setImmediate(r));
-    child.emit?.('close');
 
     const result = await resultPromise;
     expect(result).toBe('# 生成的 skill\n\n内容\n');
@@ -370,10 +369,9 @@ describe('Agent Bridge', () => {
     const spec = { id: 'p', name: 'P', inputs: [], params: [], outputs: [] };
 
     const resultPromise = runPluginSkillCreator(spec, { timeoutMs: 2000 });
-    child.stdout.write('---\nname: p\n---\n\n# P\n');
+    child.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '---\nname: p\n---\n\n# P\n' } }) + '\n');
+    child.stdout.write(JSON.stringify({ type: 'agent_end' }) + '\n');
     child.stdin.end();
-    await new Promise(r => setImmediate(r));
-    child.emit?.('close');
 
     await expect(resultPromise).resolves.toContain('name: p');
   });

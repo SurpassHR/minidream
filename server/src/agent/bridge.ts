@@ -311,15 +311,33 @@ function serializeSpecForSkillCreator(spec: WorkflowSpec): string {
   return JSON.stringify(data, null, 2);
 }
 
-/** 从 pi 输出提取 markdown：优先取 ``` 围栏内容，否则取清理后的完整输出 */
+/** 抑制前言/解释，要求直接输出 SKILL.md 本体 */
+const PLUGIN_SKILL_CREATOR_SYSTEM_PROMPT = [
+  '你是工作流插件的 Skill 作者。',
+  '严格按照 plugin-skill-creator skill 的规则为输入的插件 manifest 生成 SKILL.md。',
+  '直接输出 SKILL.md 的完整内容本身：第一行必须是 ---（frontmatter 起始），',
+  '不要任何前言、解释、分析、问候语或 Markdown 代码围栏（```）。',
+  '不要输出思考过程。',
+].join('\n');
+
+/** 从 pi 输出提取 markdown：优先取 ``` 围栏内容，其次取 frontmatter 起的正文，否则取完整输出 */
 function extractSkillMarkdown(stdout: string): string {
   const fenced = stdout.match(/```(?:markdown|md)?\s*([\s\S]*?)```/);
   if (fenced?.[1]?.trim()) return fenced[1].trim() + '\n';
-  return stdout.trim();
+  const trimmed = stdout.trim();
+  if (trimmed.startsWith('---')) return trimmed + '\n';
+  // 前言混入时：从第一个 frontmatter 分隔行（---）之后开始取
+  const index = trimmed.indexOf('\n---\n');
+  if (index >= 0) {
+    const rest = trimmed.slice(index + 1).trim();
+    if (rest.startsWith('---')) return rest + '\n';
+  }
+  return trimmed;
 }
 
 /**
  * 用 plugin-skill-creator skill 为插件生成 SKILL.md（无工具的单次 pi 调用）。
+ * 使用 --mode json 并通过 agent_end 事件主动终止进程（--print 模式完成后不退出）。
  * 失败、超时或空输出时抛错，由调用方决定是否回退到自动生成版。
  */
 export async function runPluginSkillCreator(
@@ -327,12 +345,13 @@ export async function runPluginSkillCreator(
   opts: PluginSkillCreatorOptions = {},
 ): Promise<string> {
   const timeoutMs = opts.timeoutMs ?? 120_000;
-  const args: string[] = ['--print', '--no-tools', '--no-session', '--thinking', 'off'];
+  const args: string[] = ['--mode', 'json', '--no-tools', '--no-session', '--thinking', 'off'];
   appendSkillIsolationArgs(args, false);
   if (fs.existsSync(PLUGIN_SKILL_CREATOR_PATH)) {
     args.push('--skill', PLUGIN_SKILL_CREATOR_PATH);
   }
   args.push('--no-context-files');
+  args.push('--append-system-prompt', PLUGIN_SKILL_CREATOR_SYSTEM_PROMPT);
   const input = serializeSpecForSkillCreator(spec);
 
   return new Promise((resolve, reject) => {
@@ -343,20 +362,19 @@ export async function runPluginSkillCreator(
       reject(err instanceof Error ? err : new Error(String(err)));
       return;
     }
-    let stdout = '';
+    let text = '';
     let stderr = '';
     let settled = false;
-    let timedOut = false;
     let timer: NodeJS.Timeout | null = null;
-    const finish = () => {
+    const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      if (timedOut) {
-        reject(new Error('plugin-skill-creator 生成超时'));
+      if (error) {
+        reject(error);
         return;
       }
-      const content = extractSkillMarkdown(stdout);
+      const content = extractSkillMarkdown(text);
       if (!content) {
         reject(new Error('plugin-skill-creator 未返回有效内容' + (stderr.trim() ? `：${stderr.trim().slice(0, 200)}` : '')));
         return;
@@ -364,22 +382,58 @@ export async function runPluginSkillCreator(
       resolve(content);
     };
     timer = setTimeout(() => {
-      timedOut = true;
       child.kill('SIGTERM');
       setTimeout(() => {
         if (child.exitCode === null) child.kill('SIGKILL');
       }, 3000).unref();
+      finish(new Error('plugin-skill-creator 生成超时'));
     }, timeoutMs);
 
-    child.stdout?.on('data', (chunk: Buffer | string) => { stdout += chunk.toString(); });
-    child.stderr?.on('data', (chunk: Buffer | string) => { stderr += chunk.toString(); });
-    child.once('error', (err: Error) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      reject(err);
+    const rl = createInterface({ input: child.stdout!, crlfDelay: Infinity });
+    rl.on('line', (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      let json: Record<string, any>;
+      try {
+        json = JSON.parse(trimmed);
+      } catch {
+        return; // 非 JSON 行忽略
+      }
+      if (json.type === 'agent_end') {
+        // --print 模式下 pi 完成后不退出，json 模式收到 agent_end 后主动终止
+        child.kill('SIGTERM');
+        finish();
+        return;
+      }
+      if (json.type === 'message_update') {
+        const ame = json.assistantMessageEvent as { type?: string; delta?: string } | undefined;
+        if (ame?.type === 'text_delta' && typeof ame.delta === 'string') {
+          text += ame.delta;
+        }
+        return;
+      }
+      if (json.type === 'message') {
+        const message = (json.message && typeof json.message === 'object' ? json.message : json) as { content?: unknown };
+        const content = message.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block && typeof block === 'object' && (block as { type?: string }).type === 'text' && typeof (block as { text?: string }).text === 'string') {
+              text += (block as { text: string }).text;
+            }
+          }
+        } else if (typeof content === 'string') {
+          text += content;
+        }
+        return;
+      }
+      if (json.type === 'error') {
+        finish(new Error(String(json.error ?? json.message ?? 'Agent 错误')));
+      }
     });
-    child.once('close', finish);
+
+    child.stderr?.on('data', (chunk: Buffer | string) => { stderr += chunk.toString(); });
+    child.once('error', (err: Error) => finish(err));
+    child.once('close', () => finish());
     child.stdin?.write(input);
     child.stdin?.end();
   });
