@@ -19,6 +19,7 @@ import {
 } from './workflow-catalog.js';
 import { getObjectInfo } from './comfyui.js';
 import { buildWorkflowGraph, createParamFromGraphField, type WorkflowGraph, type WorkflowGraphField } from './workflow-graph.js';
+import { PLUGIN_SKILLS_DIR, deletePluginSkill, readPluginSkill, writePluginSkill } from './workflow-skill.js';
 
 export interface WorkflowNodeCandidate {
   nodeId: string;
@@ -33,6 +34,8 @@ export interface WorkflowPluginApiOptions {
   objectInfo?: () => Promise<Record<string, any>>;
   isWorkflowEnabled?: (id: string) => boolean;
   invalidate: () => void;
+  /** skill 文件落盘目录（默认仓库 .pi/skills） */
+  skillsDir?: string;
 }
 
 function jsonError(res: Response, status: number, message: string): void {
@@ -294,6 +297,9 @@ async function pluginList(options: WorkflowPluginApiOptions): Promise<Record<str
 }
 
 export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (req: Request, res: Response, next: () => void) => void {
+  const skillsDir = options.skillsDir ?? PLUGIN_SKILLS_DIR;
+  const skillSpec = async (id: string): Promise<WorkflowSpec | null> =>
+    (await buildCatalogSpecs(options.catalog)).find(spec => spec.id === id) ?? null;
   return async (req, res, next) => {
     try {
       if (req.method === 'POST' && req.path === '/api/plugins/import') {
@@ -327,9 +333,39 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
         }
         writeWorkflowJson(options.dataRoot, id, raw);
         writeManifest(options.catalog.manifestDir, manifest);
+        try {
+          writePluginSkill(manifest, skillsDir);
+        } catch (error) {
+          console.error(`[workflow-skill] 生成 ${id} 失败:`, error);
+        }
         options.invalidate();
         res.json({ ok: true, plugin: { ...manifest, enabled: options.isWorkflowEnabled?.(id) ?? true, available: true } });
         return;
+      }
+
+      const skillMatch = req.path.match(/^\/api\/plugins\/([^/]+)\/skill(?:\/regenerate)?$/);
+      if (skillMatch) {
+        const id = decodeURIComponent(skillMatch[1]!);
+        const spec = await skillSpec(id);
+        if (!spec) {
+          jsonError(res, 404, `未找到工作流插件：${id}`);
+          return;
+        }
+        if (req.method === 'GET') {
+          const existing = readPluginSkill(id, skillsDir);
+          if (existing) {
+            res.type('text/markdown').send(existing);
+          } else {
+            const content = writePluginSkill(spec, skillsDir);
+            res.type('text/markdown').send(content);
+          }
+          return;
+        }
+        if (req.method === 'POST') {
+          writePluginSkill(spec, skillsDir);
+          res.json({ ok: true });
+          return;
+        }
       }
 
       const match = req.path.match(/^\/api\/plugins\/([^/]+)(?:\/(nodes|graph|redetect))?$/);
@@ -392,6 +428,12 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           }
           const normalized = { ...manifest, source: sourceFor(source), hasManifest: true, editable: true };
           writeManifest(options.catalog.manifestDir, normalized);
+          try {
+            const spec = await skillSpec(id);
+            if (spec) writePluginSkill(spec, skillsDir);
+          } catch (error) {
+            console.error(`[workflow-skill] 重新生成 ${id} 失败:`, error);
+          }
           options.invalidate();
           res.json({ ok: true, plugin: normalized });
           return;
@@ -401,6 +443,11 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
             deleteImportedWorkflow(options.dataRoot, id);
           }
           deleteManifest(options.catalog.manifestDir, id);
+          try {
+            deletePluginSkill(id, skillsDir);
+          } catch (error) {
+            console.error(`[workflow-skill] 删除 ${id} skill 失败:`, error);
+          }
           options.invalidate();
           res.json({ ok: true });
           return;

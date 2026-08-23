@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createWorkflowPluginRouter, type WorkflowPluginApiOptions } from './workflow-plugin-api.js';
 import type { WorkflowSpec } from './workflow.js';
 import { readManifest, readWorkflowJson } from './workflow-plugin-store.js';
+import { readPluginSkill } from './workflow-skill.js';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -58,6 +59,7 @@ function makeOptions(root: string): WorkflowPluginApiOptions {
     objectInfo: async () => objectInfo,
     isWorkflowEnabled: () => true,
     invalidate: () => undefined,
+    skillsDir: path.join(root, 'skills'),
   };
 }
 
@@ -188,6 +190,61 @@ describe('workflow plugin API', () => {
       expect((await fetch(`${baseUrl}/api/plugins/demo`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(selected) })).status).toBe(200);
       expect((await fetch(`${baseUrl}/api/plugins/demo`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...selected, params: [] }) })).status).toBe(200);
       expect((await fetch(`${baseUrl}/api/plugins/demo`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...selected, params: [{ ...selected.params[0], type: 'INT' }] }) })).status).toBe(400);
+    });
+  });
+
+  it('导入插件时生成 skill 文件，PUT 后重新生成，DELETE 时删除', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    await withServer(makeApp(options), async baseUrl => {
+      const imported = await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      expect(imported.status).toBe(200);
+      expect(readPluginSkill('demo', options.skillsDir!)).toMatch(/^---\nname: demo/);
+
+      const current = (await (await fetch(`${baseUrl}/api/plugins`)).json() as WorkflowSpec[]).find(p => p.id === 'demo')!;
+      const edited = { ...current, params: [{ id: 'steps-4', label: 'Steps', nodeId: '4', field: 'steps', type: 'INT', default: 20, llm: true }] };
+      const saved = await fetch(`${baseUrl}/api/plugins/demo`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(edited),
+      });
+      expect(saved.status).toBe(200);
+      expect(readPluginSkill('demo', options.skillsDir!)).toMatch(/steps-4/);
+
+      const deleted = await fetch(`${baseUrl}/api/plugins/demo`, { method: 'DELETE' });
+      expect(deleted.status).toBe(200);
+      expect(fs.existsSync(path.join(options.skillsDir!, 'demo', 'SKILL.md'))).toBe(false);
+    });
+  });
+
+  it('GET /api/plugins/:id/skill 返回 markdown，regenerate 强制重写', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    await withServer(makeApp(options), async baseUrl => {
+      await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      const skillRes = await fetch(`${baseUrl}/api/plugins/demo/skill`);
+      expect(skillRes.status).toBe(200);
+      expect(skillRes.headers.get('content-type')).toMatch(/text\/markdown/);
+      expect(await skillRes.text()).toMatch(/^---\nname: demo/);
+
+      const regen = await fetch(`${baseUrl}/api/plugins/demo/skill/regenerate`, { method: 'POST' });
+      expect(regen.status).toBe(200);
+      expect(await regen.json()).toEqual({ ok: true });
+      expect(readPluginSkill('demo', options.skillsDir!)).toMatch(/^---\nname: demo/);
+    });
+  });
+
+  it('未知插件的 skill 接口返回 404', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    await withServer(makeApp(options), async baseUrl => {
+      const res = await fetch(`${baseUrl}/api/plugins/no_such/skill`);
+      expect(res.status).toBe(404);
     });
   });
 
