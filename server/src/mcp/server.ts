@@ -47,7 +47,7 @@ const MCP_TOOLS: McpToolDescriptor[] = [
         images: {
           type: 'array',
           items: { type: 'string' },
-          description: '可选的输入/参考图片本地路径或 URL 列表',
+          description: '参考图片文件名/本地路径/URL 列表。用户提供的参考图已由系统上传到 ComfyUI input 目录（见对话【参考图片】段中的文件名），图生图/图生视频时必须按序传入',
         },
         videos: {
           type: 'array',

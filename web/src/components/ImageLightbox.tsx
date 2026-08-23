@@ -5,14 +5,17 @@ export interface LightboxImage {
   alt: string;
 }
 
-const MIN_ZOOM = 1;
+const MIN_ZOOM = 0.1; // 可缩小到「适配屏幕」尺寸的 10%
 const MAX_ZOOM = 12;
 const ZOOM_STEP = 1.18;
+/** 适配窗口时四周留白（px），避免图片贴边 */
+const FIT_PADDING = 48;
 
 /**
- * 全屏图片查看器：
- * - 滚轮缩放，缩放中心跟随光标（光标下的图像点保持不动）
- * - 拖拽平移，关闭按钮 / Esc / 点击遮罩关闭
+ * 图片灯箱：
+ * - 打开时按窗口适配（contain）并居中，不再以原始尺寸铺满屏幕
+ * - 滚轮/按钮缩放（可缩小到适配尺寸以下），缩放中心跟随光标/窗口中心
+ * - 拖拽平移，双击恢复适配，关闭按钮 / Esc / 点击遮罩关闭
  */
 export default function ImageLightbox({
   image,
@@ -23,7 +26,10 @@ export default function ImageLightbox({
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  const [zoom, setZoom] = useState(MIN_ZOOM);
+  /** 适配窗口的基础缩放（contain，≤1，小图不放大） */
+  const [baseScale, setBaseScale] = useState(1);
+  /** 相对基础缩放的倍率：1 = 恰好适配屏幕 */
+  const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const dragStartRef = useRef({ mx: 0, my: 0, ox: 0, oy: 0 });
@@ -31,7 +37,8 @@ export default function ImageLightbox({
 
   // 打开新图时重置
   useEffect(() => {
-    setZoom(MIN_ZOOM);
+    setBaseScale(1);
+    setZoom(1);
     setOffset({ x: 0, y: 0 });
   }, [image.url]);
 
@@ -44,17 +51,41 @@ export default function ImageLightbox({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // 图片加载后按原始尺寸居中
-  const centerImage = useCallback(() => {
+  // 图片加载后：contain 适配窗口并居中（大图缩到窗口内，小图保持原尺寸）
+  const fitImage = useCallback(() => {
     const wrap = wrapRef.current;
     const img = imgRef.current;
-    if (!wrap || !img) return;
-    setZoom(MIN_ZOOM);
+    if (!wrap || !img || !img.naturalWidth || !img.naturalHeight) return;
+    const scale = Math.min(
+      (wrap.clientWidth - FIT_PADDING * 2) / img.naturalWidth,
+      (wrap.clientHeight - FIT_PADDING * 2) / img.naturalHeight,
+      1,
+    );
+    setBaseScale(scale);
+    setZoom(1);
     setOffset({
-      x: (wrap.clientWidth - img.naturalWidth) / 2,
-      y: (wrap.clientHeight - img.naturalHeight) / 2,
+      x: (wrap.clientWidth - img.naturalWidth * scale) / 2,
+      y: (wrap.clientHeight - img.naturalHeight * scale) / 2,
     });
   }, []);
+
+  // 按给定倍率围绕中心缩放（按钮用）
+  const zoomBy = useCallback(
+    (factor: number) => {
+      const wrap = wrapRef.current;
+      if (!wrap) return;
+      const cx = wrap.clientWidth / 2;
+      const cy = wrap.clientHeight / 2;
+      const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor));
+      const k = next / zoom;
+      setOffset(prev => ({
+        x: cx - (cx - prev.x) * k,
+        y: cy - (cy - prev.y) * k,
+      }));
+      setZoom(next);
+    },
+    [zoom],
+  );
 
   // 滚轮缩放（以光标为中心）：wheel 需非 passive 监听才能 preventDefault
   useEffect(() => {
@@ -83,6 +114,7 @@ export default function ImageLightbox({
   }, [zoom]);
 
   const onMouseDown = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('.lightbox-tools, .lightbox-close')) return;
     e.preventDefault();
     setDragging(true);
     dragMovedRef.current = false;
@@ -121,6 +153,10 @@ export default function ImageLightbox({
       onMouseUp={endDrag}
       onMouseLeave={endDrag}
       onClick={handleBackdropClick}
+      onDoubleClick={e => {
+        if ((e.target as HTMLElement).closest('.lightbox-tools, .lightbox-close')) return;
+        fitImage();
+      }}
     >
       <img
         ref={imgRef}
@@ -128,12 +164,45 @@ export default function ImageLightbox({
         src={image.url}
         alt={image.alt}
         draggable={false}
-        onLoad={centerImage}
+        onLoad={fitImage}
         onClick={e => e.stopPropagation()}
         style={{
-          transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
+          transform: `translate(${offset.x}px, ${offset.y}px) scale(${baseScale * zoom})`,
         }}
       />
+      <div className="lightbox-tools">
+        <button
+          aria-label="缩小"
+          title="缩小"
+          onClick={e => {
+            e.stopPropagation();
+            zoomBy(1 / ZOOM_STEP);
+          }}
+        >
+          −
+        </button>
+        <button
+          aria-label="放大"
+          title="放大"
+          onClick={e => {
+            e.stopPropagation();
+            zoomBy(ZOOM_STEP);
+          }}
+        >
+          +
+        </button>
+        <button
+          aria-label="适应窗口"
+          title="适应窗口"
+          onClick={e => {
+            e.stopPropagation();
+            fitImage();
+          }}
+        >
+          ⤢
+        </button>
+        <span className="lightbox-zoom">{Math.round(zoom * 100)}%</span>
+      </div>
       <button
         className="lightbox-close"
         aria-label="关闭大图"
@@ -144,7 +213,7 @@ export default function ImageLightbox({
       >
         ×
       </button>
-      <div className="lightbox-hint">滚轮缩放 · 拖拽平移 · Esc 关闭</div>
+      <div className="lightbox-hint">滚轮/按钮缩放 · 拖拽平移 · 双击适应 · Esc 关闭</div>
     </div>
   );
 }

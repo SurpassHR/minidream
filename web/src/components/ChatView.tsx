@@ -179,6 +179,7 @@ function TaskMediaRegion({
   onCancelJob,
   jobId,
   onOpenImage,
+  onCite,
 }: {
   tasks: TaskItem[];
   legacyStage?: ChatStage;
@@ -188,6 +189,7 @@ function TaskMediaRegion({
   onCancelJob?: (jobId: string) => void;
   jobId?: string;
   onOpenImage?: (img: LightboxImage) => void;
+  onCite?: (img: { url: string; alt: string }) => void;
 }) {
   const activeTask = tasks.find(t => t.status === 'queued' || t.status === 'running');
   const anyTaskActive = Boolean(activeTask);
@@ -238,7 +240,7 @@ function TaskMediaRegion({
   return (
     <div className={`task-media-region${leaving ? ' leaving' : ''}${showLoading ? ' has-loading' : ''}`}>
       {/* 底层：生成结果（完成后淡入） */}
-      {outputs.length > 0 && <GenerationOutputsView outputs={outputs} onOpenImage={onOpenImage} />}
+      {outputs.length > 0 && <GenerationOutputsView outputs={outputs} onOpenImage={onOpenImage} onCite={onCite} />}
       {/* 上层：渐变动画覆盖（进行中显示，完成时淡出让位） */}
       {showLoading && (
         <TaskLoadingMedia queued={queued} percent={percent} onCancel={cancelFn} cancelLabel={cancelLabel} />
@@ -291,9 +293,11 @@ function draftIdOf(url?: string): string | null {
 function GenerationOutputsView({
   outputs,
   onOpenImage,
+  onCite,
 }: {
   outputs: GenerationOutput[];
   onOpenImage?: (img: LightboxImage) => void;
+  onCite?: (img: { url: string; alt: string }) => void;
 }) {
   if (!outputs?.length) return null;
   const images = outputs.filter(o => o.kind === 'image');
@@ -319,6 +323,23 @@ function GenerationOutputsView({
                       if (img.url) onOpenImage?.({ url: img.url, alt });
                     }}
                   />
+                  {img.url && (
+                    <button
+                      className="result-cite"
+                      title="引用到输入框（图生图 / 图生视频）"
+                      aria-label="引用图片"
+                      onClick={e => {
+                        e.stopPropagation();
+                        onCite?.({ url: img.url!, alt });
+                      }}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
+                        <path d="M4 3h6.5L14 6.5V15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+                        <path d="M10.5 3v3.5H14" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+                        <path d="M6 12.5h6M6 9.5h3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                  )}
                   {draftId && (
                     <button
                       className="result-open-location"
@@ -493,6 +514,7 @@ export default function ChatView({
   onCancelJob,
   onCancelTask,
   onActionCard,
+  onCiteImage,
 }: {
   messages: ChatMessage[];
   liveIndex?: number | null;
@@ -500,6 +522,7 @@ export default function ChatView({
   onCancelJob?: (jobId: string) => void;
   onCancelTask?: (taskId: string) => void;
   onActionCard?: (card: ActionCardData) => void;
+  onCiteImage?: (img: { url: string; alt: string }) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [lightbox, setLightbox] = useState<LightboxImage | null>(null);
@@ -559,12 +582,13 @@ export default function ChatView({
                   onCancelJob={onCancelJob}
                   jobId={m.jobId}
                   onOpenImage={setLightbox}
+                  onCite={onCiteImage}
                 />
               )}
 
               {/* 无任务的纯媒体消息（旧版 done 产物）仍独立全宽展示 */}
               {!hasAnyTask && outputs.length > 0 && (
-                <GenerationOutputsView outputs={outputs} onOpenImage={setLightbox} />
+                <GenerationOutputsView outputs={outputs} onOpenImage={setLightbox} onCite={onCiteImage} />
               )}
             </div>
           </div>

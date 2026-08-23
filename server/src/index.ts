@@ -9,6 +9,7 @@ import {
   checkHealth,
   getQueue,
   setComfyBaseUrl,
+  uploadFile,
 } from './comfyui.js';
 import {
   readSettings,
@@ -88,6 +89,45 @@ export const mcpServer: McpServerInstance = createDirectorMCPServer(
   () => readSettings(SETTINGS_FILE).agent.pollTaskStatus,
 );
 export const activityRegistry = new ActivityRegistry(taskQueue);
+
+/**
+ * 把聊天请求携带的图片素材（data URL）预上传到 ComfyUI input 目录，
+ * 返回可被 Agent 在 generation.submit 中引用的文件名列表（图生图/图生视频）。
+ * ComfyUI 未连接或上传失败时回退为原文件名（Agent 无法引用，但不中断对话）。
+ */
+async function uploadChatImages(images: unknown): Promise<string[]> {
+  if (!Array.isArray(images)) return [];
+  const filenames: string[] = [];
+  for (let i = 0; i < images.length; i++) {
+    const item = images[i] as { name?: string; dataUrl?: string } | string | undefined;
+    if (typeof item === 'string') {
+      filenames.push(item);
+      continue;
+    }
+    if (!item) {
+      filenames.push(`image${i + 1}`);
+      continue;
+    }
+    const dataUrl = item.dataUrl;
+    if (typeof dataUrl !== 'string') {
+      filenames.push(item.name || `image${i + 1}`);
+      continue;
+    }
+    const parsed = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl);
+    if (!parsed) {
+      filenames.push(item.name || `image${i + 1}`);
+      continue;
+    }
+    const ext = item.name?.includes('.') ? (item.name.split('.').pop() ?? 'png') : 'png';
+    try {
+      const upRes = await uploadFile('image', `chat-${Date.now()}-${i}.${ext}`, Buffer.from(parsed[2] ?? '', 'base64'));
+      filenames.push(upRes.subfolder ? `${upRes.subfolder}/${upRes.name}` : upRes.name);
+    } catch {
+      filenames.push(item.name || `image${i + 1}`);
+    }
+  }
+  return filenames;
+}
 
 
 /* ---------------- 会话（JSON 文件持久化，照搬 v1 方案） ---------------- */
@@ -863,15 +903,20 @@ app.post('/api/chat', async (req, res) => {
       typeof req.body?.size === 'number' && Number.isFinite(req.body.size) && req.body.size > 0
         ? req.body.size
         : undefined;
+    // 预上传请求携带的图片到 ComfyUI，把真实文件名暴露给 Agent，使其能用于图生图/图生视频
+    const chatImageFilenames = await uploadChatImages(req.body?.images);
     const agentInput = buildAgentInput({
       message: message.trim(),
-      images: Array.isArray(req.body?.images) ? req.body.images : undefined,
+      images: chatImageFilenames.length > 0 ? chatImageFilenames : undefined,
       videos: Array.isArray(req.body?.videos) ? req.body.videos : undefined,
     });
     const agentSystemPrompt = [
       '你运行在「导演工作台」中。生成结果（图片/视频）会自动展示在用户界面中，',
       '不要向用户报告内部文件名、存储路径、接口地址或任务 ID 等实现细节，',
       '任务完成后简短确认即可，保持输出简洁。',
+      '若用户指令中以 @图像N 提及参考图片（【参考图片】中 [图像N] 即对应文件），',
+      '图生图/图生视频时必须在 generation.submit 的 images 参数中按序传入对应文件名，',
+      '并优先选择带图像输入的工作流（如图生视频 video-minimax-h3-i2v）。',
     ].join('\n');
 
     try {

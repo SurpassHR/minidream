@@ -136,6 +136,20 @@ describe('Agent Bridge', () => {
     ]);
   });
 
+  it('buildAgentInput 参考图使用前端 @图像N 命名作为标签', () => {
+    const input = buildAgentInput({
+      message: '用 @图像2 做图生图',
+      images: [
+        { name: '图像1', dataUrl: 'data:image/png;base64,AAA' },
+        { name: '图像2', dataUrl: 'data:image/png;base64,BBB' },
+      ],
+    });
+
+    expect(input).toContain('[图像1]: 图像1');
+    expect(input).toContain('[图像2]: 图像2');
+    expect(input).toContain('【用户指令】\n用 @图像2 做图生图');
+  });
+
   it('buildAgentInput 在无上下文和图片时直接输出指令', () => {
     const input = buildAgentInput({
       message: '测试指令',

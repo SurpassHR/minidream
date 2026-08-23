@@ -1,14 +1,28 @@
-import { useRef, useState } from 'react';
+import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 import type { GenerateData } from '../api';
 import { computeResolution } from '../resolution';
+import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 
 type PanelId = 'preference' | null;
 
 export interface Attachment {
   id: string;
   kind: 'image' | 'video';
+  /** 展示名：图片自动命名 图像1/图像2…；视频保留文件名 */
   name: string;
   dataUrl: string;
+  /** 原始 URL（引用会话中已生成的图片时保留，预览用；无则回退 dataUrl） */
+  url?: string;
+  /** 是否为会话内生成图的引用（chip 标签显示「引用」） */
+  referenced?: boolean;
+  /** 原始文件名（自动命名 图像N 时保留，悬浮提示用） */
+  sourceName?: string;
+}
+
+/** 供父组件（App）将「引用」的图片注入输入框 */
+export interface ComposerHandle {
+  addAttachment: (att: Omit<Attachment, 'id'> & { id?: string }) => void;
+  focus: () => void;
 }
 
 export interface ComposerSubmitOpts {
@@ -28,15 +42,7 @@ function formatSize(v: number): string {
   return Number.isInteger(n) ? String(n) : String(n);
 }
 
-export default function Composer({
-  placeholder,
-  composer,
-  value,
-  onChange,
-  onSubmit,
-  onStop,
-  disabled,
-}: {
+const Composer = forwardRef<ComposerHandle, {
   placeholder: string;
   composer: GenerateData['composer'];
   value: string;
@@ -44,15 +50,31 @@ export default function Composer({
   onSubmit: (opts: ComposerSubmitOpts) => void;
   onStop?: () => void;
   disabled?: boolean;
-}) {
+}>(function Composer({ placeholder, composer, value, onChange, onSubmit, onStop, disabled }, ref) {
   const [focused, setFocused] = useState(false);
   const [openPanel, setOpenPanel] = useState<PanelId>(null);
   const [ratio, setRatio] = useState(composer.preferences.ratios[0] ?? '智能');
   const sizeCfg = composer.preferences.sizes ?? { min: 0.5, max: 10, step: 0.5, default: 1 };
   const [size, setSize] = useState(sizeCfg.default);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [lightbox, setLightbox] = useState<LightboxImage | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [dropError, setDropError] = useState<string | null>(null);
+  /** @ 提及弹窗：query 为 @ 后已输入的内容，index 为当前选中项 */
+  const [mention, setMention] = useState<{ query: string; index: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const dragDepth = useRef(0);
+  const dropErrorTimer = useRef<number>(0);
+  /** 图片自动命名序号（单调递增，避免与历史消息里的 @图像N 冲突） */
+  const imgSeq = useRef(0);
+  const nextImageName = () => `图像${++imgSeq.current}`;
+
+  const showDropError = (msg: string) => {
+    setDropError(msg);
+    window.clearTimeout(dropErrorTimer.current);
+    dropErrorTimer.current = window.setTimeout(() => setDropError(null), 2500);
+  };
 
   const canSend = value.trim().length > 0 && !disabled;
 
@@ -60,9 +82,30 @@ export default function Composer({
   // 当前比例+尺寸对应的像素预览（智能比例 → null）
   const preview = computeResolution(ratio, size);
 
+  // 暴露给父组件：注入「引用」图片并聚焦输入框（图片自动命名 图像N）
+  useImperativeHandle(ref, () => ({
+    addAttachment: att => {
+      const isImg = att.kind === 'image';
+      const name = isImg ? nextImageName() : att.name;
+      setAttachments(prev => [
+        ...prev,
+        { ...att, id: att.id ?? `a${Date.now()}`, name, sourceName: isImg ? att.name : undefined },
+      ]);
+    },
+    focus: () => taRef.current?.focus(),
+  }), []);
+
   const submit = () => {
     if (!canSend) return;
-    const imageAtts = attachments.filter(a => a.kind === 'image');
+    // 只有输入框中 @图像N 提及的图片才进入上下文
+    const mentioned = new Set<string>();
+    const re = /@(图像\d+)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(value))) {
+      const name = m[1];
+      if (name) mentioned.add(name);
+    }
+    const imageAtts = attachments.filter(a => a.kind === 'image' && mentioned.has(a.name));
     const videoAtts = attachments.filter(a => a.kind === 'video');
     onSubmit({
       images: imageAtts.map(a => ({ name: a.name, dataUrl: a.dataUrl })),
@@ -77,19 +120,112 @@ export default function Composer({
     setOpenPanel(openPanel === p ? null : p);
   };
 
-  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
+  // 把本地文件（图片/视频）读为 dataUrl 并追加到引用列表
+  const addFiles = (files: File[]) => {
+    if (files.length === 0) return;
+    let pending = files.length;
+    const added: Attachment[] = [];
+    const onDone = () => {
+      if (--pending === 0 && added.length > 0) {
+        setAttachments(prev => [...prev, ...added]);
+      }
+    };
+    for (const file of files) {
       const kind: Attachment['kind'] = file.type.startsWith('video/') ? 'video' : 'image';
+      const reader = new FileReader();
+      reader.onload = () => {
+        added.push({
+          id: `a${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          kind,
+          name: kind === 'image' ? nextImageName() : file.name || '粘贴视频.mp4',
+          sourceName: kind === 'image' ? file.name : undefined,
+          dataUrl: String(reader.result),
+        });
+        onDone();
+      };
+      reader.onerror = () => onDone();
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    addFiles(files);
+  };
+
+  // 拖入的是页面内已有的图片（如会话里生成的图）→ dataTransfer 里只有 URL，拉取后加入引用列表
+  const addImageUrl = async (rawUrl: string): Promise<boolean> => {
+    const url = (rawUrl.split('\n')[0] ?? '').trim();
+    if (!url) return false;
+    const sameOrigin =
+      url.startsWith('/') ||
+      url.startsWith(location.origin) ||
+      url.startsWith('blob:') ||
+      url.startsWith('data:');
+    if (!sameOrigin) return false; // 跨域图片不拉取
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return false;
+      const blob = await res.blob();
+      if (!blob.type.startsWith('image/')) return false;
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      const q = new URLSearchParams(url.split('?')[1] ?? '');
+      const last = url.split('/').pop()?.split('?')[0] ?? '';
+      const rawName = q.get('filename') || (last.includes('.') ? last : '');
+      const sourceName = decodeURIComponent(rawName) || undefined;
       setAttachments(prev => [
         ...prev,
-        { id: `a${Date.now()}`, kind, name: file.name, dataUrl: String(reader.result) },
+        {
+          id: `a${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          kind: 'image',
+          name: nextImageName(),
+          sourceName,
+          dataUrl,
+          url,
+        },
       ]);
-    };
-    reader.readAsDataURL(file);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // 拖拽图片/视频到输入框 → 进入引用列表（文件或页面内图片 URL 均可）
+  const onDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files).filter(f =>
+      f.type.startsWith('image/') || f.type.startsWith('video/'),
+    );
+    if (files.length > 0) {
+      addFiles(files);
+      return;
+    }
+    const uri = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')).trim();
+    if (uri) {
+      const ok = await addImageUrl(uri);
+      if (!ok) showDropError('无法引用该图片');
+    }
+  };
+
+  // Ctrl+V 粘贴图片到输入框 → 进入引用列表
+  const onPaste = (e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const images = items
+      .filter(i => i.kind === 'file' && i.type.startsWith('image/'))
+      .map(i => i.getAsFile())
+      .filter((f): f is File => !!f);
+    if (images.length > 0) {
+      e.preventDefault();
+      addFiles(images);
+    }
   };
 
   const removeAttachment = (id: string) => {
@@ -98,40 +234,179 @@ export default function Composer({
 
   const kindLabel = { image: '图片', video: '视频', text: '文本' };
 
+  // 当前可 @ 的图片列表（按输入过滤）
+  const imageAtts = attachments.filter(a => a.kind === 'image');
+  const filteredImages = mention ? imageAtts.filter(a => a.name.includes(mention.query)) : [];
+
+  // 输入变化时检测光标前的 @，打开/更新提及弹窗
+  const onInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const text = e.target.value;
+    onChange(text);
+    const pos = e.target.selectionStart ?? text.length;
+    const match = /@([^\s@]*)$/.exec(text.slice(0, pos));
+    if (match && imageAtts.length > 0) {
+      const query = match[1] ?? '';
+      if (imageAtts.some(a => a.name.includes(query))) {
+        setMention({ query, index: 0 });
+        return;
+      }
+    }
+    setMention(null);
+  };
+
+  // 把选中的 @图像N 插入文本（替换已输入的 @ 前缀与部分内容）
+  const insertMention = (index: number) => {
+    const ta = taRef.current;
+    const item = filteredImages[index];
+    if (!ta || !item) {
+      setMention(null);
+      return;
+    }
+    const text = value;
+    const pos = ta.selectionStart ?? text.length;
+    const match = /@([^\s@]*)$/.exec(text.slice(0, pos));
+    if (!match) {
+      setMention(null);
+      return;
+    }
+    const partial = match[1] ?? '';
+    const insertAt = pos - partial.length - 1; // '@' 所在位置
+    const next = text.slice(0, insertAt) + '@' + item.name + text.slice(pos);
+    onChange(next);
+    setMention(null);
+    requestAnimationFrame(() => {
+      ta.focus();
+      const newPos = insertAt + 1 + item.name.length;
+      ta.setSelectionRange(newPos, newPos);
+    });
+  };
+
   return (
-    <div className={`composer${focused ? ' focused' : ''}`}>
+    <div
+      className={`composer${focused ? ' focused' : ''}${dragOver ? ' dragging' : ''}`}
+      onDragEnter={e => {
+        e.preventDefault();
+        dragDepth.current += 1;
+        setDragOver(true);
+      }}
+      onDragOver={e => e.preventDefault()}
+      onDragLeave={() => {
+        dragDepth.current -= 1;
+        if (dragDepth.current <= 0) {
+          dragDepth.current = 0;
+          setDragOver(false);
+        }
+      }}
+      onDrop={onDrop}
+    >
+      {dragOver && (
+        <div className="composer-drop-hint">
+          松开以添加图片/视频到引用列表
+        </div>
+      )}
+      {dropError && <div className="composer-drop-error">{dropError}</div>}
       {openPanel && <div className="composer-mask" onClick={() => setOpenPanel(null)} />}
 
       {attachments.length > 0 && (
         <div className="composer-attachments">
-          {attachments.map(a => (
-            <span key={a.id} className="attachment-chip">
-              <em className={`attachment-kind ${a.kind}`}>{kindLabel[a.kind]}</em>
-              {a.name}
-              <button className="attachment-remove" onClick={() => removeAttachment(a.id)} aria-label="移除">
-                ×
-              </button>
-            </span>
-          ))}
+          {attachments.map(a =>
+            a.kind === 'image' ? (
+              // 图片 chip：缩略图 + 等宽彩色标签 + 彩色背景，点击预览大图
+              <span
+                key={a.id}
+                className={`attachment-chip image${a.referenced ? ' referenced' : ''}`}
+                title={a.sourceName ? `${a.sourceName} · 点击预览图片` : '点击预览图片'}
+                onClick={() => setLightbox({ url: a.url ?? a.dataUrl, alt: a.name })}
+              >
+                <img className="attachment-thumb" src={a.url ?? a.dataUrl} alt={a.name} />
+                <em className="attachment-kind image">{a.referenced ? '引用' : kindLabel.image}</em>
+                <span className="attachment-name">{a.name}</span>
+                <button
+                  className="attachment-remove"
+                  aria-label="移除"
+                  onClick={e => {
+                    e.stopPropagation();
+                    removeAttachment(a.id);
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            ) : (
+              <span key={a.id} className="attachment-chip">
+                <em className={`attachment-kind ${a.kind}`}>{kindLabel[a.kind]}</em>
+                {a.name}
+                <button className="attachment-remove" onClick={() => removeAttachment(a.id)} aria-label="移除">
+                  ×
+                </button>
+              </span>
+            ),
+          )}
         </div>
       )}
 
-      <textarea
-        ref={taRef}
-        className="composer-input"
-        rows={2}
-        placeholder={placeholder}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        onKeyDown={e => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            submit();
-          }
-        }}
-      />
+      <div className="composer-input-wrap">
+        {mention && filteredImages.length > 0 && (
+          <div className="mention-popup">
+            {filteredImages.map((a, i) => (
+              <button
+                key={a.id}
+                type="button"
+                className={`mention-item${i === mention.index ? ' active' : ''}`}
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => insertMention(i)}
+              >
+                <img src={a.url ?? a.dataUrl} alt={a.name} />
+                <span className="mention-name">{a.name}</span>
+                {a.referenced && <span className="mention-tag">引用</span>}
+              </button>
+            ))}
+          </div>
+        )}
+        <textarea
+          ref={taRef}
+          className="composer-input"
+          rows={2}
+          placeholder={placeholder}
+          value={value}
+          onChange={onInputChange}
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            setFocused(false);
+            window.setTimeout(() => setMention(null), 120);
+          }}
+          onPaste={onPaste}
+          onKeyDown={e => {
+            if (mention) {
+              const count = filteredImages.length;
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setMention(m => (m ? { ...m, index: (m.index + 1) % count } : m));
+                return;
+              }
+              if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setMention(m => (m ? { ...m, index: (m.index - 1 + count) % count } : m));
+                return;
+              }
+              if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault();
+                insertMention(mention.index);
+                return;
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setMention(null);
+                return;
+              }
+            }
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+        />
+      </div>
 
       <div className="composer-bottom">
         <div className="composer-modes">
@@ -277,6 +552,9 @@ export default function Composer({
           )}
         </div>
       </div>
+      {lightbox && <ImageLightbox image={lightbox} onClose={() => setLightbox(null)} />}
     </div>
   );
-}
+});
+
+export default Composer;

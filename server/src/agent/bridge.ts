@@ -224,9 +224,12 @@ export function buildAgentInput(
   if (opts.images && opts.images.length > 0) {
     parts.push(
       `【参考图片】\n${opts.images
-        .map((img, i) =>
-          `[Image ${i + 1}]: ${typeof img === 'string' ? img : img.name || 'image' + (i + 1)}`
-        )
+        .map((img, i) => {
+          const name = typeof img === 'string' ? '' : img.name || '';
+          // 前端以 @图像N 提及的图片自动命名为「图像N」，这里用同一标识，便于 Agent 将指令中的 @图像N 与文件对应
+          const label = name.startsWith('图像') ? name : `Image ${i + 1}`;
+          return `[${label}]: ${typeof img === 'string' ? img : name || 'image' + (i + 1)}`;
+        })
         .join('\n')}`
     );
   }
