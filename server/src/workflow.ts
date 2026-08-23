@@ -23,6 +23,8 @@ import { fileURLToPath } from 'node:url';
 import { getObjectInfo, fileExists, ComfyUIError } from './comfyui.js';
 import type { ImageGenSettings } from './settings.js';
 import type { Resolution } from './resolution.js';
+import { buildCatalogSpecs, getCatalogWorkflowJson, listCatalogSources, type WorkflowCatalogOptions } from './workflow-catalog.js';
+import { IMPORTED_WORKFLOWS_DIR, MANIFESTS_DIR } from './workflow-plugin-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const WORKFLOWS_DIR = path.resolve(__dirname, '../workflows');
@@ -109,6 +111,10 @@ export interface WorkflowInput {
   required?: boolean;
   /** 工作流显式标记的提示词注入目标（_meta.promptPlaceholder），注入时优先于启发式 */
   primary?: boolean;
+  /** 面向用户与 LLM 的输入用途说明 */
+  description?: string;
+  /** 仅供内部注入使用，不显示在普通参数面板或 LLM 契约中 */
+  hidden?: boolean;
 }
 
 export interface WorkflowParam {
@@ -128,6 +134,10 @@ export interface WorkflowParam {
   strengthable?: boolean;
   /** 与 id 指向节点同字段的其他节点（分阶段采样链的多个 KSampler 等），注入时一并写入 */
   applyTo?: string[];
+  /** 面向用户与 LLM 的参数用途说明 */
+  description?: string;
+  /** 仅供内部注入使用，不显示在普通参数面板或 LLM 契约中 */
+  hidden?: boolean;
 }
 
 export interface WorkflowOutput {
@@ -136,12 +146,24 @@ export interface WorkflowOutput {
   label: string;
   nodeId: string;
   classType: string;
+  /** 面向用户与 LLM 的输出用途说明 */
+  description?: string;
+  /** 仅供内部使用，不显示在普通结果面板或 LLM 契约中 */
+  hidden?: boolean;
 }
 
 export interface WorkflowSpec {
   id: string; // 文件名（去 .json）
   name: string;
   description?: string;
+  /** 工作流原始文件来源 */
+  source?: { type: 'bundled' | 'imported'; workflowFile: string };
+  /** 是否存在用户编辑过的完整 manifest */
+  hasManifest?: boolean;
+  /** 是否允许在插件管理器中编辑映射 */
+  editable?: boolean;
+  /** manifest 损坏时提供给管理界面的诊断信息 */
+  manifestError?: string;
   /** 输入：需要前端收集（文字/上传素材） */
   inputs: WorkflowInput[];
   /** 参数：前端动态生成控件 */
@@ -681,8 +703,8 @@ const OUTPUT_NODE_CLASSES = new Set([
  * ComfyUI 只执行从输出节点反向可达的节点，死节点不参与生成，只会污染参数面板、
  * 且若其引用的模型缺失还会导致提交前校验误报。从输出节点沿输入连线反向标记可达节点。
  */
-export function pruneDeadNodes(api: Record<string, any>): Record<string, any> {
-  const alive = new Set<string>();
+export function pruneDeadNodes(api: Record<string, any>, explicitOutputNodeIds: string[] = []): Record<string, any> {
+  const alive = new Set<string>(explicitOutputNodeIds);
   for (const [id, node] of Object.entries(api)) {
     if (node && OUTPUT_NODE_CLASSES.has(baseClass(String(node.class_type ?? '')))) alive.add(id);
   }
@@ -1013,21 +1035,15 @@ function formatWorkflowName(id: string): string {
 }
 
 export function loadWorkflowFiles(): WorkflowFile[] {
-  if (!fs.existsSync(WORKFLOWS_DIR)) return [];
-  return fs
-    .readdirSync(WORKFLOWS_DIR)
-    .filter(f => f.endsWith('.json'))
-    .map(f => {
-      const raw = JSON.parse(fs.readFileSync(path.join(WORKFLOWS_DIR, f), 'utf8')) as Record<string, any>;
-      const meta = (raw._meta ?? {}) as { name?: string; description?: string };
-      return {
-        id: f.replace(/\.json$/, ''),
-        name: meta.name || formatWorkflowName(f.replace(/\.json$/, '')),
-        description: meta.description,
-        json: raw,
-      };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+  return listCatalogSources(workflowCatalogOptions()).map(source => {
+    const meta = (source.json._meta ?? {}) as { name?: string; description?: string };
+    return {
+      id: source.id,
+      name: meta.name || formatWorkflowName(source.id),
+      description: meta.description,
+      json: source.json,
+    };
+  });
 }
 
 /* ---------- 素材文件探测 ---------- */
@@ -1052,19 +1068,34 @@ async function probeInputFile(filename: string): Promise<boolean> {
   return exists;
 }
 
-/** 解析全部 workflow 为 spec */
+/** catalog 运行时依赖：自动识别仍使用当前 ComfyUI 的 object_info */
+function workflowCatalogOptions(oi?: Record<string, any>): WorkflowCatalogOptions {
+  return {
+    bundledDir: WORKFLOWS_DIR,
+    importedDir: IMPORTED_WORKFLOWS_DIR,
+    manifestDir: MANIFESTS_DIR,
+    introspect: json => introspectWorkflow(json, oi),
+  };
+}
+
+/** 解析全部 workflow 为 spec：manifest 是已编辑插件的事实来源 */
 export async function buildSpecs(): Promise<WorkflowSpec[]> {
-  const files = loadWorkflowFiles();
   const oi = await objectInfo().catch(() => undefined);
+  const sources = listCatalogSources(workflowCatalogOptions(oi));
+  const detected = await buildCatalogSpecs(workflowCatalogOptions(oi));
+  const sourceById = new Map(sources.map(source => [source.id, source]));
   const specs: WorkflowSpec[] = [];
-  for (const f of files) {
-    const spec = await introspectWorkflow(f.json, oi);
-    spec.id = f.id;
-    spec.name = f.name;
-    spec.description = f.description;
-    // 探测素材占位文件是否存在，缺失则标记必传
+  for (const spec of detected) {
+    const source = sourceById.get(spec.id);
+    if (!source) continue;
+    const meta = (source.json._meta ?? {}) as { name?: string; description?: string };
+    if (!spec.hasManifest) {
+      spec.name = meta.name || formatWorkflowName(spec.id);
+      spec.description = meta.description;
+    }
+    // 探测素材占位文件：清单和自动识别结果都应得到相同的 required 语义。
     for (const input of spec.inputs) {
-      if (input.kind === 'text') continue;
+      if (input.kind === 'text' || input.hidden) continue;
       const def = input.defaultValue;
       if (!def?.trim()) {
         input.required = true;
@@ -1105,10 +1136,9 @@ export async function getSpec(id: string): Promise<WorkflowSpec | null> {
   return specs.find(s => s.id === id) ?? null;
 }
 
-/** 取 workflow 原始 JSON（构建 prompt 时用） */
+/** 取 workflow 原始 JSON（构建 prompt 时用，支持内置与导入插件） */
 export function getWorkflowJson(id: string): Record<string, any> | null {
-  const file = loadWorkflowFiles().find(f => f.id === id);
-  return file ? file.json : null;
+  return getCatalogWorkflowJson(workflowCatalogOptions(), id);
 }
 
 /* ---------- prompt 构建（值注入） ---------- */
@@ -1310,6 +1340,12 @@ async function resolveCheckpoints(
   }
 }
 
+/** 只保留清单声明的输出节点，避免把工作流内部 Preview/Save 节点全部暴露为产物。 */
+export function filterHistoryOutputs(spec: WorkflowSpec, outputs: Record<string, any>): Record<string, any> {
+  const outputNodeIds = new Set(spec.outputs.filter(output => !output.hidden).map(output => output.nodeId));
+  return Object.fromEntries(Object.entries(outputs).filter(([nodeId]) => outputNodeIds.has(nodeId)));
+}
+
 export async function buildPrompt(
   spec: WorkflowSpec,
   json: Record<string, any>,
@@ -1317,6 +1353,7 @@ export async function buildPrompt(
 ): Promise<Record<string, any>> {
   const oi = await objectInfo().catch(() => undefined);
   // UI 格式模板 → 先转成 API 格式（widget 默认值来自模板本身）
+  const explicitOutputNodeIds = spec.outputs.filter(output => !output.hidden).map(output => output.nodeId);
   const prompt = pruneDeadNodes(
     isUiFormat(json)
       ? convertUiToApi(json, oi ?? {})
@@ -1325,10 +1362,11 @@ export async function buildPrompt(
           delete copy._meta; // API 格式顶层 _meta 是工作流元信息，不是节点
           return copy;
         })(),
+    explicitOutputNodeIds,
   );
 
   // 文字输入注入
-  const textInputs = spec.inputs.filter(i => i.kind === 'text');
+  const textInputs = spec.inputs.filter(i => i.kind === 'text' && !i.hidden);
   if (textInputs.length > 0) {
     const text = values.prompt?.trim();
     if (!text) throw new ComfyUIError('请输入提示词后再生成');
@@ -1392,6 +1430,16 @@ export async function buildPrompt(
     }
 
     if (v === undefined) continue;
+    if (p.type === 'INT' || p.type === 'SEED') {
+      if (typeof v === 'string' && v.trim() !== '') v = Number.parseInt(v, 10);
+    } else if (p.type === 'FLOAT') {
+      if (typeof v === 'string' && v.trim() !== '') v = Number.parseFloat(v);
+    } else if (p.type === 'BOOLEAN') {
+      if (typeof v === 'string') {
+        if (v.toLowerCase() === 'true') v = true;
+        else if (v.toLowerCase() === 'false') v = false;
+      }
+    }
     // Power Lora Loader 多选 LoRA：写入 lora_N 槽位（开启前 N 个并填入所选 LoRA）
     if (p.multiple && p.field === 'lora') {
       applyPowerLoras(prompt, [...(p.applyTo ?? []), p.nodeId], v);

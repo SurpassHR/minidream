@@ -1,0 +1,270 @@
+.workflow-graph-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--graph-canvas);
+}
+
+.workflow-graph-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  font-size: 12px;
+}
+
+.workflow-graph-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.workflow-graph-zoom {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.workflow-graph-action {
+  padding: 5px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  font-size: 12px;
+}
+
+.workflow-graph-action:hover {
+  color: var(--brand-deep);
+  border-color: var(--brand-deep);
+}
+
+.workflow-graph-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  background-color: var(--graph-canvas);
+  background-image: linear-gradient(var(--graph-grid) 1px, transparent 1px), linear-gradient(90deg, var(--graph-grid) 1px, transparent 1px);
+}
+
+.workflow-graph-viewport:active {
+  cursor: grabbing;
+}
+
+.workflow-graph-world {
+  position: relative;
+  transform-origin: 0 0;
+}
+
+.workflow-graph-edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.workflow-graph-edge {
+  fill: none;
+  stroke: var(--graph-edge);
+  stroke-width: 2.2;
+  opacity: 0.9;
+}
+
+.workflow-graph-nodes {
+  position: absolute;
+  inset: 0;
+}
+
+.workflow-graph-node {
+  position: absolute;
+  overflow: visible;
+  border: 1px solid var(--graph-node-border);
+  border-radius: 8px;
+  color: var(--graph-node-text);
+  background: var(--bg-card);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.12);
+}
+
+.workflow-graph-node-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  min-height: 58px;
+  padding: 9px 10px 8px;
+  border-bottom: 1px solid var(--graph-field-border);
+  border-radius: 7px 7px 0 0;
+  background: var(--graph-node-head);
+  cursor: move;
+}
+
+.workflow-graph-node-head strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.workflow-graph-node-head span,
+.workflow-graph-node-head small {
+  color: var(--graph-node-muted);
+  font-size: 10px;
+}
+
+.workflow-graph-node-head small {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-graph-node-fields {
+  padding: 5px 0;
+}
+
+.workflow-graph-field {
+  position: relative;
+  display: grid;
+  grid-template-columns: 10px 18px minmax(64px, auto) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--graph-field-border);
+  font-size: 11px;
+}
+
+.workflow-graph-field:last-child {
+  border-bottom: 0;
+}
+
+.workflow-graph-field.selected {
+  background: var(--brand-soft);
+}
+
+.workflow-graph-field.connected {
+  color: var(--graph-node-muted);
+}
+
+.workflow-graph-field input[type='checkbox'] {
+  accent-color: var(--brand-deep);
+  margin: 0;
+}
+
+.workflow-graph-port {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--graph-node-border);
+  border-radius: 50%;
+  background: var(--graph-canvas);
+}
+
+.workflow-graph-port.linked {
+  background: var(--graph-edge);
+  border-color: var(--graph-edge);
+}
+
+.workflow-graph-lock {
+  color: var(--graph-node-muted);
+  text-align: center;
+}
+
+.workflow-graph-field-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.workflow-graph-field-type {
+  color: var(--graph-node-muted);
+  font-size: 9px;
+}
+
+.workflow-graph-field-value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--graph-node-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-graph-param-mark {
+  grid-column: 3 / -1;
+  overflow: hidden;
+  color: var(--brand-deep);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-graph-combo-control {
+  grid-column: 3 / -1;
+  min-width: 0;
+  margin-top: 3px;
+}
+
+.workflow-graph-combo-select .filter-select-trigger {
+  height: 27px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 10px;
+}
+
+.workflow-graph-combo-select .multi-filter-chips {
+  max-height: 72px;
+  overflow-y: auto;
+}
+
+.workflow-graph-combo-select .multi-filter-chip {
+  max-width: 100%;
+  font-size: 10px;
+}
+
+.workflow-graph-state {
+  display: flex;
+  flex: 1;
+  min-height: 240px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.workflow-graph-state-error {
+  color: var(--error-fg);
+}
+
+.workflow-graph-state-error span {
+  max-width: 80%;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.workflow-graph-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--brand-deep);
+  border-radius: 50%;
+  animation: workflow-graph-spin 0.8s linear infinite;
+}
+
+@keyframes workflow-graph-spin {
+  to { transform: rotate(360deg); }
+}

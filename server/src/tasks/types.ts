@@ -27,6 +27,7 @@ export interface TaskOutput {
   kind: 'image' | 'video' | 'text';
   url: string;
   filename: string;
+  text?: string;
   subfolder?: string;
   type?: string;
   /** 生成产物对应的非敏感元数据，供预览面板展示 */

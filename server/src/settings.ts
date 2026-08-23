@@ -22,11 +22,11 @@ export interface PluginLoraItem {
 /** 插件参数配置值：单值 / 多选字符串数组 / 多选带强度数组（允许混合元素，保存时规整） */
 export type PluginConfigValue = string | Array<string | PluginLoraItem>;
 
-/** 生成插件（工作流）配置：停用状态 + 每个工作流的 combo 参数覆盖（paramId → 值） */
+/** 生成插件（工作流）设置：只保留停用状态；旧 combo config 仅供启动迁移读取。 */
 export interface PluginsSettings {
   disabled: string[];
-  /** workflowId → { paramId: 选中值 }（多选参数为 string[] 或带强度 {name,strength}[]），仅存与默认不同的覆盖 */
-  config: Record<string, Record<string, PluginConfigValue>>;
+  /** @deprecated 旧版本 combo 覆盖，迁移后不再写回设置文件。 */
+  config?: Record<string, Record<string, PluginConfigValue>>;
 }
 
 export type AgentThinking = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -95,7 +95,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   plugins: {
     disabled: [],
-    config: {},
   },
 };
 
@@ -106,7 +105,7 @@ export function readSettings(file: string): AppSettings {
       agent: { ...DEFAULT_SETTINGS.agent },
       imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
       storage: { ...DEFAULT_SETTINGS.storage },
-      plugins: { disabled: [], config: {} },
+      plugins: { disabled: [] },
     };
   }
   try {
@@ -117,7 +116,7 @@ export function readSettings(file: string): AppSettings {
         agent: { ...DEFAULT_SETTINGS.agent },
         imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
         storage: { ...DEFAULT_SETTINGS.storage },
-        plugins: { disabled: [], config: {} },
+        plugins: { disabled: [] },
       };
     }
     const comfyui = data.comfyui && typeof data.comfyui === 'object' ? data.comfyui : {};
@@ -174,7 +173,7 @@ export function readSettings(file: string): AppSettings {
         disabled: Array.isArray(plugins.disabled)
           ? plugins.disabled.filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0)
           : [],
-        config: normalizePluginConfig(plugins.config),
+        ...(Object.keys(normalizePluginConfig(plugins.config)).length > 0 ? { config: normalizePluginConfig(plugins.config) } : {}),
       },
     };
   } catch {
@@ -183,7 +182,7 @@ export function readSettings(file: string): AppSettings {
       agent: { ...DEFAULT_SETTINGS.agent },
       imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
       storage: { ...DEFAULT_SETTINGS.storage },
-      plugins: { disabled: [], config: {} },
+      plugins: { disabled: [] },
     };
   }
 }
@@ -313,13 +312,10 @@ export function updatePluginsSettings(file: string, plugins: Partial<PluginsSett
   const disabled = Array.isArray(plugins.disabled)
     ? plugins.disabled.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
     : current.plugins.disabled;
-  const config =
-    plugins.config && typeof plugins.config === 'object'
-      ? normalizePluginConfig(plugins.config)
-      : current.plugins.config;
+  // combo 覆盖已迁移到 manifest；任何保存插件开关的操作都会删除旧 config。
   return writeSettings(file, {
     ...current,
-    plugins: { disabled, config },
+    plugins: { disabled },
   });
 }
 

@@ -1,21 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  deleteWorkflowPlugin,
   fetchAgentModels,
   fetchAppSettings,
+  fetchPlugins,
+  importWorkflowPlugin,
+  redetectWorkflowManifest,
   saveAgentSettings,
   saveComfySettings,
-  savePluginsSettings,
   saveStorageSettings,
+  savePluginsSettings,
+  saveWorkflowManifest,
   type AgentModel,
   type AgentThinking,
   type ComfyStatus,
   type FabricatedHistoryMessage,
+  type WorkflowManifest,
   type WorkflowParam,
+  type WorkflowPluginRecord,
   type WorkflowSpec,
 } from '../api';
-import FilterSelect from './FilterSelect';
-import MultiFilterSelect, { type MultiSelectItem } from './MultiFilterSelect';
-import type { PluginConfigValue } from '../api';
+import WorkflowMappingModal from './WorkflowMappingModal';
 
 interface Category {
   id: string;
@@ -130,15 +135,17 @@ export default function SettingsModal({
     fabricatedHistory: FabricatedHistoryMessage[];
   } | null>(null);
 
-  // 插件（工作流）状态：停用列表 + 参数配置（workflowId → { paramId: 值，多选参数为 string[] 或带强度项 }）
+  // 插件（工作流）状态：仅保留启用/停用；参数配置属于工作流 manifest。
   const [pluginDisabled, setPluginDisabled] = useState<string[]>([]);
   const [pluginDraft, setPluginDraft] = useState<Set<string> | null>(null);
-  const [pluginConfig, setPluginConfig] = useState<Record<string, Record<string, PluginConfigValue>>>({});
-  const [pluginConfigDraft, setPluginConfigDraft] = useState<Record<string, Record<string, PluginConfigValue>> | null>(null);
-  /** 当前进入插件详情设置的工作流 id；null 表示显示插件列表 */
-  const [configTarget, setConfigTarget] = useState<string | null>(null);
   const [pluginsTip, setPluginsTip] = useState<string | null>(null);
-  const [pluginsSaved, setPluginsSaved] = useState<{ disabled: string[]; config: Record<string, Record<string, PluginConfigValue>> } | null>(null);
+  const [pluginsSaved, setPluginsSaved] = useState<string[] | null>(null);
+  const [pluginRecords, setPluginRecords] = useState<WorkflowPluginRecord[]>([]);
+  const [mappingTarget, setMappingTarget] = useState<WorkflowManifest | null>(null);
+  const [mappingSaving, setMappingSaving] = useState(false);
+  const [mappingError, setMappingError] = useState<string | null>(null);
+  const [pluginImporting, setPluginImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [savingAll, setSavingAll] = useState(false);
   const [toastFlash, setToastFlash] = useState<'saved' | 'failed' | null>(null);
   const [pluginsError, setPluginsError] = useState<string | null>(null);
@@ -188,10 +195,10 @@ export default function SettingsModal({
         }
         if (s.plugins) {
           setPluginDisabled(s.plugins.disabled);
-          setPluginConfig(s.plugins.config ?? {});
-          setPluginsSaved({ disabled: s.plugins.disabled, config: s.plugins.config ?? {} });
+          setPluginsSaved(s.plugins.disabled);
         }
         setSettingsLoaded(true);
+        void fetchPlugins().then(setPluginRecords).catch(() => setPluginRecords([]));
         setAgentModelsLoading(true);
         void fetchAgentModels()
           .then(result => setAgentModels(result.models))
@@ -207,13 +214,81 @@ export default function SettingsModal({
       });
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 插件开关与参数配置草稿：打开时以服务端值为初始值
+  // 插件开关草稿：打开时以服务端值为初始值
   useEffect(() => {
     if (!open) return;
     setPluginDraft(new Set(pluginDisabled));
-    setPluginConfigDraft(pluginConfig);
-    setConfigTarget(null);
-  }, [open, pluginDisabled, pluginConfig, workflows]);
+  }, [open, pluginDisabled]);
+
+  const refreshPluginRecords = async () => {
+    const records = await fetchPlugins();
+    setPluginRecords(records);
+    onRefreshWorkflows?.();
+  };
+
+  const openMappingEditor = (plugin: WorkflowPluginRecord) => {
+    setMappingError(null);
+    setMappingTarget(plugin as WorkflowManifest);
+  };
+
+  const handleMappingSave = async (manifest: WorkflowManifest) => {
+    setMappingSaving(true);
+    setMappingError(null);
+    try {
+      const result = await saveWorkflowManifest(manifest.id, manifest);
+      setMappingTarget(null);
+      setPluginRecords(records => records.map(record => record.id === result.plugin.id ? result.plugin : record));
+      onRefreshWorkflows?.();
+    } catch (e) {
+      setMappingError((e as Error).message);
+    } finally {
+      setMappingSaving(false);
+    }
+  };
+
+  const handleMappingRedetect = async () => {
+    if (!mappingTarget) return;
+    try {
+      const detected = await redetectWorkflowManifest(mappingTarget.id);
+      setMappingTarget(detected);
+    } catch (e) {
+      setMappingError((e as Error).message);
+    }
+  };
+
+  const handlePluginFile = async (file: File) => {
+    setPluginImporting(true);
+    setPluginsError(null);
+    try {
+      const workflow = JSON.parse(await file.text()) as Record<string, unknown>;
+      let result;
+      try {
+        result = await importWorkflowPlugin({ filename: file.name, workflow });
+      } catch (e) {
+        if (!String((e as Error).message).includes('HTTP 409')) throw e;
+        if (!window.confirm(`插件「${file.name.replace(/\\.json$/i, '')}」已存在，是否覆盖？`)) return;
+        result = await importWorkflowPlugin({ filename: file.name, workflow, overwrite: true });
+      }
+      await refreshPluginRecords();
+      await openMappingEditor(result.plugin);
+    } catch (e) {
+      setPluginsError((e as Error).message);
+    } finally {
+      setPluginImporting(false);
+    }
+  };
+
+  const handleDeletePlugin = async (plugin: WorkflowPluginRecord) => {
+    if (!window.confirm(`确定删除插件「${plugin.name}」吗？`)) return;
+    try {
+      await deleteWorkflowPlugin(plugin.id);
+      if (mappingTarget?.id === plugin.id) setMappingTarget(null);
+      await refreshPluginRecords();
+    } catch (e) {
+      setPluginsError((e as Error).message);
+    }
+  };
+
 
   const togglePlugin = (id: string) => {
     setPluginDraft(prev => {
@@ -224,61 +299,16 @@ export default function SettingsModal({
     });
   };
 
-  /** 更新某工作流的参数覆盖草稿 */
-  const setPluginParam = (wfId: string, paramId: string, value: PluginConfigValue) => {
-    setPluginConfigDraft(prev => {
-      const base = prev ?? {};
-      const wf = { ...(base[wfId] ?? {}) };
-      wf[paramId] = value;
-      return { ...base, [wfId]: wf };
-    });
-  };
-
-  /** 把默认/覆盖值规整为多选项（兼容旧 string[] 配置 → 默认强度 1） */
-  const asItems = (v: unknown): MultiSelectItem[] =>
-    Array.isArray(v)
-      ? v.map(item => {
-          if (typeof item === 'string') return { name: item, strength: 1 };
-          const o = item as Record<string, unknown>;
-          return {
-            name: typeof o.name === 'string' ? o.name : '',
-            strength: typeof o.strength === 'number' && Number.isFinite(o.strength) ? o.strength : 1,
-          };
-        })
-      : [];
-
-  /** 当前 select 显示值：覆盖配置 → 工作流默认值 → 选项首项（多选参数为 string[] 或带强度项） */
-  const configValueOf = (wfId: string, param: WorkflowParam): PluginConfigValue => {
-    const overridden = pluginConfigDraft?.[wfId]?.[param.id];
-    if (overridden !== undefined) return overridden;
-    const options = param.options ?? [];
-    if (param.multiple) {
-      if (param.strengthable) {
-        return asItems(param.default).filter(item => options.length === 0 || options.includes(item.name));
-      }
-      if (Array.isArray(param.default)) return param.default.filter(d => options.length === 0 || options.includes(d));
-      return [];
-    }
-    const def = typeof param.default === 'string' ? param.default : undefined;
-    if (def && options.includes(def)) return def;
-    return options[0] ?? '';
-  };
-
-  /** 该工作流可配置的 combo 参数（模型/CLIP/VAE/LoRA/采样器/调度器等） */
-  const comboParamsOf = (wf: WorkflowSpec): WorkflowParam[] =>
-    wf.params.filter(p => p.type === 'combo' && (p.options?.length ?? 0) > 0);
 
   const savePlugins = async (): Promise<boolean> => {
     setPluginsTip(null);
     setPluginsError(null);
     try {
       const disabled = pluginDraft ? [...pluginDraft] : [];
-      const config = pluginConfigDraft ?? {};
-      const res = await savePluginsSettings(disabled, config);
+      const res = await savePluginsSettings(disabled);
       if (res.ok) {
         setPluginDisabled(res.plugins.disabled);
-        setPluginConfig(res.plugins.config);
-        setPluginsSaved({ disabled: res.plugins.disabled, config: res.plugins.config });
+        setPluginsSaved(res.plugins.disabled);
         setPluginsTip('插件配置已保存并生效');
         return true;
       }
@@ -305,10 +335,9 @@ export default function SettingsModal({
       plugins:
         settingsLoaded &&
         pluginsSaved !== null &&
-        (!setEquals(pluginDraft ?? new Set(), new Set(pluginsSaved.disabled)) ||
-          !objEquals(pluginConfigDraft ?? {}, pluginsSaved.config)),
+        !setEquals(pluginDraft ?? new Set(), new Set(pluginsSaved)),
     }),
-    [settingsLoaded, baseUrl, baseUrlSaved, agentModel, agentThinking, agentPoll, agentFabricated, agentSaved, outputDir, outputDirSaved, pluginDraft, pluginConfigDraft, pluginsSaved],
+    [settingsLoaded, baseUrl, baseUrlSaved, agentModel, agentThinking, agentPoll, agentFabricated, agentSaved, outputDir, outputDirSaved, pluginDraft, pluginsSaved],
   );
   const isDirty = dirty.comfyui || dirty.agent || dirty.storage || dirty.plugins;
 
@@ -498,78 +527,25 @@ export default function SettingsModal({
     ? `已连接（${comfyStatus?.baseUrl ?? baseUrl}）${comfyStatus?.system?.comfyui_version ? `· v${comfyStatus.system.comfyui_version}` : ''}`
     : `未连接${comfyStatus?.error ? `：${comfyStatus.error}` : ''}`;
 
-  // 插件区：列表视图 ↔ 单插件详情设置（钻取）
-  const pluginTarget = configTarget ? (workflows.find(w => w.id === configTarget) ?? null) : null;
-  const pluginSection = pluginTarget ? (
-    <section className="settings-section">
-      <button className="plugin-detail-back" onClick={() => setConfigTarget(null)}>
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-          <path d="M8.5 3 4.5 7l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-        返回插件列表
-      </button>
-      <h3 className="settings-section-title plugin-detail-title">{pluginTarget.name}</h3>
-      <p className="settings-section-desc">
-        配置该插件使用的模型与采样参数（扩散模型、CLIP、VAE、LoRA、采样器、调度器等，选项来自 ComfyUI
-        节点）。{pluginDraft?.has(pluginTarget.id) ? '该插件当前已停用，配置将保留。' : ''}
-      </p>
-      {comboParamsOf(pluginTarget).length === 0 ? (
-        <div className="pref-empty">该插件没有可配置参数（需连接 ComfyUI 才能读取节点选项）</div>
-      ) : (
-        <div className="plugin-detail-grid">
-          {comboParamsOf(pluginTarget).map(param => {
-            const current = configValueOf(pluginTarget.id, param);
-            return (
-              <label key={param.id} className="plugin-config-field">
-                <span className="plugin-config-label">{param.label}</span>
-                {param.multiple ? (
-                  <MultiFilterSelect
-                    className="plugin-config-select"
-                    value={asItems(current)}
-                    onChange={v => setPluginParam(pluginTarget.id, param.id, v)}
-                    options={param.options ?? []}
-                    ariaLabel={param.label}
-                    searchPlaceholder={`筛选 ${param.label}…`}
-                    defaultStrength={1}
-                    strengthMin={param.strengthable ? (param.min ?? -10) : -10}
-                    strengthMax={param.strengthable ? (param.max ?? 10) : 10}
-                    strengthStep={param.strengthable ? (param.step ?? 0.05) : 0.05}
-                  />
-                ) : (
-                  <FilterSelect
-                    className="plugin-config-select"
-                    value={typeof current === 'string' ? current : ''}
-                    onChange={v => setPluginParam(pluginTarget.id, param.id, v)}
-                    options={param.options ?? []}
-                    ariaLabel={param.label}
-                    searchPlaceholder={`筛选 ${param.label}…`}
-                  />
-                )}
-              </label>
-            );
-          })}
-        </div>
-      )}
-      {pluginsError && <div className="settings-error">{pluginsError}</div>}
-      {pluginsTip && <div className="settings-tip">{pluginsTip}</div>}
-    </section>
-  ) : (
+  // 插件区：只负责导入、映射和启用/停用；combo 参数统一在节点视图中配置。
+  const pluginList = pluginRecords.length > 0 ? pluginRecords : workflows;
+  const pluginSection = (
     <section className="settings-section">
       <h3 className="settings-section-title">生成插件（工作流）</h3>
       <p className="settings-section-desc">
-        启用/停用生成插件，点击插件右侧的设置按钮可配置该插件的模型与采样参数（扩散模型、CLIP、VAE、
-        LoRA、采样器、调度器等，选项来自 ComfyUI 节点）。停用的插件不会出现在生成流程中。
+        导入任意 ComfyUI JSON 工作流，在映射编辑器的节点视图中勾选 widget 并配置 combo 参数。停用的插件不会出现在生成流程中。
       </p>
-      {workflows.length === 0 ? (
-        <div className="pref-empty">暂无插件：请把 workflow 文件放到 server/workflows/</div>
+      <input ref={fileInputRef} type="file" accept=".json,application/json" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void handlePluginFile(file); }} />
+      <div className="workflow-plugin-toolbar">
+        <button className="settings-btn primary" disabled={pluginImporting} onClick={() => fileInputRef.current?.click()}>{pluginImporting ? '导入中…' : '+ 导入工作流 JSON'}</button>
+        <span className="settings-field-hint">支持 ComfyUI API Format 与 UI/LiteGraph JSON</span>
+      </div>
+      {pluginList.length === 0 ? (
+        <div className="pref-empty">暂无插件：请导入工作流 JSON 或把 workflow 文件放到 server/workflows/</div>
       ) : (
         <div className="plugin-groups">
           {(['image', 'video'] as const).map(kind => {
-            const list = workflows.filter(w =>
-              kind === 'video'
-                ? w.outputs.some(o => o.kind === 'video')
-                : w.outputs.some(o => o.kind === 'image'),
-            );
+            const list = pluginList.filter(w => kind === 'video' ? w.outputs.some(o => o.kind === 'video') : !w.outputs.some(o => o.kind === 'video'));
             if (list.length === 0) return null;
             return (
               <div key={kind} className="plugin-group">
@@ -577,54 +553,25 @@ export default function SettingsModal({
                 <div className="plugin-list">
                   {list.map(w => {
                     const disabled = pluginDraft?.has(w.id) ?? false;
-                    const hasConfig = comboParamsOf(w).length > 0;
+                    const record = pluginRecords.find(plugin => plugin.id === w.id);
                     return (
                       <div key={w.id} className={`plugin-card${disabled ? ' off' : ''}`}>
                         <div className="plugin-card-head">
                           <span className="plugin-card-name">{w.name}</span>
                           <div className="plugin-card-acts">
-                            {hasConfig && (
-                              <button
-                                className="plugin-config-btn"
-                                onClick={() => setConfigTarget(w.id)}
-                                title="插件设置"
-                                aria-label={`设置 ${w.name}`}
-                              >
-                                <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-                                  <circle cx="8" cy="8" r="2.6" stroke="currentColor" strokeWidth="1.3" />
-                                  <path
-                                    d="M8 1.8v1.9M8 12.3v1.9M1.8 8h1.9M12.3 8h1.9M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6 11 5M5 11l-1.4 1.4"
-                                    stroke="currentColor"
-                                    strokeWidth="1.3"
-                                    strokeLinecap="round"
-                                  />
-                                </svg>
-                              </button>
-                            )}
-                            <button
-                              className={`plugin-toggle${disabled ? '' : ' on'}`}
-                              onClick={() => togglePlugin(w.id)}
-                              role="switch"
-                              aria-checked={!disabled}
-                              aria-label={`${disabled ? '启用' : '停用'} ${w.name}`}
-                            >
+                            <button className="plugin-mapping-btn" onClick={() => record && void openMappingEditor(record)} title="编辑节点映射">节点映射</button>
+                            {record && <button className="plugin-delete-btn" onClick={() => void handleDeletePlugin(record)} title="删除插件">删除</button>}
+                            <button className={`plugin-toggle${disabled ? '' : ' on'}`} onClick={() => togglePlugin(w.id)} role="switch" aria-checked={!disabled} aria-label={`${disabled ? '启用' : '停用'} ${w.name}`}>
                               <span className="plugin-toggle-knob" />
                             </button>
                           </div>
                         </div>
                         {w.description && <div className="plugin-card-desc">{w.description}</div>}
+                        {record?.manifestError && <div className="settings-error">清单异常：{record.manifestError}</div>}
+                        {record?.source && <div className="plugin-card-source">{record.source.type === 'imported' ? '已导入插件' : record.hasManifest ? '已编辑清单' : '自动识别'}</div>}
                         <div className="plugin-card-badges">
-                          {w.inputs.map(i => (
-                            <em key={i.id} className={`wf-badge in ${i.kind}`}>
-                              输入·{PLUGIN_KIND_LABEL[i.kind]}
-                              {i.required ? '·必传' : ''}
-                            </em>
-                          ))}
-                          {w.outputs.map(o => (
-                            <em key={o.id} className={`wf-badge out ${o.kind}`}>
-                              输出·{PLUGIN_KIND_LABEL[o.kind]}
-                            </em>
-                          ))}
+                          {w.inputs.map(i => <em key={i.id} className={`wf-badge in ${i.kind}`}>输入·{PLUGIN_KIND_LABEL[i.kind]}{i.required ? '·必传' : ''}</em>)}
+                          {w.outputs.map(o => <em key={o.id} className={`wf-badge out ${o.kind}`}>输出·{PLUGIN_KIND_LABEL[o.kind]}</em>)}
                         </div>
                       </div>
                     );
@@ -637,6 +584,7 @@ export default function SettingsModal({
       )}
       {pluginsError && <div className="settings-error">{pluginsError}</div>}
       {pluginsTip && <div className="settings-tip">{pluginsTip}</div>}
+      {mappingTarget && <WorkflowMappingModal manifest={mappingTarget} saving={mappingSaving} error={mappingError} onSave={handleMappingSave} onRedetect={handleMappingRedetect} onClose={() => setMappingTarget(null)} />}
     </section>
   );
 

@@ -201,6 +201,7 @@ export interface WorkflowInput {
   id: string;
   kind: 'text' | 'image' | 'video';
   label: string;
+  description?: string;
   nodeId: string;
   field: string;
   classType: string;
@@ -209,11 +210,13 @@ export interface WorkflowInput {
   required?: boolean;
   /** 工作流显式标记的提示词注入目标（_meta.promptPlaceholder） */
   primary?: boolean;
+  hidden?: boolean;
 }
 
 export interface WorkflowParam {
   id: string;
   label: string;
+  description?: string;
   nodeId: string;
   field: string;
   type: 'INT' | 'FLOAT' | 'BOOLEAN' | 'SEED' | 'STRING' | 'combo';
@@ -226,6 +229,8 @@ export interface WorkflowParam {
   multiple?: boolean;
   /** 多选参数每项可调强度（如 LoRA）：值为 {name, strength}[]，min/max/step 描述强度范围 */
   strengthable?: boolean;
+  applyTo?: string[];
+  hidden?: boolean;
 }
 
 export interface WorkflowOutput {
@@ -234,12 +239,18 @@ export interface WorkflowOutput {
   label: string;
   nodeId: string;
   classType: string;
+  description?: string;
+  hidden?: boolean;
 }
 
 export interface WorkflowSpec {
   id: string;
   name: string;
   description?: string;
+  source?: { type: 'bundled' | 'imported'; workflowFile: string };
+  hasManifest?: boolean;
+  editable?: boolean;
+  manifestError?: string;
   inputs: WorkflowInput[];
   params: WorkflowParam[];
   outputs: WorkflowOutput[];
@@ -305,8 +316,110 @@ export async function fetchGenerateData(): Promise<GenerateData> {
   return http('/api/generate');
 }
 
+export interface WorkflowNodeCandidate {
+  nodeId: string;
+  classType: string;
+  title: string;
+  fields: Array<{ field: string; type: string; connected: boolean }>;
+}
+
+export interface WorkflowGraphField {
+  nodeId: string;
+  field: string;
+  type: string;
+  value?: unknown;
+  connected: boolean;
+  selectable: boolean;
+  selected: boolean;
+  paramId?: string;
+  options?: string[];
+  min?: number;
+  max?: number;
+  step?: number;
+  applyTo?: string[];
+  multiple?: boolean;
+  strengthable?: boolean;
+  connection?: { sourceNode: string; sourceField: string };
+}
+
+export interface WorkflowGraphNode {
+  nodeId: string;
+  classType: string;
+  title: string;
+  x: number;
+  y: number;
+  fields: WorkflowGraphField[];
+}
+
+export interface WorkflowGraphEdge {
+  sourceNode: string;
+  sourceField: string;
+  targetNode: string;
+  targetField: string;
+  type?: string;
+}
+
+export interface WorkflowGraph {
+  nodes: WorkflowGraphNode[];
+  edges: WorkflowGraphEdge[];
+  manifestError?: string;
+}
+
+export interface WorkflowManifest extends WorkflowSpec {
+  source: { type: 'bundled' | 'imported'; workflowFile: string };
+}
+
+export interface WorkflowPluginRecord extends WorkflowSpec {
+  source: { type: 'bundled' | 'imported'; workflowFile: string };
+  hasManifest: boolean;
+  editable: boolean;
+  enabled: boolean;
+  available: boolean;
+}
+
 export async function fetchWorkflows(): Promise<WorkflowSpec[]> {
   return http('/api/workflows');
+}
+
+export async function fetchPlugins(): Promise<WorkflowPluginRecord[]> {
+  return http('/api/plugins');
+}
+
+export async function fetchWorkflowNodes(id: string): Promise<{ nodes: WorkflowNodeCandidate[] }> {
+  return http(`/api/plugins/${encodeURIComponent(id)}/nodes`);
+}
+
+export async function fetchWorkflowGraph(id: string): Promise<{ graph: WorkflowGraph }> {
+  return http(`/api/plugins/${encodeURIComponent(id)}/graph`);
+}
+
+export async function importWorkflowPlugin(payload: {
+  filename: string;
+  name?: string;
+  workflow: Record<string, unknown>;
+  overwrite?: boolean;
+}): Promise<{ ok: boolean; plugin: WorkflowPluginRecord }> {
+  return http('/api/plugins/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function saveWorkflowManifest(id: string, manifest: WorkflowManifest): Promise<{ ok: boolean; plugin: WorkflowPluginRecord }> {
+  return http(`/api/plugins/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(manifest),
+  });
+}
+
+export async function redetectWorkflowManifest(id: string): Promise<WorkflowManifest> {
+  return http(`/api/plugins/${encodeURIComponent(id)}/redetect`, { method: 'POST' });
+}
+
+export async function deleteWorkflowPlugin(id: string): Promise<{ ok: boolean }> {
+  return http(`/api/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 export async function fetchComfyStatus(): Promise<ComfyStatus> {
@@ -380,25 +493,22 @@ export interface AppSettings {
   agent?: AgentSettings;
   imageGen?: ImageGenSettings;
   storage?: StorageSettings;
-  /** 生成插件（工作流）停用状态与参数配置 */
+  /** 生成插件（工作流）停用状态；参数配置保存在工作流 manifest */
   plugins?: {
     disabled: string[];
-    /** workflowId → { paramId: 选中值 }（多选参数为 string[] 或带强度 {name,strength}[]），仅存与默认不同的覆盖 */
-    config?: Record<string, Record<string, PluginConfigValue>>;
   };
 }
 
 export async function savePluginsSettings(
   disabled: string[],
-  config?: Record<string, Record<string, PluginConfigValue>>,
 ): Promise<{
   ok: boolean;
-  plugins: { disabled: string[]; config: Record<string, Record<string, PluginConfigValue>> };
+  plugins: { disabled: string[] };
 }> {
   return http('/api/settings/plugins', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ disabled, config }),
+    body: JSON.stringify({ disabled }),
   });
 }
 

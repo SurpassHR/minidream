@@ -21,8 +21,6 @@ import {
   updatePluginsSettings,
   type ImageGenSettings,
   type AgentSettings,
-  type PluginConfigValue,
-  type PluginLoraItem,
 } from './settings.js';
 import {
   buildSpecsCached,
@@ -35,6 +33,9 @@ import { DraftStore } from './drafts.js';
 import { TaskQueue } from './tasks/queue.js';
 import type { TaskItem } from './tasks/types.js';
 import { createDirectorMCPServer, type McpServerInstance, type WorkflowRoute } from './mcp/server.js';
+import { createWorkflowPluginRouter } from './workflow-plugin-api.js';
+import { migrateLegacyPluginConfig } from './workflow-plugin-migration.js';
+import { IMPORTED_WORKFLOWS_DIR, MANIFESTS_DIR, WORKFLOW_PLUGIN_DATA_DIR } from './workflow-plugin-store.js';
 import { listAgentModels, runAgentStream, buildAgentInput, generateConversationTitle, toolCallFingerprint, type AgentStreamEvent } from './agent/bridge.js';
 import {
   SessionError,
@@ -65,6 +66,21 @@ const SETTINGS_FILE = path.resolve(__dirname, '../data/settings.json');
 const TASKS_FILE = path.resolve(__dirname, '../data/tasks.json');
 const DRAFTS_INDEX_FILE = path.resolve(__dirname, '../data/drafts.json');
 const initialSettings = readSettings(SETTINGS_FILE);
+
+// 将旧版全局 combo 配置一次性迁移到工作流 manifest；后续由节点视图维护。
+// 在创建任务队列前完成，避免启动早期任务读取到旧配置或未迁移的 manifest。
+await migrateLegacyPluginConfig(SETTINGS_FILE, {
+  bundledDir: path.resolve(__dirname, '../workflows'),
+  importedDir: IMPORTED_WORKFLOWS_DIR,
+  manifestDir: MANIFESTS_DIR,
+  introspect: async json => {
+    const { introspectWorkflow } = await import('./workflow.js');
+    return introspectWorkflow(json);
+  },
+}).catch(error => {
+  console.error('[workflow-plugin-migration]', error);
+});
+
 export const draftStore = new DraftStore({
   indexFile: DRAFTS_INDEX_FILE,
   outputDir: initialSettings.storage.outputDir,
@@ -84,6 +100,23 @@ function isWorkflowEnabled(id: string): boolean {
 function filterEnabledWorkflows(specs: WorkflowSpec[]): WorkflowSpec[] {
   return specs.filter(s => isWorkflowEnabled(s.id));
 }
+
+// 工作流插件导入、映射清单与节点候选 API
+app.use(createWorkflowPluginRouter({
+  catalog: {
+    bundledDir: path.resolve(__dirname, '../workflows'),
+    importedDir: IMPORTED_WORKFLOWS_DIR,
+    manifestDir: MANIFESTS_DIR,
+    introspect: async (json) => {
+      const { introspectWorkflow } = await import('./workflow.js');
+      return introspectWorkflow(json);
+    },
+  },
+  dataRoot: WORKFLOW_PLUGIN_DATA_DIR,
+  objectInfo: async () => (await import('./comfyui.js')).getObjectInfo(),
+  isWorkflowEnabled,
+  invalidate: invalidateComfyCaches,
+}));
 
 export const activityRegistry = new ActivityRegistry(taskQueue);
 export const mcpServer: McpServerInstance = createDirectorMCPServer(
@@ -431,7 +464,7 @@ app.get('/api/settings', (_req, res) => {
     agent: current.agent,
     imageGen: current.imageGen,
     storage: current.storage,
-    plugins: current.plugins,
+    plugins: { disabled: current.plugins.disabled },
   });
 });
 
@@ -467,7 +500,7 @@ app.post('/api/settings/image-gen', (req, res) => {
   }
 });
 
-/** 更新生成插件（工作流）停用状态与参数配置 */
+/** 更新生成插件（工作流）停用状态；combo 参数已迁移到工作流 manifest */
 app.post('/api/settings/plugins', async (req, res) => {
   try {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
@@ -479,62 +512,7 @@ app.post('/api/settings/plugins', async (req, res) => {
       : [];
     const disabled = requested.filter(id => known.has(id));
 
-    // 参数配置：只保留「已知工作流 + 已知参数 + 值在 combo 列表中（列表为空时不校验）」的条目；
-    // 多选参数接受 string[]（带强度参数还接受 {name, strength}[]），每项需在 combo 列表中
-    const config: Record<string, Record<string, PluginConfigValue>> = {};
-    const rawConfig =
-      body.config && typeof body.config === 'object'
-        ? (body.config as Record<string, Record<string, unknown>>)
-        : {};
-    for (const [wfId, cfg] of Object.entries(rawConfig)) {
-      if (!known.has(wfId) || !cfg || typeof cfg !== 'object') continue;
-      const spec = specs.find(s => s.id === wfId)!;
-      const byId = new Map(spec.params.map(p => [p.id, p]));
-      const entries: Record<string, PluginConfigValue> = {};
-      for (const [paramId, value] of Object.entries(cfg)) {
-        const param = byId.get(paramId);
-        if (!param || param.type !== 'combo') continue;
-        if (Array.isArray(value)) {
-          if (!param.multiple) continue;
-          if (param.strengthable) {
-            // 带强度多选：字符串项补默认强度 1；对象项校验名称与强度并钳制到 [-10, 10]
-            const items: PluginLoraItem[] = [];
-            for (const v of value) {
-              if (typeof v === 'string' && v.trim()) {
-                if (param.options?.length && !param.options.includes(v)) continue;
-                items.push({ name: v.trim(), strength: 1 });
-              } else if (v && typeof v === 'object' && !Array.isArray(v)) {
-                const o = v as Record<string, unknown>;
-                if (typeof o.name !== 'string' || !o.name.trim()) continue;
-                if (param.options?.length && !param.options.includes(o.name)) continue;
-                const strength =
-                  typeof o.strength === 'number' && Number.isFinite(o.strength)
-                    ? Math.min(10, Math.max(-10, o.strength))
-                    : 1;
-                items.push({ name: o.name.trim(), strength });
-              }
-            }
-            if (items.length) entries[paramId] = items;
-            continue;
-          }
-          // 普通多选：只接受字符串数组且每项在 combo 列表中
-          const arr = value.filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
-          if (!arr.length) continue;
-          if (param.options?.length && !arr.every(v => param.options!.includes(v))) continue;
-          entries[paramId] = arr;
-          continue;
-        }
-        if (typeof value !== 'string' || !value.trim()) continue;
-        // 多选参数不接受单值
-        if (param.multiple) continue;
-        // 有 combo 列表时校验值在列表中，避免保存非法值；无列表（ComfyUI 未连接）时放行
-        if (param.options?.length && !param.options.includes(value)) continue;
-        entries[paramId] = value;
-      }
-      if (Object.keys(entries).length) config[wfId] = entries;
-    }
-
-    const updated = updatePluginsSettings(SETTINGS_FILE, { disabled, config });
+    const updated = updatePluginsSettings(SETTINGS_FILE, { disabled, config: {} });
     res.json({ ok: true, plugins: updated.plugins });
   } catch (e) {
     res.status(400).json({ ok: false, error: (e as Error).message });

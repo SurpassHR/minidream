@@ -595,6 +595,38 @@ describe('workflow 引擎（通用自动适配）', () => {
     vi.unstubAllGlobals();
   });
 
+  it('按输出映射过滤 history 产物节点', () => {
+    const spec = {
+      id: 'demo', name: 'Demo', inputs: [], params: [],
+      outputs: [{ id: 'images-9', kind: 'image' as const, label: '最终图片', nodeId: '9', classType: 'SaveImage' }],
+    };
+    const filtered = workflow.filterHistoryOutputs(spec, {
+      '9': { images: [{ filename: 'final.png' }] },
+      '10': { images: [{ filename: 'internal.png' }] },
+    });
+    expect(Object.keys(filtered)).toEqual(['9']);
+  });
+
+  it('手动 manifest 的数字和布尔参数注入前转换为 ComfyUI 类型', async () => {
+    const spec = {
+      id: 'manual',
+      name: 'Manual',
+      inputs: [{ id: 'text-2', kind: 'text' as const, label: '提示词', nodeId: '2', field: 'text', classType: 'CLIPTextEncode' }],
+      params: [
+        { id: 'steps-4', label: '步数', nodeId: '4', field: 'steps', type: 'INT' as const, default: 20 },
+        { id: 'enabled-4', label: '启用', nodeId: '4', field: 'enabled', type: 'BOOLEAN' as const, default: false },
+      ],
+      outputs: [{ id: 'images-6', kind: 'image' as const, label: '结果', nodeId: '6', classType: 'SaveImage' }],
+    };
+    const prompt = await workflow.buildPrompt(spec, {
+      '2': { class_type: 'CLIPTextEncode', inputs: { text: 'default' } },
+      '4': { class_type: 'KSampler', inputs: { model: ['2', 0], steps: 20, enabled: false } },
+      '6': { class_type: 'SaveImage', inputs: { images: ['4', 0] } },
+    }, { prompt: 'manual', params: { 'steps-4': '28', 'enabled-4': 'true' } });
+    expect(prompt['4'].inputs.steps).toBe(28);
+    expect(prompt['4'].inputs.enabled).toBe(true);
+  });
+
   /* ---------- UI 格式（LiteGraph） ---------- */
 
   it('UI 格式识别与转换：链接→输入、widget→字段、seed randomize 剔除', () => {

@@ -97,8 +97,8 @@
 「重新识别」会基于当前原始工作流重新运行 introspection，并与现有清单合并：
 
 - 仍匹配的 `nodeId + field` 保留用户已有的 `description`、`label`、`required` 等手动字段；
-- 新识别的映射加入结果；
-- 已失效的映射从候选结果中移除；
+- 只刷新已有映射的自动识别值；
+- 不新增或删除映射；如果原节点已失效，保留原映射并由保存校验报告错误；
 - 合并结果先返回前端，不自动落盘，用户确认后通过保存操作写入。
 
 ## 后端 API
@@ -138,15 +138,15 @@
 
 ### 输入
 
-可编辑类型（文本/图片/视频）、外部字段名、description、`nodeId + field`、必填开关、隐藏开关，并支持新增、删除。
+映射行数、外部 ID、输入 kind、`nodeId + field`、classType 和连接关系由工作流清单固定。可编辑 label、description、required、hidden。
 
 ### 参数
 
-可编辑类型（INT/FLOAT/BOOLEAN/STRING/combo）、外部字段名、description、默认值、范围、步长、选项、`nodeId + field`、隐藏开关，并支持新增、删除。
+映射行数、外部 ID、参数 type、`nodeId + field`、applyTo 和连接关系由工作流清单固定。可编辑 label、description、default、min、max、step、options、hidden。
 
 ### 输出
 
-可编辑类型（图片/视频/文本）、外部字段名、description、`nodeId`，并支持隐藏、新增、删除。
+映射行数、外部 ID、输出 kind、`nodeId`、classType 和连接关系由工作流清单固定。可编辑 label、description、hidden。
 
 节点和字段通过下拉选择，不要求用户盲填 ID。每个节点显示 `nodeId / classType / title`，字段显示字段名和推断类型。
 

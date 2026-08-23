@@ -2,6 +2,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { TaskQueue } from '../tasks/queue.js';
 import { buildSpecsCached } from '../workflow.js';
+import { serializeWorkflowForLlm } from '../workflow-plugin-api.js';
 import type { JsonRpcRequest, JsonRpcResponse, McpCallToolResult, McpToolDescriptor } from './types.js';
 
 export type WorkflowRouteIntent = 'text_to_image' | 'image_to_image' | 'image_upscale' | 'text_to_video' | 'image_to_video' | 'unknown';
@@ -137,13 +138,7 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
     switch (name) {
       case 'workflow.list': {
         const specs = (await buildSpecsCached()).filter(s => workflowEnabled(s.id));
-        const simplified = specs.map(s => ({
-          id: s.id,
-          name: s.name,
-          description: s.description,
-          inputs: s.inputs.map(i => ({ kind: i.kind, label: i.label, required: i.required })),
-          outputs: s.outputs.map(o => ({ kind: o.kind, label: o.label })),
-        }));
+        const simplified = specs.map(serializeWorkflowForLlm);
         return {
           content: [{ type: 'text', text: JSON.stringify(simplified, null, 2) }],
         };

@@ -34,6 +34,14 @@
   --radius-sm: 10px;
   --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.04);
   --shadow-float: 0 12px 40px rgba(0, 0, 0, 0.12);
+  --graph-canvas: #f7f9fa;
+  --graph-grid: #e8edef;
+  --graph-node-border: #b9c9ce;
+  --graph-node-head: #eef4f5;
+  --graph-node-text: #18383f;
+  --graph-node-muted: #6f858c;
+  --graph-field-border: #f0f3f4;
+  --graph-edge: #8ea5ad;
   --font-family: 'CapCut Sans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
 }
 
@@ -65,6 +73,14 @@
   --badge-pink-bg: rgba(176, 50, 122, 0.18);
   --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.4);
   --shadow-float: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --graph-canvas: #11161a;
+  --graph-grid: #20282e;
+  --graph-node-border: #3b4a52;
+  --graph-node-head: #1d272d;
+  --graph-node-text: #e8eaed;
+  --graph-node-muted: #9aa4b2;
+  --graph-field-border: #263238;
+  --graph-edge: #6f9ca6;
 }
 
 * {
