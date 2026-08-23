@@ -270,6 +270,25 @@ const OBJECT_INFO: Record<string, any> = {
     input: { required: { switch: ['BOOLEAN', {}] }, optional: { on_false: ['*', {}], on_true: ['*', {}] } },
     output: ['*'],
   },
+  LoraLoader: {
+    input: {
+      required: {
+        lora_name: [
+          [
+            'None',
+            'a.safetensors',
+            'KREA2/Afterlight_v1.safetensors',
+            'KREA2/lenovo_krea2.safetensors',
+            'KREA2/RealisticSnapshotKrea2.safetensors',
+          ],
+          {},
+        ],
+        strength_model: ['FLOAT', {}],
+        strength_clip: ['FLOAT', {}],
+      },
+    },
+    output: ['MODEL', 'CLIP'],
+  },
   LoraLoaderModelOnly: {
     input: {
       required: {
@@ -640,7 +659,7 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(prompt['2'].inputs.text).toBe('赛博朋克城市夜景');
   });
 
-  it('根据 imageGen settings 注入默认参数与随机/固定 seed', async () => {
+  it('imageGen settings 仅注入 seed 与宽高，采样参数保留工作流设计', async () => {
     const spec = await workflow.introspectWorkflow(uiFixtureJson, OBJECT_INFO);
     const promptFixed = await workflow.buildPrompt(spec, uiFixtureJson, {
       prompt: '测试固定种子',
@@ -656,14 +675,16 @@ describe('workflow 引擎（通用自动适配）', () => {
         height: 768,
       },
     });
+    // 全局 settings 覆盖 seed 与宽高
     expect(promptFixed['4'].inputs.seed).toBe(123456);
-    expect(promptFixed['4'].inputs.steps).toBe(25);
-    expect(promptFixed['4'].inputs.cfg).toBe(8.5);
-    expect(promptFixed['4'].inputs.sampler_name).toBe('dpmpp_2m');
-    expect(promptFixed['4'].inputs.scheduler).toBe('karras');
-    expect(promptFixed['4'].inputs.denoise).toBe(0.8);
     expect(promptFixed['5'].inputs.width).toBe(768);
     expect(promptFixed['5'].inputs.height).toBe(768);
+    // 采样参数（steps/cfg/sampler/scheduler/denoise）不再被全局默认覆盖，保留工作流模板值
+    expect(promptFixed['4'].inputs.steps).toBe(20);
+    expect(promptFixed['4'].inputs.cfg).toBe(7);
+    expect(promptFixed['4'].inputs.sampler_name).toBe('euler');
+    expect(promptFixed['4'].inputs.scheduler).toBe('normal');
+    expect(promptFixed['4'].inputs.denoise).toBe(1);
 
     const promptRandom = await workflow.buildPrompt(spec, uiFixtureJson, {
       prompt: '测试随机种子',
@@ -822,11 +843,19 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(t2iSpec.inputs.some(i => i.kind === 'image')).toBe(false);
     expect(t2iSpec.inputs.some(i => i.kind === 'text')).toBe(true);
     expect(t2iSpec.outputs.some(o => o.kind === 'image' && o.classType === 'PreviewImage')).toBe(true);
+    // #555 被标记为提示词占位节点：作为 primary 文字输入暴露
+    const primaryText = t2iSpec.inputs.find(i => i.kind === 'text' && i.primary);
+    expect(primaryText).toEqual(expect.objectContaining({ nodeId: '555', field: 'text', classType: 'Text Multiline' }));
 
     const t2iPrompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, { prompt: 'A futuristic city in neon rain' });
-    // 提示词注入到 CLIPTextEncode，PreviewImage 输出
+    // 提示词写入 #555 占位节点，经前缀/后缀/风格管线流入 CLIPTextEncode；
+    // #553 → #477 的 text 链接保持不被替换
+    expect(t2iPrompt['555'].class_type).toBe('Text Multiline');
+    expect(t2iPrompt['555'].inputs.text).toBe('A futuristic city in neon rain');
     expect(t2iPrompt['477'].class_type).toBe('CLIPTextEncode');
-    expect(t2iPrompt['477'].inputs.text).toBe('A futuristic city in neon rain');
+    expect(t2iPrompt['477'].inputs.text).toEqual(['553', 0]);
+    expect(t2iPrompt['553'].inputs.string).toEqual(['547', 0]);
+    expect(t2iPrompt['521'].inputs.text_b).toEqual(['555', 0]);
     expect(t2iPrompt['578'].class_type).toBe('PreviewImage');
     // API 图里不残留 Set/Get 虚拟节点
     const classTypes = Object.values(t2iPrompt).map((n: any) => n.class_type);
@@ -899,20 +928,143 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(unetLoader?.inputs.unet_name).toBe('KREA2/pornmasterKrea2_v2TurboInt8.safetensors');
   });
 
-  it('死节点裁剪：输出无人消费的加载器不进入参数面板与提交图', async () => {
+  it('Power Lora Loader (rgthree)：暴露单个多选 LoRA 参数并去重到全部 LoRA 节点', async () => {
     const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
-    // 采样器/调度器只暴露一组（3 个 KSamplerAdvanced 去重），注入应用到全部 3 个采样节点
-    const samplers = t2iSpec.params.filter(p => p.field === 'sampler_name');
-    expect(samplers).toHaveLength(1);
-    expect(samplers[0]!.nodeId).toBe('478'); // 主节点为第一个 KSamplerAdvanced
-    expect(samplers[0]!.applyTo?.sort()).toEqual(['542', '545']); // 其余采样节点一并应用
+    const loras = t2iSpec.params.filter(p => p.field === 'lora' && p.multiple);
+    expect(loras).toHaveLength(1);
+    expect(loras[0]!.id).toBe('lora-548');
+    expect(loras[0]!.label).toBe('LoRA（多选）');
+    expect(loras[0]!.type).toBe('combo');
+    expect(loras[0]!.multiple).toBe(true);
+    expect(loras[0]!.strengthable).toBe(true);
+    expect(loras[0]!.min).toBe(-10);
+    expect(loras[0]!.max).toBe(10);
+    expect(loras[0]!.step).toBe(0.05);
+    expect(loras[0]!.applyTo?.sort()).toEqual(['554', '557']);
+    // 选项来自核心 LoraLoader 的完整 lora 列表（过滤 None），而非工作流内联列表
+    expect(loras[0]!.options).toEqual(expect.arrayContaining(['a.safetensors', 'KREA2/Afterlight_v1.safetensors', 'KREA2/lenovo_krea2.safetensors']));
+    expect(loras[0]!.options).not.toContain('None');
+    // 默认值 = 主节点（548）已开启的 LoRA（含强度），模板中全部未开启
+    expect(loras[0]!.default).toEqual([]);
+  });
+
+  it('Power Lora Loader (rgthree)：object_info 缺失时回退到工作流内联 LoRA 列表', async () => {
+    const oi = JSON.parse(JSON.stringify(OBJECT_INFO));
+    delete oi.LoraLoader;
+    delete oi.LoraLoaderModelOnly;
+    const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, oi);
+    const loras = t2iSpec.params.filter(p => p.field === 'lora' && p.multiple);
+    expect(loras).toHaveLength(1);
+    expect(loras[0]!.options).toEqual(expect.arrayContaining(['KREA2/lenovo_krea2.safetensors', 'KREA2/realism_engine_krea2_v3.1.safetensors']));
+  });
+
+  it('buildPrompt 注入多选 LoRA：前 N 个槽位开启、保留默认强度，其余槽位关闭', async () => {
+    const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
     const prompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, {
-      prompt: 'dedupe test',
-      params: { [samplers[0]!.id]: 'dpmpp_2m' },
+      prompt: 'lora injection test',
+      params: { 'lora-548': ['KREA2/Afterlight_v1.safetensors', 'a.safetensors'] },
+    });
+    // 主节点 548：lora_1/lora_2 开启并填入所选 LoRA（保留槽位默认强度），其余关闭
+    expect(prompt['548'].inputs.lora_1).toEqual({ on: true, lora: 'KREA2/Afterlight_v1.safetensors', strength: 0.6 });
+    expect(prompt['548'].inputs.lora_2).toEqual({ on: true, lora: 'a.safetensors', strength: 0.4 });
+    expect(prompt['548'].inputs.lora_3).toEqual({ on: false, lora: 'KREA2/realism_engine_krea2_v2.safetensors', strength: 0.4 });
+    // 其余节点同样注入：原开启的槽位（554 的 lora_8、557 的 lora_4）被关闭
+    expect(prompt['554'].inputs.lora_1).toMatchObject({ on: true, lora: 'KREA2/Afterlight_v1.safetensors' });
+    expect(prompt['554'].inputs.lora_2).toMatchObject({ on: true, lora: 'a.safetensors' });
+    expect(prompt['554'].inputs.lora_8).toMatchObject({ on: false });
+    expect(prompt['557'].inputs.lora_1).toMatchObject({ on: true, lora: 'KREA2/Afterlight_v1.safetensors' });
+    expect(prompt['557'].inputs.lora_4).toMatchObject({ on: false });
+  });
+
+  it('buildPrompt 注入带显式强度的 LoRA 项：使用指定强度覆盖槽位默认', async () => {
+    const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
+    const prompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, {
+      prompt: 'lora strength injection test',
+      params: {
+        'lora-548': [
+          { name: 'KREA2/Afterlight_v1.safetensors', strength: 0.7 },
+          { name: 'a.safetensors', strength: -0.3 },
+        ],
+      },
+    });
+    expect(prompt['548'].inputs.lora_1).toEqual({ on: true, lora: 'KREA2/Afterlight_v1.safetensors', strength: 0.7 });
+    expect(prompt['548'].inputs.lora_2).toEqual({ on: true, lora: 'a.safetensors', strength: -0.3 });
+    expect(prompt['548'].inputs.lora_3).toMatchObject({ on: false });
+    expect(prompt['557'].inputs.lora_1).toMatchObject({ on: true, strength: 0.7 });
+  });
+
+  it('buildPrompt 注入空 LoRA 列表：全部 Power Lora Loader 槽位关闭', async () => {
+    const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
+    const prompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, {
+      prompt: 'clear lora test',
+      params: { 'lora-548': [] },
+    });
+    for (const nid of ['548', '554', '557']) {
+      const inputs = prompt[nid].inputs as Record<string, unknown>;
+      for (const [key, value] of Object.entries(inputs)) {
+        if (/^lora_\d+$/.test(key)) expect((value as { on?: boolean }).on).toBe(false);
+      }
+    }
+  });
+
+  it('未配置 LoRA 时保留工作流内各节点的原始 LoRA 设置', async () => {
+    const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
+    const prompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, { prompt: 'keep defaults' });
+    expect(prompt['554'].inputs.lora_8).toMatchObject({ on: true });
+    expect(prompt['557'].inputs.lora_4).toMatchObject({ on: true });
+  });
+
+  it('多采样节点：采样器/调度器按节点分别暴露并可分别注入', async () => {
+    const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
+    // 3 个 KSamplerAdvanced 各自暴露一个采样器参数（不去重，无 applyTo）
+    const samplers = t2iSpec.params.filter(p => p.field === 'sampler_name');
+    expect(samplers).toHaveLength(3);
+    expect(samplers.map(p => p.nodeId).sort()).toEqual(['478', '542', '545']);
+    expect(samplers.every(p => !p.applyTo)).toBe(true);
+    expect(samplers.map(p => p.label)).toEqual([
+      '采样器 · 节点 478',
+      '采样器 · 节点 542',
+      '采样器 · 节点 545',
+    ]);
+    const schedulers = t2iSpec.params.filter(p => p.field === 'scheduler');
+    expect(schedulers).toHaveLength(3);
+
+    // 未配置时保留各节点模板内的采样器设计（er_sde → dpmpp_sde → er_sde）
+    const promptDefault = await workflow.buildPrompt(t2iSpec, krea2T2iJson, { prompt: 'multi sampler default' });
+    expect(promptDefault['478'].inputs.sampler_name).toBe('er_sde');
+    expect(promptDefault['542'].inputs.sampler_name).toBe('dpmpp_sde');
+    expect(promptDefault['545'].inputs.sampler_name).toBe('er_sde');
+
+    // 按节点分别注入：只改目标节点，不影响其他节点
+    const prompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, {
+      prompt: 'multi sampler test',
+      params: {
+        [samplers.find(p => p.nodeId === '478')!.id]: 'dpmpp_2m',
+        [schedulers.find(p => p.nodeId === '542')!.id]: 'karras',
+      },
     });
     expect(prompt['478'].inputs.sampler_name).toBe('dpmpp_2m');
-    expect(prompt['542'].inputs.sampler_name).toBe('dpmpp_2m');
-    expect(prompt['545'].inputs.sampler_name).toBe('dpmpp_2m');
+    expect(prompt['478'].inputs.scheduler).toBe('simple'); // 未覆盖的调度器保留模板值
+    expect(prompt['542'].inputs.sampler_name).toBe('dpmpp_sde'); // 未覆盖的采样器保留模板值
+    expect(prompt['542'].inputs.scheduler).toBe('karras');
+    expect(prompt['545'].inputs.sampler_name).toBe('er_sde');
+    expect(prompt['545'].inputs.scheduler).toBe('simple');
+  });
+
+  it('死节点裁剪：输出无人消费的加载器不进入参数面板与提交图', async () => {
+    const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
+    // 步数/CFG 等统一采样参数仍去重为单个控件（注入应用到全部采样节点）
+    const steps = t2iSpec.params.filter(p => p.field === 'steps');
+    expect(steps).toHaveLength(1);
+    expect(steps[0]!.nodeId).toBe('478');
+    expect(steps[0]!.applyTo?.sort()).toEqual(['542', '545']);
+    const prompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, {
+      prompt: 'dedupe test',
+      params: { [steps[0]!.id]: 18 },
+    });
+    expect(prompt['478'].inputs.steps).toBe(18);
+    expect(prompt['542'].inputs.steps).toBe(18);
+    expect(prompt['545'].inputs.steps).toBe(18);
     // 死节点从提交图中消失，活链保留
     expect(prompt['482']).toBeUndefined(); // fluxKlein UNET
     expect(prompt['483']).toBeUndefined(); // Qwen3-8B GGUF CLIP

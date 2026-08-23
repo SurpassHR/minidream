@@ -3146,6 +3146,83 @@
   color: var(--text-tertiary);
 }
 
+/* ============ 可筛选多选下拉（MultiFilterSelect） ============ */
+.multi-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.multi-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 6px 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.multi-filter-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multi-filter-chip-strength {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+}
+
+.multi-filter-chip-strength-label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.multi-filter-chip-strength-input {
+  width: 46px;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-size: 11px;
+  text-align: right;
+  color: var(--text-primary);
+  background: var(--bg-page);
+  outline: none;
+}
+
+.multi-filter-chip-strength-input:focus {
+  border-color: var(--brand-deep);
+}
+
+.multi-filter-chip-x {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.multi-filter-chip-x:hover {
+  color: var(--text-primary);
+  background: var(--bg-disabled);
+}
+
 /* ============ 状态页 ============ */
 .app-loading,
 .app-error {

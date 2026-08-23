@@ -157,4 +157,53 @@ describe('plugins settings', () => {
       },
     });
   });
+
+  it('保存多选（LoRA 数组）参数配置并过滤空数组与非字符串项', () => {
+    const updated = updatePluginsSettings(file, {
+      config: {
+        'image_krea2_turbo_t2i': {
+          'lora-548': ['KREA2/Afterlight_v1.safetensors', 'a.safetensors'],
+          'unet_name-30_sg10': 'krea2_turbo_fp8_scaled.safetensors',
+          'lora-empty': [],
+          'lora-mixed': ['ok.safetensors', 123 as never, '  '],
+        },
+      },
+    });
+    expect(updated.plugins.config).toEqual({
+      'image_krea2_turbo_t2i': {
+        'lora-548': ['KREA2/Afterlight_v1.safetensors', 'a.safetensors'],
+        'unet_name-30_sg10': 'krea2_turbo_fp8_scaled.safetensors',
+        'lora-mixed': ['ok.safetensors'],
+      },
+    });
+    // 读取时保持数组类型
+    expect(readSettings(file).plugins.config['image_krea2_turbo_t2i']!['lora-548']).toEqual([
+      'KREA2/Afterlight_v1.safetensors',
+      'a.safetensors',
+    ]);
+  });
+
+  it('保存带强度的 LoRA 项数组（含字符串项补默认强度、过滤非法项）', () => {
+    const updated = updatePluginsSettings(file, {
+      config: {
+        'image_krea2_turbo_t2i': {
+          'lora-548': [
+            { name: 'KREA2/Afterlight_v1.safetensors', strength: 0.7 },
+            'a.safetensors',
+            { name: 'bad', strength: Number.NaN },
+            { name: '  ', strength: 0.5 },
+          ],
+        },
+      },
+    });
+    expect(updated.plugins.config['image_krea2_turbo_t2i']!['lora-548']).toEqual([
+      { name: 'KREA2/Afterlight_v1.safetensors', strength: 0.7 },
+      { name: 'a.safetensors', strength: 1 },
+    ]);
+    // 读取时保持带强度项
+    expect(readSettings(file).plugins.config['image_krea2_turbo_t2i']!['lora-548']).toEqual([
+      { name: 'KREA2/Afterlight_v1.safetensors', strength: 0.7 },
+      { name: 'a.safetensors', strength: 1 },
+    ]);
+  });
 });

@@ -13,11 +13,20 @@ export interface StorageSettings {
   outputDir: string;
 }
 
+/** 多选参数带强度的配置项（如 LoRA：名称 + 强度） */
+export interface PluginLoraItem {
+  name: string;
+  strength: number;
+}
+
+/** 插件参数配置值：单值 / 多选字符串数组 / 多选带强度数组（允许混合元素，保存时规整） */
+export type PluginConfigValue = string | Array<string | PluginLoraItem>;
+
 /** 生成插件（工作流）配置：停用状态 + 每个工作流的 combo 参数覆盖（paramId → 值） */
 export interface PluginsSettings {
   disabled: string[];
-  /** workflowId → { paramId: 选中值 }，仅存与默认不同的覆盖 */
-  config: Record<string, Record<string, string>>;
+  /** workflowId → { paramId: 选中值 }（多选参数为 string[] 或带强度 {name,strength}[]），仅存与默认不同的覆盖 */
+  config: Record<string, Record<string, PluginConfigValue>>;
 }
 
 export type AgentThinking = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -179,15 +188,39 @@ export function readSettings(file: string): AppSettings {
   }
 }
 
-/** 规整插件配置：{ workflowId: { paramId: string } } */
-function normalizePluginConfig(raw: unknown): Record<string, Record<string, string>> {
+/** 校验单个带强度项（{name, strength}） */
+function isLoraItem(value: unknown): value is PluginLoraItem {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.name === 'string' && v.name.trim().length > 0 && typeof v.strength === 'number' && Number.isFinite(v.strength);
+}
+
+/** 规整插件配置：{ workflowId: { paramId: 单值 | string[] | 带强度项数组 } } */
+function normalizePluginConfig(raw: unknown): Record<string, Record<string, PluginConfigValue>> {
   if (!raw || typeof raw !== 'object') return {};
-  const out: Record<string, Record<string, string>> = {};
+  const out: Record<string, Record<string, PluginConfigValue>> = {};
   for (const [wfId, cfg] of Object.entries(raw as Record<string, unknown>)) {
     if (!cfg || typeof cfg !== 'object') continue;
-    const entries: Record<string, string> = {};
+    const entries: Record<string, PluginConfigValue> = {};
     for (const [paramId, value] of Object.entries(cfg as Record<string, unknown>)) {
-      if (paramId.trim() && typeof value === 'string' && value.trim()) entries[paramId] = value;
+      if (!paramId.trim()) continue;
+      if (typeof value === 'string' && value.trim()) {
+        entries[paramId] = value;
+      } else if (Array.isArray(value)) {
+        // 数组中含带强度对象 → 视为带强度项数组（字符串项补默认强度 1）；否则保持纯字符串数组
+        const hasItems = value.some(v => isLoraItem(v));
+        if (hasItems) {
+          const items: PluginLoraItem[] = [];
+          for (const v of value) {
+            if (isLoraItem(v)) items.push({ name: v.name.trim(), strength: v.strength });
+            else if (typeof v === 'string' && v.trim()) items.push({ name: v.trim(), strength: 1 });
+          }
+          if (items.length) entries[paramId] = items;
+        } else {
+          const arr = value.filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
+          if (arr.length) entries[paramId] = arr;
+        }
+      }
     }
     if (Object.keys(entries).length) out[wfId] = entries;
   }

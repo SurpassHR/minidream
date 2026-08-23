@@ -14,6 +14,8 @@ import {
   type WorkflowSpec,
 } from '../api';
 import FilterSelect from './FilterSelect';
+import MultiFilterSelect, { type MultiSelectItem } from './MultiFilterSelect';
+import type { PluginConfigValue } from '../api';
 
 interface Category {
   id: string;
@@ -128,15 +130,15 @@ export default function SettingsModal({
     fabricatedHistory: FabricatedHistoryMessage[];
   } | null>(null);
 
-  // 插件（工作流）状态：停用列表 + 参数配置（workflowId → { paramId: 值 }）
+  // 插件（工作流）状态：停用列表 + 参数配置（workflowId → { paramId: 值，多选参数为 string[] 或带强度项 }）
   const [pluginDisabled, setPluginDisabled] = useState<string[]>([]);
   const [pluginDraft, setPluginDraft] = useState<Set<string> | null>(null);
-  const [pluginConfig, setPluginConfig] = useState<Record<string, Record<string, string>>>({});
-  const [pluginConfigDraft, setPluginConfigDraft] = useState<Record<string, Record<string, string>> | null>(null);
+  const [pluginConfig, setPluginConfig] = useState<Record<string, Record<string, PluginConfigValue>>>({});
+  const [pluginConfigDraft, setPluginConfigDraft] = useState<Record<string, Record<string, PluginConfigValue>> | null>(null);
   /** 当前进入插件详情设置的工作流 id；null 表示显示插件列表 */
   const [configTarget, setConfigTarget] = useState<string | null>(null);
   const [pluginsTip, setPluginsTip] = useState<string | null>(null);
-  const [pluginsSaved, setPluginsSaved] = useState<{ disabled: string[]; config: Record<string, Record<string, string>> } | null>(null);
+  const [pluginsSaved, setPluginsSaved] = useState<{ disabled: string[]; config: Record<string, Record<string, PluginConfigValue>> } | null>(null);
   const [savingAll, setSavingAll] = useState(false);
   const [toastFlash, setToastFlash] = useState<'saved' | 'failed' | null>(null);
   const [pluginsError, setPluginsError] = useState<string | null>(null);
@@ -223,7 +225,7 @@ export default function SettingsModal({
   };
 
   /** 更新某工作流的参数覆盖草稿 */
-  const setPluginParam = (wfId: string, paramId: string, value: string) => {
+  const setPluginParam = (wfId: string, paramId: string, value: PluginConfigValue) => {
     setPluginConfigDraft(prev => {
       const base = prev ?? {};
       const wf = { ...(base[wfId] ?? {}) };
@@ -232,11 +234,31 @@ export default function SettingsModal({
     });
   };
 
-  /** 当前 select 显示值：覆盖配置 → 工作流默认值 → 选项首项 */
-  const configValueOf = (wfId: string, param: WorkflowParam): string => {
+  /** 把默认/覆盖值规整为多选项（兼容旧 string[] 配置 → 默认强度 1） */
+  const asItems = (v: unknown): MultiSelectItem[] =>
+    Array.isArray(v)
+      ? v.map(item => {
+          if (typeof item === 'string') return { name: item, strength: 1 };
+          const o = item as Record<string, unknown>;
+          return {
+            name: typeof o.name === 'string' ? o.name : '',
+            strength: typeof o.strength === 'number' && Number.isFinite(o.strength) ? o.strength : 1,
+          };
+        })
+      : [];
+
+  /** 当前 select 显示值：覆盖配置 → 工作流默认值 → 选项首项（多选参数为 string[] 或带强度项） */
+  const configValueOf = (wfId: string, param: WorkflowParam): PluginConfigValue => {
     const overridden = pluginConfigDraft?.[wfId]?.[param.id];
-    if (overridden) return overridden;
+    if (overridden !== undefined) return overridden;
     const options = param.options ?? [];
+    if (param.multiple) {
+      if (param.strengthable) {
+        return asItems(param.default).filter(item => options.length === 0 || options.includes(item.name));
+      }
+      if (Array.isArray(param.default)) return param.default.filter(d => options.length === 0 || options.includes(d));
+      return [];
+    }
     const def = typeof param.default === 'string' ? param.default : undefined;
     if (def && options.includes(def)) return def;
     return options[0] ?? '';
@@ -495,19 +517,37 @@ export default function SettingsModal({
         <div className="pref-empty">该插件没有可配置参数（需连接 ComfyUI 才能读取节点选项）</div>
       ) : (
         <div className="plugin-detail-grid">
-          {comboParamsOf(pluginTarget).map(param => (
-            <label key={param.id} className="plugin-config-field">
-              <span className="plugin-config-label">{param.label}</span>
-              <FilterSelect
-                className="plugin-config-select"
-                value={configValueOf(pluginTarget.id, param)}
-                onChange={v => setPluginParam(pluginTarget.id, param.id, v)}
-                options={param.options ?? []}
-                ariaLabel={param.label}
-                searchPlaceholder={`筛选 ${param.label}…`}
-              />
-            </label>
-          ))}
+          {comboParamsOf(pluginTarget).map(param => {
+            const current = configValueOf(pluginTarget.id, param);
+            return (
+              <label key={param.id} className="plugin-config-field">
+                <span className="plugin-config-label">{param.label}</span>
+                {param.multiple ? (
+                  <MultiFilterSelect
+                    className="plugin-config-select"
+                    value={asItems(current)}
+                    onChange={v => setPluginParam(pluginTarget.id, param.id, v)}
+                    options={param.options ?? []}
+                    ariaLabel={param.label}
+                    searchPlaceholder={`筛选 ${param.label}…`}
+                    defaultStrength={1}
+                    strengthMin={param.strengthable ? (param.min ?? -10) : -10}
+                    strengthMax={param.strengthable ? (param.max ?? 10) : 10}
+                    strengthStep={param.strengthable ? (param.step ?? 0.05) : 0.05}
+                  />
+                ) : (
+                  <FilterSelect
+                    className="plugin-config-select"
+                    value={typeof current === 'string' ? current : ''}
+                    onChange={v => setPluginParam(pluginTarget.id, param.id, v)}
+                    options={param.options ?? []}
+                    ariaLabel={param.label}
+                    searchPlaceholder={`筛选 ${param.label}…`}
+                  />
+                )}
+              </label>
+            );
+          })}
         </div>
       )}
       {pluginsError && <div className="settings-error">{pluginsError}</div>}

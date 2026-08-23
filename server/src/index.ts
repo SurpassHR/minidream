@@ -21,6 +21,8 @@ import {
   updatePluginsSettings,
   type ImageGenSettings,
   type AgentSettings,
+  type PluginConfigValue,
+  type PluginLoraItem,
 } from './settings.js';
 import {
   buildSpecsCached,
@@ -477,8 +479,9 @@ app.post('/api/settings/plugins', async (req, res) => {
       : [];
     const disabled = requested.filter(id => known.has(id));
 
-    // 参数配置：只保留「已知工作流 + 已知参数 + 值在 combo 列表中（列表为空时不校验）」的条目
-    const config: Record<string, Record<string, string>> = {};
+    // 参数配置：只保留「已知工作流 + 已知参数 + 值在 combo 列表中（列表为空时不校验）」的条目；
+    // 多选参数接受 string[]（带强度参数还接受 {name, strength}[]），每项需在 combo 列表中
+    const config: Record<string, Record<string, PluginConfigValue>> = {};
     const rawConfig =
       body.config && typeof body.config === 'object'
         ? (body.config as Record<string, Record<string, unknown>>)
@@ -487,11 +490,43 @@ app.post('/api/settings/plugins', async (req, res) => {
       if (!known.has(wfId) || !cfg || typeof cfg !== 'object') continue;
       const spec = specs.find(s => s.id === wfId)!;
       const byId = new Map(spec.params.map(p => [p.id, p]));
-      const entries: Record<string, string> = {};
+      const entries: Record<string, PluginConfigValue> = {};
       for (const [paramId, value] of Object.entries(cfg)) {
-        if (typeof value !== 'string' || !value.trim()) continue;
         const param = byId.get(paramId);
         if (!param || param.type !== 'combo') continue;
+        if (Array.isArray(value)) {
+          if (!param.multiple) continue;
+          if (param.strengthable) {
+            // 带强度多选：字符串项补默认强度 1；对象项校验名称与强度并钳制到 [-10, 10]
+            const items: PluginLoraItem[] = [];
+            for (const v of value) {
+              if (typeof v === 'string' && v.trim()) {
+                if (param.options?.length && !param.options.includes(v)) continue;
+                items.push({ name: v.trim(), strength: 1 });
+              } else if (v && typeof v === 'object' && !Array.isArray(v)) {
+                const o = v as Record<string, unknown>;
+                if (typeof o.name !== 'string' || !o.name.trim()) continue;
+                if (param.options?.length && !param.options.includes(o.name)) continue;
+                const strength =
+                  typeof o.strength === 'number' && Number.isFinite(o.strength)
+                    ? Math.min(10, Math.max(-10, o.strength))
+                    : 1;
+                items.push({ name: o.name.trim(), strength });
+              }
+            }
+            if (items.length) entries[paramId] = items;
+            continue;
+          }
+          // 普通多选：只接受字符串数组且每项在 combo 列表中
+          const arr = value.filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
+          if (!arr.length) continue;
+          if (param.options?.length && !arr.every(v => param.options!.includes(v))) continue;
+          entries[paramId] = arr;
+          continue;
+        }
+        if (typeof value !== 'string' || !value.trim()) continue;
+        // 多选参数不接受单值
+        if (param.multiple) continue;
         // 有 combo 列表时校验值在列表中，避免保存非法值；无列表（ComfyUI 未连接）时放行
         if (param.options?.length && !param.options.includes(value)) continue;
         entries[paramId] = value;
@@ -1104,6 +1139,9 @@ app.post('/api/chat', async (req, res) => {
       }
     } finally {
       agentDone = true;
+      // Agent 正文回复已结束。生成任务可能仍在进行，SSE 流保持打开以推送任务进度；
+      // 前端据此停止对话气泡内的打字光标（agent:end 要等所有任务完成才发出，太晚）。
+      sendEvent('agent:reply_done', { sessionId: sid });
       cleanupAndEnd();
     }
     return;

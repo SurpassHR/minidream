@@ -54,6 +54,9 @@ const SKIP_NODE_TYPES = new Set([
 /** 文件名类 combo（ckpt_name/vae_name/lora_name...），不作为参数暴露 */
 const FILE_COMBO_FIELDS = new Set(['ckpt_name', 'vae_name', 'lora_name', 'unet_name', 'clip_name', 'control_net_name', 'audio_name']);
 
+/** rgthree Power Lora Loader 节点：lora_N 槽位为 {on, lora, strength} 对象，支持多选 LoRA */
+const POWER_LORA_LOADER_CLASS = 'Power Lora Loader (rgthree)';
+
 /** 常用参数节点的字段白名单 */
 const PARAM_FIELDS: Record<string, string[]> = {
   KSampler: ['seed', 'steps', 'cfg', 'denoise', 'sampler_name', 'scheduler'],
@@ -104,6 +107,8 @@ export interface WorkflowInput {
   defaultValue?: string;
   /** 是否必须由用户提供（素材缺失或工作流强依赖） */
   required?: boolean;
+  /** 工作流显式标记的提示词注入目标（_meta.promptPlaceholder），注入时优先于启发式 */
+  primary?: boolean;
 }
 
 export interface WorkflowParam {
@@ -117,6 +122,10 @@ export interface WorkflowParam {
   max?: number;
   step?: number;
   options?: string[];
+  /** 多选参数（如 Power Lora Loader 的 LoRA 列表）：default 与注入值为 string[] 或带强度项 */
+  multiple?: boolean;
+  /** 多选参数每项可调强度（如 LoRA）：值为 {name, strength}[]，min/max/step 描述强度范围 */
+  strengthable?: boolean;
   /** 与 id 指向节点同字段的其他节点（分阶段采样链的多个 KSampler 等），注入时一并写入 */
   applyTo?: string[];
 }
@@ -139,6 +148,98 @@ export interface WorkflowSpec {
   params: WorkflowParam[];
   /** 输出：前端据此渲染结果卡片 */
   outputs: WorkflowOutput[];
+}
+
+/* ---------- Power Lora Loader (rgthree) 支持 ---------- */
+
+/** 已安装 LoRA 列表：核心 LoraLoader / LoraLoaderModelOnly 的 lora_name combo 是完整列表 */
+function installedLoraOptions(objectInfoData: Record<string, any> | undefined): string[] {
+  for (const cls of ['LoraLoader', 'LoraLoaderModelOnly']) {
+    const def = objectInfoData?.[cls]?.input?.required?.lora_name as any;
+    if (Array.isArray(def) && Array.isArray(def[0])) {
+      return (def[0] as string[]).filter(n => n !== 'None');
+    }
+  }
+  return [];
+}
+
+/** Power Lora Loader 节点的 lora_N 槽位（{on, lora, strength} 对象） */
+function powerLoraSlots(nodeInputs: Record<string, unknown>): { key: string; on: boolean; lora: string; strength?: number }[] {
+  const slots: { key: string; on: boolean; lora: string; strength?: number }[] = [];
+  for (const [key, value] of Object.entries(nodeInputs)) {
+    if (!/^lora_\d+$/.test(key)) continue;
+    if (!value || typeof value !== 'object') continue;
+    const v = value as Record<string, unknown>;
+    if (typeof v.lora !== 'string') continue;
+    slots.push({
+      key,
+      on: v.on === true,
+      lora: v.lora,
+      strength: typeof v.strength === 'number' ? v.strength : undefined,
+    });
+  }
+  return slots.sort((a, b) => a.key.localeCompare(b.key, 'en', { numeric: true }));
+}
+
+/** 输入值是否为 Power Lora Loader 槽位对象（{on, lora, strength}） */
+function isLoraSlot(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && typeof (value as Record<string, unknown>).lora === 'string';
+}
+
+/**
+ * 把多选 LoRA 列表写入 Power Lora Loader 节点：
+ * 前 N 个槽位开启并填入所选 LoRA，其余槽位关闭；空列表 = 全部关闭。
+ * 值支持两种形态：
+ * - string[]：旧格式，强度取原槽位默认（无则 1）
+ * - {name, strength}[]：带显式强度
+ */
+function applyPowerLoras(prompt: Record<string, any>, nodeIds: string[], value: unknown): void {
+  const items: { name: string; strength?: number }[] = [];
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      if (typeof v === 'string' && v.trim()) {
+        items.push({ name: v.trim() });
+      } else if (v && typeof v === 'object' && !Array.isArray(v)) {
+        const o = v as Record<string, unknown>;
+        if (typeof o.name === 'string' && o.name.trim()) {
+          items.push({
+            name: o.name.trim(),
+            strength: typeof o.strength === 'number' && Number.isFinite(o.strength) ? o.strength : undefined,
+          });
+        }
+      }
+    }
+  }
+  for (const nodeId of nodeIds) {
+    const inputs = prompt[nodeId]?.inputs;
+    if (!inputs || typeof inputs !== 'object') continue;
+    const slots = Object.keys(inputs)
+      .filter(k => /^lora_\d+$/.test(k))
+      .sort((a, b) => Number(a.slice(5)) - Number(b.slice(5)));
+    const existing = (key: string) => (isLoraSlot(inputs[key]) ? inputs[key] : undefined);
+    if (items.length === 0) {
+      for (const key of slots) {
+        const cur = existing(key);
+        if (cur) inputs[key] = { ...cur, on: false };
+      }
+      continue;
+    }
+    for (let i = 0; i < items.length; i++) {
+      const key = slots[i] ?? `lora_${i + 1}`;
+      const cur = existing(key);
+      const strength = items[i]!.strength ?? (typeof cur?.strength === 'number' ? cur.strength : 1);
+      inputs[key] = {
+        on: true,
+        lora: items[i]!.name,
+        strength,
+      };
+    }
+    for (let i = items.length; i < slots.length; i++) {
+      const key = slots[i] as string;
+      const cur = existing(key);
+      if (cur) inputs[key] = { ...cur, on: false };
+    }
+  }
 }
 
 /* ---------- introspection ---------- */
@@ -621,10 +722,32 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
     const { class_type: cls, inputs: nodeInputs, _meta } = node as {
       class_type?: string;
       inputs?: Record<string, unknown>;
-      _meta?: { title?: string };
+      _meta?: { title?: string; promptPlaceholder?: boolean };
     };
     if (!cls || !nodeInputs) continue;
     const info = oi?.[cls]?.input;
+
+    // 显式标记的提示词占位节点（_meta.promptPlaceholder = true）：工作流作者声明
+    // “LLM 提示词直接写入此节点”（如 Krea2 模板的 #555 Text Multiline），注入后经
+    // 前缀/后缀/风格管线流入正向 CLIPTextEncode，而不是把提示词硬塞进 CLIP 节点。
+    if (_meta?.promptPlaceholder) {
+      const markedField = Object.keys(nodeInputs).find(
+        f => typeof nodeInputs[f] === 'string' && /^(text|prompt|value|string)$/i.test(f),
+      );
+      if (markedField) {
+        inputs.push({
+          id: `text-${nodeId}`,
+          kind: 'text',
+          label: '提示词',
+          nodeId,
+          field: markedField,
+          classType: cls,
+          defaultValue: nodeInputs[markedField] as string,
+          primary: true,
+        });
+        continue;
+      }
+    }
 
     // 文字输入
     if (TEXT_INPUT_CLASSES.test(cls)) {
@@ -712,6 +835,30 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
         label: _meta?.title || '生成文本',
         nodeId,
         classType: cls,
+      });
+      continue;
+    }
+
+    // Power Lora Loader (rgthree)：多选 LoRA 配置（lora_N 槽位为 {on, lora, strength} 对象，
+    // 不是常规 combo 参数，单独暴露一个多选参数）
+    if (cls === POWER_LORA_LOADER_CLASS) {
+      const slots = powerLoraSlots(nodeInputs);
+      // 默认值 = 主节点已开启的 LoRA 槽位（含各自强度）；模板中通常全部关闭 → []
+      const enabled = slots.filter(s => s.on).map(s => ({ name: s.lora, strength: typeof s.strength === 'number' ? s.strength : 1 }));
+      const optionList = installedLoraOptions(oi);
+      params.push({
+        id: `lora-${nodeId}`,
+        label: 'LoRA（多选）',
+        nodeId,
+        field: 'lora',
+        type: 'combo',
+        multiple: true,
+        strengthable: true,
+        min: -10,
+        max: 10,
+        step: 0.05,
+        options: optionList.length ? optionList : [...new Set(slots.map(s => s.lora))],
+        default: enabled,
       });
       continue;
     }
@@ -815,20 +962,31 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
     }
   }
 
-  // 采样类字段（全局采样设置本就对同名参数逐一写入同一值）：同一字段只保留一个控件，
-  // 注入时通过 applyTo 应用到该字段的全部节点（分阶段采样链的多个 KSampler 只显示一组采样器/调度器）。
+  // 采样类字段（seed/steps/cfg/denoise 对分阶段采样链通常是统一值）：同一字段只保留一个控件，
+  // 注入时通过 applyTo 应用到该字段的全部节点。
+  // sampler_name/scheduler 不去重：分阶段采样链的每个采样节点常使用不同采样器/调度器
+  // （如 Krea2 三段式 er_sde → dpmpp_sde → er_sde），需要按节点单独配置。
+  // Power Lora Loader 的多选 LoRA 也去重：同一条模型链上的多个 LoRA 节点共享一组配置。
   // 文件类 combo（unet/clip/vae/lora 等）不去重：工作流里可能存在多个真正不同的加载器。
-  const SAMPLING_FIELDS = new Set(['seed', 'noise_seed', 'steps', 'cfg', 'denoise', 'sampler_name', 'scheduler']);
+  const SAMPLING_FIELDS = new Set(['seed', 'noise_seed', 'steps', 'cfg', 'denoise']);
   const byField = new Map<string, WorkflowParam>();
   const deduped: WorkflowParam[] = [];
   for (const p of params) {
-    const first = SAMPLING_FIELDS.has(p.field) ? byField.get(p.field) : undefined;
+    const key = p.field === 'lora' && p.multiple ? 'lora' : SAMPLING_FIELDS.has(p.field) ? p.field : undefined;
+    const first = key ? byField.get(key) : undefined;
     if (!first) {
-      byField.set(p.field, p);
+      if (key) byField.set(key, p);
       deduped.push(p);
     } else {
       (first.applyTo ??= []).push(p.nodeId);
     }
+  }
+
+  // 同一字段出现在多个节点时，标签带上节点号便于区分（如多采样器工作流的“采样器 · 节点 478”）
+  const fieldCount = new Map<string, number>();
+  for (const p of deduped) fieldCount.set(p.field, (fieldCount.get(p.field) ?? 0) + 1);
+  for (const p of deduped) {
+    if (!p.multiple && (fieldCount.get(p.field) ?? 0) > 1) p.label = `${p.label} · 节点 ${p.nodeId}`;
   }
 
   return {
@@ -1174,21 +1332,28 @@ export async function buildPrompt(
   if (textInputs.length > 0) {
     const text = values.prompt?.trim();
     if (!text) throw new ComfyUIError('请输入提示词后再生成');
-    // 启发式：优先注入「正面」节点（标题含 positive/prompt/正面 或占位文本较长），跳过明显负面节点
-    const scored = textInputs
-      .map(i => {
-        const node = prompt[i.nodeId];
-        const title = (node?._meta?.title ?? '') as string;
-        let score = 0;
-        if (/negative|负面|负向|反向|neg/i.test(title)) score -= 10;
-        else if (/positive|正面|正向|prompt|提示/i.test(title)) score += 3;
-        const cur = String(i.defaultValue ?? '');
-        if (cur.trim()) score += Math.min(2, cur.length / 30);
-        return { input: i, score };
-      })
-      .sort((a, b) => b.score - a.score);
-    const target = scored[0]?.input;
-    if (target) prompt[target.nodeId].inputs[target.field] = text;
+    // 工作流显式标记的提示词占位节点（如 Krea2 #555）：直接写入该节点，
+    // 让前缀/后缀/风格管线继续生效（正向 CLIPTextEncode 的 text 保持链接不被替换）。
+    const primary = textInputs.find(i => i.primary && prompt[i.nodeId]?.inputs);
+    if (primary) {
+      prompt[primary.nodeId].inputs[primary.field] = text;
+    } else {
+      // 启发式：优先注入「正面」节点（标题含 positive/prompt/正面 或占位文本较长），跳过明显负面节点
+      const scored = textInputs
+        .map(i => {
+          const node = prompt[i.nodeId];
+          const title = (node?._meta?.title ?? '') as string;
+          let score = 0;
+          if (/negative|负面|负向|反向|neg/i.test(title)) score -= 10;
+          else if (/positive|正面|正向|prompt|提示/i.test(title)) score += 3;
+          const cur = String(i.defaultValue ?? '');
+          if (cur.trim()) score += Math.min(2, cur.length / 30);
+          return { input: i, score };
+        })
+        .sort((a, b) => b.score - a.score);
+      const target = scored[0]?.input;
+      if (target) prompt[target.nodeId].inputs[target.field] = text;
+    }
   }
 
   // 上传素材注入
@@ -1199,7 +1364,11 @@ export async function buildPrompt(
     // 未上传且非必传 → 保留模板默认文件名；必传但未上传 → 前端已拦截
   }
 
-  // 参数注入（优先使用显式传递的 params，未传递时从 settings 获取全局默认值）
+  // 参数注入：优先使用显式传递的 params（插件配置 / 任务参数）。
+  // 采样参数（steps/cfg/denoise/sampler_name/scheduler）不再从全局 settings 覆盖：
+  // 工作流模板内按节点配置的采样设计（如 Krea2 三段式采样链）是生成质量的关键，
+  // 全局默认值（20/7/euler/normal）会静默破坏它；需要覆盖时在插件设置中按工作流配置。
+  // 全局 settings 仅注入 seed（随机/固定）与 width/height（生成尺寸）。
   const s = values.settings;
   for (const p of spec.params) {
     let v = values.params?.[p.id];
@@ -1215,16 +1384,6 @@ export async function buildPrompt(
           const min = typeof p.min === 'number' ? p.min : 0;
           v = min + Math.floor(Math.random() * (max - min + 1));
         }
-      } else if (p.field === 'steps' && typeof s.steps === 'number') {
-        v = s.steps;
-      } else if (p.field === 'cfg' && typeof s.cfg === 'number') {
-        v = s.cfg;
-      } else if (p.field === 'sampler_name' && typeof s.sampler_name === 'string') {
-        v = s.sampler_name;
-      } else if (p.field === 'scheduler' && typeof s.scheduler === 'string') {
-        v = s.scheduler;
-      } else if (p.field === 'denoise' && typeof s.denoise === 'number') {
-        v = s.denoise;
       } else if (p.field === 'width' && typeof s.width === 'number') {
         v = s.width;
       } else if (p.field === 'height' && typeof s.height === 'number') {
@@ -1233,6 +1392,11 @@ export async function buildPrompt(
     }
 
     if (v === undefined) continue;
+    // Power Lora Loader 多选 LoRA：写入 lora_N 槽位（开启前 N 个并填入所选 LoRA）
+    if (p.multiple && p.field === 'lora') {
+      applyPowerLoras(prompt, [...(p.applyTo ?? []), p.nodeId], v);
+      continue;
+    }
     // 同一字段去重后应用到全部节点（分阶段采样链的多个 KSampler 等）
     for (const nid of [...(p.applyTo ?? []), p.nodeId]) {
       if (prompt[nid]?.inputs) prompt[nid].inputs[p.field] = v;

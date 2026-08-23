@@ -248,6 +248,8 @@ export default function App() {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
+  /** Agent 正文回复是否已结束：回复完成后即使生成任务仍在进行，也不再显示打字光标 */
+  const [agentReplyDone, setAgentReplyDone] = useState(false);
   const [activity, setActivity] = useState<ActivitySnapshot>({ sessions: [], tasks: [] });
   const [activityOpen, setActivityOpen] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -359,12 +361,17 @@ export default function App() {
           !snapshot.sessions.some(session => session.sessionId === loadedConv && session.status === 'running')
         ) return;
         setSending(true);
+        // 恢复进行中的会话时，Agent 正文大概率已输出完毕，直接停止打字光标
+        setAgentReplyDone(true);
         closeSubscription = openSessionEvents(loadedConv, event => {
           if (event.type === 'agent:started' || event.type === 'agent:end') {
             if (event.sessionId) {
               activeConvRef.current = event.sessionId;
               setActiveConv(event.sessionId);
             }
+          }
+          if (event.type === 'agent:reply_done' || event.type === 'agent:end') {
+            setAgentReplyDone(true);
           }
           if (event.type === 'session:renamed') {
             setConversations(prev =>
@@ -398,6 +405,7 @@ export default function App() {
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setSending(true);
+    setAgentReplyDone(false);
     const streamAbort = new AbortController();
     streamAbortRef.current = streamAbort;
     // 记录该流所属会话：切换会话后，属于旧会话的事件不再写入当前视图
@@ -415,6 +423,9 @@ export default function App() {
         content,
         { ...opts, sessionId: activeConv },
         event => {
+          if (event.type === 'agent:reply_done') {
+            setAgentReplyDone(true);
+          }
           if (
             event.type === 'agent:thinking' ||
             event.type === 'agent:text' ||
@@ -604,6 +615,7 @@ export default function App() {
     } finally {
       if (streamAbortRef.current === streamAbort) streamAbortRef.current = null;
       setSending(false);
+      setAgentReplyDone(true);
     }
   };
 
@@ -829,7 +841,7 @@ export default function App() {
               <div className="chat-scroll" ref={chatRef}>
                 <ChatView
                   messages={messages}
-                  liveIndex={sending ? messages.length - 1 : null}
+                  liveIndex={sending && !agentReplyDone ? messages.length - 1 : null}
                   onRegenerate={handleRegenerate}
                   onCancelJob={handleCancelJob}
                   onCancelTask={handleCancelTask}

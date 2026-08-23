@@ -136,6 +136,8 @@ export interface ToolCallData {
 
 export type StreamChatEvent =
   | { type: 'agent:started'; sessionId: string; status?: string }
+  /** Agent 正文回复已结束（生成任务可能仍在进行，用于停止打字光标） */
+  | { type: 'agent:reply_done' }
   | { type: 'agent:status'; status: string }
   | { type: 'agent:thinking'; delta: string }
   | { type: 'agent:text'; delta: string }
@@ -205,6 +207,8 @@ export interface WorkflowInput {
   defaultValue?: string;
   /** 是否必须由用户提供（素材缺失或工作流强依赖） */
   required?: boolean;
+  /** 工作流显式标记的提示词注入目标（_meta.promptPlaceholder） */
+  primary?: boolean;
 }
 
 export interface WorkflowParam {
@@ -218,6 +222,10 @@ export interface WorkflowParam {
   max?: number;
   step?: number;
   options?: string[];
+  /** 多选参数（如 Power Lora Loader 的 LoRA 列表）：值为 string[] */
+  multiple?: boolean;
+  /** 多选参数每项可调强度（如 LoRA）：值为 {name, strength}[]，min/max/step 描述强度范围 */
+  strengthable?: boolean;
 }
 
 export interface WorkflowOutput {
@@ -356,6 +364,15 @@ export interface AgentModel {
   images: boolean;
 }
 
+/** 多选参数带强度的配置项（如 LoRA：名称 + 强度） */
+export interface PluginLoraItem {
+  name: string;
+  strength: number;
+}
+
+/** 插件参数配置值：单值 / 多选字符串数组 / 多选带强度数组 */
+export type PluginConfigValue = string | string[] | PluginLoraItem[];
+
 export interface AppSettings {
   comfyui: {
     baseUrl: string;
@@ -366,17 +383,17 @@ export interface AppSettings {
   /** 生成插件（工作流）停用状态与参数配置 */
   plugins?: {
     disabled: string[];
-    /** workflowId → { paramId: 选中值 }，仅存与默认不同的覆盖 */
-    config?: Record<string, Record<string, string>>;
+    /** workflowId → { paramId: 选中值 }（多选参数为 string[] 或带强度 {name,strength}[]），仅存与默认不同的覆盖 */
+    config?: Record<string, Record<string, PluginConfigValue>>;
   };
 }
 
 export async function savePluginsSettings(
   disabled: string[],
-  config?: Record<string, Record<string, string>>,
+  config?: Record<string, Record<string, PluginConfigValue>>,
 ): Promise<{
   ok: boolean;
-  plugins: { disabled: string[]; config: Record<string, Record<string, string>> };
+  plugins: { disabled: string[]; config: Record<string, Record<string, PluginConfigValue>> };
 }> {
   return http('/api/settings/plugins', {
     method: 'POST',
@@ -525,6 +542,8 @@ export async function sendChatStream(
         const parsed = JSON.parse(dataStr);
         if (eventType === 'agent:started') {
           onEvent({ type: 'agent:started', sessionId: parsed.sessionId, status: parsed.status });
+        } else if (eventType === 'agent:reply_done') {
+          onEvent({ type: 'agent:reply_done' });
         } else if (eventType === 'agent:status') {
           onEvent({ type: 'agent:status', status: parsed.status });
         } else if (eventType === 'agent:thinking') {
