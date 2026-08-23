@@ -220,18 +220,6 @@
       "title": "Load Diffusion Model"
     }
   },
-  "530": {
-    "inputs": {
-      "images": [
-        "544",
-        0
-      ]
-    },
-    "class_type": "PreviewImage",
-    "_meta": {
-      "title": "Preview Image"
-    }
-  },
   "531": {
     "inputs": {
       "seed": 45
@@ -239,19 +227,6 @@
     "class_type": "Seed",
     "_meta": {
       "title": "Seed"
-    }
-  },
-  "532": {
-    "inputs": {
-      "filename_prefix": "KREA2/KREA2_T2I",
-      "images": [
-        "540",
-        0
-      ]
-    },
-    "class_type": "SaveImage",
-    "_meta": {
-      "title": "Save Image"
     }
   },
   "538": {
@@ -316,21 +291,6 @@
     "class_type": "KSamplerAdvanced",
     "_meta": {
       "title": "KSampler (Advanced)"
-    }
-  },
-  "544": {
-    "inputs": {
-      "resize_type": "scale by multiplier",
-      "resize_type.scale": 2,
-      "quality": "ULTRA",
-      "images": [
-        "540",
-        0
-      ]
-    },
-    "class_type": "RTXVideoSuperResolution",
-    "_meta": {
-      "title": "RTX Video Super Resolution"
     }
   },
   "545": {
@@ -783,6 +743,18 @@
     "class_type": "Power Lora Loader (rgthree)",
     "_meta": {
       "title": "Power Lora Loader (rgthree)"
+    }
+  },
+  "578": {
+    "inputs": {
+      "images": [
+        "540",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
     }
   },
   "556:11": {

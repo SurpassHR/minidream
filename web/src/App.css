@@ -2895,6 +2895,122 @@
   font-size: 12px;
 }
 
+/* ============ 生成占位动画（复刻即梦 record-loading-animation） ============ */
+
+/* 气泡下方的任务媒体区域：relative 容器，进行中 16:9 占位，渐变层覆盖其上 */
+.task-media-region {
+  position: relative;
+  width: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* 进行中：无产物时以 16:9 撑起区域高度 */
+.task-media-region.has-loading {
+  aspect-ratio: 16 / 9;
+}
+
+/* 完成淡出后：高度由产物自然撑起 */
+.task-media-region.leaving {
+  aspect-ratio: auto;
+}
+
+/* 渐变动画层：绝对覆盖整个区域 */
+.task-card-media {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-progress, #eef0f3);
+}
+
+.task-card-media-loading {
+  background: var(--canvas-image-loading-start, rgba(204, 221, 255, 0.08));
+}
+
+.task-card-media-loading .task-loading-animation {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 完成过渡：动画层淡出，露出底层图像 */
+.task-media-region.leaving .task-card-media {
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+
+/* 底层产物淡入 */
+.task-media-region.leaving .generation-results {
+  animation: task-media-fade-in 0.6s ease;
+}
+
+@keyframes task-media-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 呼吸微光层（对应即梦 container::after 的 breath 动画） */
+.task-loading-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(108deg, rgba(204, 221, 255, 0.9), rgba(204, 221, 255, 0.4));
+  animation: task-loading-breath 3.2s linear 3;
+}
+
+@keyframes task-loading-breath {
+  0% {
+    opacity: 0.06;
+  }
+  25% {
+    opacity: 0.06;
+  }
+  50% {
+    opacity: 0.1;
+  }
+  75% {
+    opacity: 0.1;
+  }
+  100% {
+    opacity: 0.06;
+  }
+}
+
+/* 进度徽章（对应即梦 progress-badge） */
+.task-progress-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  padding: 2px 7px 2px 8px;
+  border-radius: 6px;
+  background: rgba(204, 221, 255, 0.08);
+  color: var(--text-primary);
+  font-family: 'PingFang SC', system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+/* 动画层上的取消按钮（右下角） */
+.task-cancel-overlay {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 2;
+  margin-left: 0;
+}
 /* 产物网格 */
 .task-artifacts-grid {
   display: grid;

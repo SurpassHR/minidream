@@ -131,76 +131,118 @@ function ToolCallsView({ toolCalls }: { toolCalls: ToolCallData[] }) {
   );
 }
 
-/* ==================== 统一任务卡片 (TaskCard) ==================== */
+/* ==================== 生成占位动画（复刻即梦，仅渐变动画容器） ==================== */
 
-function TaskCardItem({
-  task,
+/** 单一任务的渐变动画容器：排队/生成中显示，完成后淡出让位给图像 */
+function TaskLoadingMedia({
+  queued,
+  percent,
   onCancel,
+  cancelLabel,
 }: {
-  task: TaskItem;
-  onCancel?: (taskId: string) => void;
+  queued: boolean;
+  percent: number;
+  onCancel?: () => void;
+  cancelLabel?: string;
 }) {
-  const isQueued = task.status === 'queued';
-  const isRunning = task.status === 'running';
-  const isCompleted = task.status === 'completed';
-  const isFailed = task.status === 'failed' || task.status === 'interrupted';
-  const isCanceled = task.status === 'canceled';
+  return (
+    <div className="task-card-media task-card-media-loading">
+      <div className="task-loading-glow" />
+      <video
+        className="task-loading-animation"
+        src="/assets/record-loading-animation.mp4"
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="auto"
+      />
+      <span className="task-progress-badge">
+        {queued ? '排队中...' : `生成中... ${Math.round(percent)}%`}
+      </span>
+      {onCancel && (
+        <button className="task-cancel task-cancel-overlay" onClick={onCancel}>
+          {cancelLabel ?? '取消任务'}
+        </button>
+      )}
+    </div>
+  );
+}
 
-  const activeStage = task.stages.find(s => s.status === 'active') || task.stages[task.stages.length - 1];
-  const percent = isCompleted
-    ? 100
-    : isFailed || isCanceled
-      ? 100
-      : activeStage?.progress ?? (isQueued ? 0 : 5);
+/** 气泡下方的任务媒体区域：进行中渲染渐变动画，完成后交叉过渡到图像 */
+function TaskMediaRegion({
+  tasks,
+  legacyStage,
+  done,
+  outputs,
+  onCancelTask,
+  onCancelJob,
+  jobId,
+  onOpenImage,
+}: {
+  tasks: TaskItem[];
+  legacyStage?: ChatStage;
+  done: boolean;
+  outputs: GenerationOutput[];
+  onCancelTask?: (taskId: string) => void;
+  onCancelJob?: (jobId: string) => void;
+  jobId?: string;
+  onOpenImage?: (img: LightboxImage) => void;
+}) {
+  const activeTask = tasks.find(t => t.status === 'queued' || t.status === 'running');
+  const anyTaskActive = Boolean(activeTask);
+  // 旧 stage 兼容：存在 task stage 且未取消即视为进行中
+  const legacyActive = Boolean(legacyStage && !legacyStage.cancelled && !done);
 
-  const stageName = isQueued
-    ? '排队等待 GPU 调度...'
-    : activeStage?.name || (isRunning ? '生成渲染中...' : '任务完成');
+  const isActive = anyTaskActive || legacyActive;
+
+  // 任务从进行中 -> 完成时，保留动画容器播放淡出，再卸载
+  const [leaving, setLeaving] = useState(false);
+  const prevActiveRef = useRef(isActive);
+  useEffect(() => {
+    if (prevActiveRef.current && !isActive) {
+      setLeaving(true);
+      const t = setTimeout(() => setLeaving(false), 650);
+      return () => clearTimeout(t);
+    }
+    prevActiveRef.current = isActive;
+  }, [isActive]);
+
+  const showLoading = isActive || leaving;
+  if (!showLoading && outputs.length === 0) return null;
+
+  // 进行中的任务数据（取第一个 active 任务或 legacy stage）
+  let queued = false;
+  let percent = 5;
+  let cancelFn: (() => void) | undefined;
+  let cancelLabel: string | undefined;
+  if (activeTask) {
+    queued = activeTask.status === 'queued';
+    const activeStage =
+      activeTask.stages.find(s => s.status === 'active') || activeTask.stages[activeTask.stages.length - 1];
+    percent = activeStage?.progress ?? (queued ? 0 : 5);
+    if (onCancelTask) {
+      cancelFn = () => onCancelTask(activeTask!.id);
+      cancelLabel = '取消任务';
+    }
+  } else if (legacyStage && !legacyStage.cancelled) {
+    queued = Boolean(legacyStage.queued);
+    const p = legacyStage.progress ?? { completed: 0, total: 1 };
+    percent = Math.min(100, (p.completed / Math.max(1, p.total)) * 100);
+    if (onCancelJob && jobId) {
+      cancelFn = () => onCancelJob(jobId);
+      cancelLabel = '取消生成';
+    }
+  }
 
   return (
-    <div className={`task-card task-status-${task.status}`}>
-      <div className="task-card-head">
-        <div className="task-card-title-group">
-          <span className="task-card-type">
-            {task.type === 'video_generation' ? '🎬 MiniMax 视频生成' : '🎨 Krea2 图像生成'}
-          </span>
-          <span className="task-card-id">#{task.id.slice(0, 8)}</span>
-        </div>
-        <span className={`task-badge badge-${task.status}`}>
-          {isQueued && '排队中'}
-          {isRunning && '渲染中'}
-          {isCompleted && '已完成'}
-          {isFailed && '失败'}
-          {isCanceled && '已取消'}
-        </span>
-      </div>
-
-      {/* 进度条 */}
-      <div className="task-card-progress">
-        <div
-          className={`task-card-bar ${isCanceled ? 'cancelled' : ''} ${isFailed ? 'failed' : ''}`}
-          style={{ width: `${percent}%` }}
-        />
-      </div>
-
-      <div className="task-card-footer">
-        <div className="task-card-stage-info">
-          <span className="task-stage-name">{stageName}</span>
-          {activeStage?.totalSteps && activeStage.totalSteps > 0 && (
-            <span className="task-step-count">
-              ({activeStage.step ?? 0}/{activeStage.totalSteps} 步 · {Math.round(percent)}%)
-            </span>
-          )}
-        </div>
-
-        {(isQueued || isRunning) && onCancel && (
-          <button className="task-cancel" onClick={() => onCancel(task.id)}>
-            取消任务
-          </button>
-        )}
-      </div>
-
-      {task.error && <div className="task-card-error">错误: {task.error}</div>}
+    <div className={`task-media-region${leaving ? ' leaving' : ''}${showLoading ? ' has-loading' : ''}`}>
+      {/* 底层：生成结果（完成后淡入） */}
+      {outputs.length > 0 && <GenerationOutputsView outputs={outputs} onOpenImage={onOpenImage} />}
+      {/* 上层：渐变动画覆盖（进行中显示，完成时淡出让位） */}
+      {showLoading && (
+        <TaskLoadingMedia queued={queued} percent={percent} onCancel={cancelFn} cancelLabel={cancelLabel} />
+      )}
     </div>
   );
 }
@@ -321,62 +363,18 @@ function GenerationOutputsView({
   );
 }
 
-/* ==================== 旧 Stage 兼容 TaskCard ==================== */
-
-function LegacyTaskCard({
-  stage,
-  cancelled,
-  onCancel,
-}: {
-  stage: ChatStage;
-  cancelled: boolean;
-  onCancel?: () => void;
-}) {
-  const p = stage.progress ?? { completed: 0, total: 1 };
-  const percent = cancelled ? 100 : Math.min(100, (p.completed / Math.max(1, p.total)) * 100);
-  return (
-    <div className="task-card">
-      <div className="task-card-head">
-        <span className="task-card-type">{stage.taskLabel ?? '生成中…'}</span>
-        <span className="task-card-count">
-          ({p.completed}/{p.total})
-        </span>
-      </div>
-      <div className="task-card-progress">
-        <div className={`task-card-bar${cancelled ? ' cancelled' : ''}`} style={{ width: `${percent}%` }} />
-      </div>
-      {stage.queued && !cancelled && (
-        <div className="task-card-queued">
-          <span>排队中...</span>
-          <em>{stage.queueLabel ?? '1 个任务排队中'}</em>
-          {onCancel && (
-            <button className="task-cancel" onClick={onCancel}>
-              取消生成
-            </button>
-          )}
-        </div>
-      )}
-      {cancelled && <div className="task-card-cancelled">已取消生成</div>}
-    </div>
-  );
-}
-
 /* ==================== 助手消息主体 ==================== */
 
 function AssistantMessageBody({
   message,
   live,
   onRegenerate,
-  onCancelJob,
-  onCancelTask,
   onActionCard,
   index,
 }: {
   message: ChatMessage;
   live: boolean;
   onRegenerate?: (index: number) => void;
-  onCancelJob?: (jobId: string) => void;
-  onCancelTask?: (taskId: string) => void;
   onActionCard?: (card: ActionCardData) => void;
   index: number;
 }) {
@@ -386,29 +384,11 @@ function AssistantMessageBody({
   const hasTasks = Boolean(message.tasks && message.tasks.length > 0);
   const hasActionCards = Boolean(message.actionCards && message.actionCards.length > 0);
 
-  // 2. 提取任务产物（不展示内部文件名，产物以独立媒体卡片呈现）
-  const taskOutputs: GenerationOutput[] = [];
-  if (message.tasks) {
-    for (const t of message.tasks) {
-      if (t.outputs) {
-        for (const out of t.outputs) {
-          taskOutputs.push({
-            kind: out.kind,
-            url: out.url,
-          });
-        }
-      }
-    }
-  }
-
-  // 3. 旧 stage 兼容
+  // 旧 stage 兼容（仅用于思考日志/错误展示）
   const stages = message.stages;
   const legacyThinkingLogs = stages?.flatMap(s => (s.type === 'thinking' ? s.logs ?? [] : [])) ?? [];
   const legacyTaskStage = stages?.find(s => s.type === 'task');
-  const legacyDoneStage = stages?.find(s => s.type === 'done');
   const legacyErrorStage = stages?.find(s => s.type === 'error');
-
-  const allOutputs = [...taskOutputs, ...(legacyDoneStage?.outputs ?? [])];
 
   return (
     <div className="assistant-stages">
@@ -437,24 +417,6 @@ function AssistantMessageBody({
 
       {/* 工具调用小标签 */}
       {hasToolCalls && <ToolCallsView toolCalls={message.toolCalls!} />}
-
-      {/* 正在运行中的统一任务卡片 */}
-      {hasTasks && (
-        <div className="tasks-container">
-          {message.tasks!.map(task => (
-            <TaskCardItem key={task.id} task={task} onCancel={onCancelTask} />
-          ))}
-        </div>
-      )}
-
-      {/* 旧版 TaskCard 兼容 */}
-      {legacyTaskStage && !hasTasks && (
-        <LegacyTaskCard
-          stage={legacyTaskStage}
-          cancelled={legacyTaskStage.cancelled ?? false}
-          onCancel={message.jobId ? () => onCancelJob?.(message.jobId!) : undefined}
-        />
-      )}
 
       {/* 动作建议卡片 (Action Cards) */}
       {hasActionCards && (
@@ -554,6 +516,15 @@ export default function ChatView({
     <div className="chat">
       {messages.map((m, i) => {
         const outputs = extractOutputs(m);
+        const legacyTaskStage = m.stages?.find(s => s.type === 'task');
+        const legacyDoneStage = m.stages?.find(s => s.type === 'done');
+        // 任务是否已全部结束（新式任务全部非 queued/running，或旧式已 done/取消）
+        const allTasksDone =
+          (m.tasks?.length ?? 0) > 0
+            ? m.tasks!.every(t => t.status !== 'queued' && t.status !== 'running')
+            : Boolean(legacyDoneStage || legacyTaskStage?.cancelled);
+        const hasAnyTask = (m.tasks?.length ?? 0) > 0 || Boolean(legacyTaskStage);
+
         return m.role === 'user' ? (
           <div key={i} className="chat-row user">
             <div className="chat-bubble user">
@@ -566,21 +537,35 @@ export default function ChatView({
               <AgentAvatar />
             </div>
             <div className="chat-assistant-container">
-              {/* 对话气泡：包含思维链、导演阐述文字与任务进度 */}
+              {/* 对话气泡：包含思维链、导演阐述文字 */}
               <div className="chat-bubble assistant">
                 <AssistantMessageBody
                   message={m}
                   live={liveIndex === i || (!m.content && !m.tasks?.length && !m.stages?.length)}
                   onRegenerate={onRegenerate}
-                  onCancelJob={onCancelJob}
-                  onCancelTask={onCancelTask}
                   onActionCard={onActionCard}
                   index={i}
                 />
               </div>
 
-              {/* 独立的图像/视频媒体元素：完全与对话气泡分离，独立全宽展示 */}
-              {outputs.length > 0 && <GenerationOutputsView outputs={outputs} onOpenImage={setLightbox} />}
+              {/* 气泡下方的任务媒体区域：生成中渐变动画 → 完成后过渡到图像 */}
+              {hasAnyTask && (
+                <TaskMediaRegion
+                  tasks={m.tasks ?? []}
+                  legacyStage={legacyTaskStage}
+                  done={allTasksDone}
+                  outputs={outputs}
+                  onCancelTask={onCancelTask}
+                  onCancelJob={onCancelJob}
+                  jobId={m.jobId}
+                  onOpenImage={setLightbox}
+                />
+              )}
+
+              {/* 无任务的纯媒体消息（旧版 done 产物）仍独立全宽展示 */}
+              {!hasAnyTask && outputs.length > 0 && (
+                <GenerationOutputsView outputs={outputs} onOpenImage={setLightbox} />
+              )}
             </div>
           </div>
         );

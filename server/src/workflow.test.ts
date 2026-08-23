@@ -680,14 +680,13 @@ describe('workflow 引擎（通用自动适配）', () => {
     const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
     expect(t2iSpec.inputs.some(i => i.kind === 'image')).toBe(false);
     expect(t2iSpec.inputs.some(i => i.kind === 'text')).toBe(true);
-    expect(t2iSpec.outputs.some(o => o.kind === 'image' && o.classType === 'SaveImage')).toBe(true);
     expect(t2iSpec.outputs.some(o => o.kind === 'image' && o.classType === 'PreviewImage')).toBe(true);
 
     const t2iPrompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, { prompt: 'A futuristic city in neon rain' });
-    // 提示词注入到 CLIPTextEncode，SaveImage 输出
+    // 提示词注入到 CLIPTextEncode，PreviewImage 输出
     expect(t2iPrompt['477'].class_type).toBe('CLIPTextEncode');
     expect(t2iPrompt['477'].inputs.text).toBe('A futuristic city in neon rain');
-    expect(t2iPrompt['532'].class_type).toBe('SaveImage');
+    expect(t2iPrompt['578'].class_type).toBe('PreviewImage');
     // API 图里不残留 Set/Get 虚拟节点
     const classTypes = Object.values(t2iPrompt).map((n: any) => n.class_type);
     expect(classTypes).not.toContain('SetNode');
