@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  fetchPluginSkill,
   fetchWorkflowGraph,
   type WorkflowGraph,
   type WorkflowGraphField,
@@ -35,6 +36,10 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   const [graphError, setGraphError] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [redetectNotice, setRedetectNotice] = useState(false);
+  const [skillOpen, setSkillOpen] = useState(false);
+  const [skillContent, setSkillContent] = useState<string | null>(null);
+  const [skillLoading, setSkillLoading] = useState(false);
+  const [skillError, setSkillError] = useState<string | null>(null);
 
   const loadGraph = async (id: string) => {
     setGraphLoading(true);
@@ -47,6 +52,20 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
       setGraphError((e as Error).message);
     } finally {
       setGraphLoading(false);
+    }
+  };
+
+  const loadSkill = async (id: string) => {
+    setSkillOpen(true);
+    setSkillLoading(true);
+    setSkillError(null);
+    try {
+      setSkillContent(await fetchPluginSkill(id));
+    } catch (e) {
+      setSkillContent(null);
+      setSkillError((e as Error).message);
+    } finally {
+      setSkillLoading(false);
     }
   };
 
@@ -154,6 +173,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
           </div>
           <div className="workflow-mapping-head-actions">
             {view === 'node' && <button className="settings-btn" onClick={() => setFullscreen(value => !value)}>{fullscreen ? '退出全屏' : '全屏'}</button>}
+            <button className="settings-btn" onClick={() => void loadSkill(draft.id)}>Skill 预览</button>
             <button className="settings-close" onClick={onClose} aria-label="关闭">×</button>
           </div>
         </header>
@@ -194,6 +214,21 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
           <button className="settings-btn" onClick={onClose}>取消</button>
           <button className="settings-btn primary" disabled={saving} onClick={save}>{saving ? '保存中…' : '保存映射'}</button>
         </footer>
+        {skillOpen && (
+          <div className="skill-preview-overlay" onClick={() => setSkillOpen(false)}>
+            <div className="skill-preview-panel" onClick={event => event.stopPropagation()}>
+              <header className="skill-preview-head">
+                <h3>Skill 预览 · {draft.name || draft.id}</h3>
+                <button className="settings-close" onClick={() => setSkillOpen(false)} aria-label="关闭">×</button>
+              </header>
+              <div className="skill-preview-body">
+                {skillLoading && <p>加载中…</p>}
+                {skillError && <p className="workflow-mapping-error">{skillError}</p>}
+                {skillContent && <pre className="skill-preview-content">{skillContent}</pre>}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

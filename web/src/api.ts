@@ -432,6 +432,21 @@ export async function redetectWorkflowManifest(id: string): Promise<WorkflowMani
   return http(`/api/plugins/${encodeURIComponent(id)}/redetect`, { method: 'POST' });
 }
 
+/** 获取插件自动生成的 SKILL.md（预览用） */
+export async function fetchPluginSkill(id: string): Promise<string> {
+  const res = await fetch(`/api/plugins/${encodeURIComponent(id)}/skill`);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status}: ${detail.trim() || res.statusText}`);
+  }
+  return res.text();
+}
+
+/** 强制重新生成插件 SKILL.md */
+export async function regeneratePluginSkill(id: string): Promise<{ ok: boolean }> {
+  return http(`/api/plugins/${encodeURIComponent(id)}/skill/regenerate`, { method: 'POST' });
+}
+
 export async function deleteWorkflowPlugin(id: string): Promise<{ ok: boolean }> {
   return http(`/api/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }

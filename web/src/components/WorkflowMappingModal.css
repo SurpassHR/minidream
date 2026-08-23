@@ -304,3 +304,46 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Skill 预览浮层（workflow-skill.ts 自动生成内容展示） */
+.skill-preview-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+.skill-preview-panel {
+  width: min(720px, 90vw);
+  max-height: 80vh;
+  background: var(--surface, #14141f);
+  border: 1px solid var(--border, #2a2a3d);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.skill-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border, #2a2a3d);
+}
+.skill-preview-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.skill-preview-body {
+  padding: 16px;
+  overflow: auto;
+}
+.skill-preview-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.6;
+}
