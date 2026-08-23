@@ -15,6 +15,7 @@ import {
   parsePiModelList,
   toolCallFingerprint,
   runAgentStream,
+  runPluginSkillCreator,
   sanitizeTitle,
   type AgentStreamEvent,
 } from './bridge.js';
@@ -27,6 +28,7 @@ interface FakeChild {
   kill: ReturnType<typeof vi.fn>;
   on: (event: string, listener: (...args: any[]) => void) => FakeChild;
   once: (event: string, listener: (...args: any[]) => void) => FakeChild;
+  emit: (event: string, ...args: any[]) => boolean;
 }
 
 function createFakeChild(): FakeChild {
@@ -49,6 +51,7 @@ function createFakeChild(): FakeChild {
       events.once(event, listener);
       return child;
     },
+    emit: (event: string, ...args: any[]) => events.emit(event, ...args),
   } as FakeChild;
   return child;
 }
@@ -324,6 +327,55 @@ describe('Agent Bridge', () => {
     expect(child.kill).toHaveBeenCalledWith('SIGTERM');
     expect(events.filter(event => event.type === 'end')).toHaveLength(1);
     expect(result.exitCode).toBe(143);
+  });
+
+  it('runPluginSkillCreator 加载 plugin-skill-creator skill 并解析围栏输出', async () => {
+    const child = createFakeChild();
+    spawnMock.mockReturnValue(child);
+    const spec = {
+      id: 'test_plugin',
+      name: '测试插件',
+      description: '测试',
+      inputs: [],
+      params: [{ id: 'steps-3', label: '步数', nodeId: '3', field: 'steps', type: 'INT' as const, default: 20 }],
+      outputs: [],
+    };
+
+    const resultPromise = runPluginSkillCreator(spec, { timeoutMs: 2000 });
+    const spawnArgs = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(spawnArgs).toContain('--no-tools');
+    expect(spawnArgs).toContain('--no-skills');
+    expect(spawnArgs).toContain('--no-context-files');
+    const skillIndex = spawnArgs.indexOf('--skill');
+    expect(spawnArgs[skillIndex + 1]).toMatch(/\.pi\/skills\/plugin-skill-creator\/SKILL\.md$/);
+    expect(spawnArgs).not.toContain('--session-id');
+
+    // 用户 prompt 写入 stdin
+    const input = child.stdin.read()?.toString() ?? '';
+    expect(input).toContain('test_plugin');
+    expect(input).toContain('steps-3');
+
+    child.stdout.write('```markdown\n# 生成的 skill\n\n内容\n```\n');
+    child.stdin.end();
+    await new Promise(r => setImmediate(r));
+    child.emit?.('close');
+
+    const result = await resultPromise;
+    expect(result).toBe('# 生成的 skill\n\n内容\n');
+  });
+
+  it('runPluginSkillCreator 无围栏时返回清理后的完整输出', async () => {
+    const child = createFakeChild();
+    spawnMock.mockReturnValue(child);
+    const spec = { id: 'p', name: 'P', inputs: [], params: [], outputs: [] };
+
+    const resultPromise = runPluginSkillCreator(spec, { timeoutMs: 2000 });
+    child.stdout.write('---\nname: p\n---\n\n# P\n');
+    child.stdin.end();
+    await new Promise(r => setImmediate(r));
+    child.emit?.('close');
+
+    await expect(resultPromise).resolves.toContain('name: p');
   });
 
   it('显式模型配置会透传给 Pi', async () => {

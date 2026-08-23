@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import type { WorkflowSpec } from '../workflow.js';
 import { writeSeedExtension } from './seed.js';
 
 export interface AgentStreamEvent {
@@ -69,6 +70,10 @@ export type AgentThinking = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhi
 const PROJECT_SKILL_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../../.pi/skills/director-copilot/SKILL.md',
+);
+const PLUGIN_SKILL_CREATOR_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../.pi/skills/plugin-skill-creator/SKILL.md',
 );
 
 function appendSkillIsolationArgs(args: string[], includeProjectSkill: boolean): void {
@@ -260,6 +265,124 @@ export function buildAgentInput(
   }
   parts.push(`【用户指令】\n${message}`);
   return parts.join('\n\n');
+}
+
+export interface PluginSkillCreatorOptions {
+  /** 超时毫秒数；默认 120s */
+  timeoutMs?: number;
+}
+
+/** 把 spec 序列化为 skill 生成器输入：保留类型/description/范围等，剔除 nodeId/field 等实现细节 */
+function serializeSpecForSkillCreator(spec: WorkflowSpec): string {
+  const data = {
+    id: spec.id,
+    name: spec.name,
+    description: spec.description ?? '',
+    inputs: spec.inputs.map(input => ({
+      kind: input.kind,
+      label: input.label,
+      primary: input.primary,
+      required: input.required,
+      defaultValue: input.defaultValue,
+      description: input.description,
+    })),
+    params: spec.params.map(param => ({
+      id: param.id,
+      label: param.label,
+      type: param.type,
+      default: param.default,
+      min: param.min,
+      max: param.max,
+      step: param.step,
+      options: param.options,
+      multiple: param.multiple,
+      strengthable: param.strengthable,
+      applyTo: param.applyTo,
+      llm: param.llm,
+      hidden: param.hidden,
+      description: param.description,
+    })),
+    outputs: spec.outputs.map(output => ({
+      kind: output.kind,
+      label: output.label,
+      description: output.description,
+    })),
+  };
+  return JSON.stringify(data, null, 2);
+}
+
+/** 从 pi 输出提取 markdown：优先取 ``` 围栏内容，否则取清理后的完整输出 */
+function extractSkillMarkdown(stdout: string): string {
+  const fenced = stdout.match(/```(?:markdown|md)?\s*([\s\S]*?)```/);
+  if (fenced?.[1]?.trim()) return fenced[1].trim() + '\n';
+  return stdout.trim();
+}
+
+/**
+ * 用 plugin-skill-creator skill 为插件生成 SKILL.md（无工具的单次 pi 调用）。
+ * 失败、超时或空输出时抛错，由调用方决定是否回退到自动生成版。
+ */
+export async function runPluginSkillCreator(
+  spec: WorkflowSpec,
+  opts: PluginSkillCreatorOptions = {},
+): Promise<string> {
+  const timeoutMs = opts.timeoutMs ?? 120_000;
+  const args: string[] = ['--print', '--no-tools', '--no-session', '--thinking', 'off'];
+  appendSkillIsolationArgs(args, false);
+  if (fs.existsSync(PLUGIN_SKILL_CREATOR_PATH)) {
+    args.push('--skill', PLUGIN_SKILL_CREATOR_PATH);
+  }
+  args.push('--no-context-files');
+  const input = serializeSpecForSkillCreator(spec);
+
+  return new Promise((resolve, reject) => {
+    let child: ChildProcess;
+    try {
+      child = spawn('pi', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)));
+      return;
+    }
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let timedOut = false;
+    let timer: NodeJS.Timeout | null = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (timedOut) {
+        reject(new Error('plugin-skill-creator 生成超时'));
+        return;
+      }
+      const content = extractSkillMarkdown(stdout);
+      if (!content) {
+        reject(new Error('plugin-skill-creator 未返回有效内容' + (stderr.trim() ? `：${stderr.trim().slice(0, 200)}` : '')));
+        return;
+      }
+      resolve(content);
+    };
+    timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        if (child.exitCode === null) child.kill('SIGKILL');
+      }, 3000).unref();
+    }, timeoutMs);
+
+    child.stdout?.on('data', (chunk: Buffer | string) => { stdout += chunk.toString(); });
+    child.stderr?.on('data', (chunk: Buffer | string) => { stderr += chunk.toString(); });
+    child.once('error', (err: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      reject(err);
+    });
+    child.once('close', finish);
+    child.stdin?.write(input);
+    child.stdin?.end();
+  });
 }
 
 /**
