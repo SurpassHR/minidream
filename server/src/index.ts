@@ -36,6 +36,7 @@ import { createDirectorMCPServer, type McpServerInstance, type WorkflowRoute } f
 import { createWorkflowPluginRouter } from './workflow-plugin-api.js';
 import { migrateLegacyPluginConfig } from './workflow-plugin-migration.js';
 import { IMPORTED_WORKFLOWS_DIR, MANIFESTS_DIR, WORKFLOW_PLUGIN_DATA_DIR } from './workflow-plugin-store.js';
+import { ensurePluginSkills } from './workflow-skill.js';
 import { listAgentModels, runAgentStream, buildAgentInput, generateConversationTitle, toolCallFingerprint, type AgentStreamEvent } from './agent/bridge.js';
 import {
   SessionError,
@@ -80,6 +81,10 @@ await migrateLegacyPluginConfig(SETTINGS_FILE, {
 }).catch(error => {
   console.error('[workflow-plugin-migration]', error);
 });
+
+// 为每个工作流插件（内置+导入）幂等补齐自动生成的 SKILL.md；
+// 缺失才写入，不影响已有文件；失败不阻断启动。
+await ensurePluginSkills(await buildSpecsCached());
 
 export const draftStore = new DraftStore({
   indexFile: DRAFTS_INDEX_FILE,
