@@ -355,12 +355,14 @@ describe('Agent Bridge', () => {
     expect(input).toContain('test_plugin');
     expect(input).toContain('steps-3');
 
-    child.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '```markdown\n# 生成的 skill\n\n内容\n```' } }) + '\n');
+    child.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '```markdown\n---\nname: test_plugin\ndescription: 测试\n---\n\n# 测试插件\n\n## 用途\n\n测试用途\n\n## 输入\n\n无\n\n## 可控制参数\n\n- **步数**（id `steps-3`；类型 整数；默认 20）\n\n## 输出\n\n无\n\n## 使用规则\n\n按提示词直接生成即可\n```' } }) + '\n');
     child.stdout.write(JSON.stringify({ type: 'agent_end' }) + '\n');
     child.stdin.end();
 
     const result = await resultPromise;
-    expect(result).toBe('# 生成的 skill\n\n内容\n');
+    expect(result).toContain('name: test_plugin');
+    expect(result).toContain('## 可控制参数');
+    expect(result).toContain('steps-3');
   });
 
   it('runPluginSkillCreator 无围栏时返回清理后的完整输出', async () => {
@@ -369,11 +371,34 @@ describe('Agent Bridge', () => {
     const spec = { id: 'p', name: 'P', inputs: [], params: [], outputs: [] };
 
     const resultPromise = runPluginSkillCreator(spec, { timeoutMs: 2000 });
-    child.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '---\nname: p\n---\n\n# P\n' } }) + '\n');
+    child.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '---\nname: p\ndescription: P\n---\n\n# P\n\n## 用途\n\n测试\n\n## 输入\n\n无\n\n## 可控制参数\n\n无\n\n## 输出\n\n无\n\n## 使用规则\n\n无\n' } }) + '\n');
     child.stdout.write(JSON.stringify({ type: 'agent_end' }) + '\n');
     child.stdin.end();
 
     await expect(resultPromise).resolves.toContain('name: p');
+  });
+
+  it('runPluginSkillCreator 输出不符合 SKILL.md 格式时重试一次', async () => {
+    // 第一次输出 prompt 模板（无 frontmatter + 章节），第二次输出正确的 SKILL.md
+    const child1 = createFakeChild();
+    const child2 = createFakeChild();
+    spawnMock.mockReturnValueOnce(child1).mockReturnValueOnce(child2);
+    const spec = { id: 'p', name: 'P', inputs: [], params: [], outputs: [] };
+
+    const resultPromise = runPluginSkillCreator(spec, { timeoutMs: 2000 });
+    // 第一次：输出 prompt 模板（没有 SKILL.md 章节）
+    child1.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Environment: [场景描述]\nForeground: [前景描述]' } }) + '\n');
+    child1.stdout.write(JSON.stringify({ type: 'agent_end' }) + '\n');
+    child1.stdin.end();
+    // 等待第一次完成，然后触发第二次
+    await new Promise(r => setTimeout(r, 100));
+    child2.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '---\nname: p\ndescription: P\n---\n\n# P\n\n## 用途\n\n测试\n\n## 输入\n\n无\n\n## 可控制参数\n\n无\n\n## 输出\n\n无\n\n## 使用规则\n\n无\n' } }) + '\n');
+    child2.stdout.write(JSON.stringify({ type: 'agent_end' }) + '\n');
+    child2.stdin.end();
+
+    const result = await resultPromise;
+    expect(result).toContain('name: p');
+    expect(result).toContain('## 可控制参数');
   });
 
   it('显式模型配置会透传给 Pi', async () => {

@@ -283,7 +283,8 @@ function serializeSpecForSkillCreator(spec: WorkflowSpec): string {
       label: input.label,
       primary: input.primary,
       required: input.required,
-      defaultValue: input.defaultValue,
+      // 过滤过长的 defaultValue（如模板内置提示词），避免混淆模型生成 prompt 而非 SKILL.md
+      defaultValue: typeof input.defaultValue === 'string' && input.defaultValue.length > 120 ? '' : input.defaultValue,
       description: input.description,
     })),
     params: spec.params.map(param => ({
@@ -318,6 +319,8 @@ const PLUGIN_SKILL_CREATOR_SYSTEM_PROMPT = [
   '直接输出 SKILL.md 的完整内容本身：第一行必须是 ---（frontmatter 起始），',
   '不要任何前言、解释、分析、问候语或 Markdown 代码围栏（```）。',
   '不要输出思考过程。',
+  '禁止生成 prompt 模板、场景描述或 YAML/JSON 配置格式。',
+  '输出必须是标准 Markdown 文档，包含 frontmatter + # 标题 + ## 用途 + ## 输入 + ## 可控制参数 + ## 输出 + ## 使用规则 章节。',
 ].join('\n');
 
 /** 从 pi 输出提取 markdown：优先取 ``` 围栏内容，其次取 frontmatter 起的正文，否则取完整输出 */
@@ -333,6 +336,16 @@ function extractSkillMarkdown(stdout: string): string {
     if (rest.startsWith('---')) return rest + '\n';
   }
   return trimmed;
+}
+
+/** 验证提取的内容是否符合 SKILL.md 基本结构 */
+function looksLikeSkillMd(content: string): boolean {
+  const trimmed = content.trim();
+  // 必须以 --- 开头（frontmatter）
+  if (!trimmed.startsWith('---')) return false;
+  // 必须包含 SKILL.md 章节
+  if (!/##\s+(可控制参数|输入|用途|输出|使用规则)/.test(trimmed)) return false;
+  return true;
 }
 
 /**
@@ -354,40 +367,37 @@ export async function runPluginSkillCreator(
   args.push('--append-system-prompt', PLUGIN_SKILL_CREATOR_SYSTEM_PROMPT);
   const input = serializeSpecForSkillCreator(spec);
 
-  return new Promise((resolve, reject) => {
-    let child: ChildProcess;
-    try {
-      child = spawn('pi', args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    } catch (err) {
-      reject(err instanceof Error ? err : new Error(String(err)));
-      return;
-    }
-    let text = '';
-    let stderr = '';
-    let settled = false;
-    let timer: NodeJS.Timeout | null = null;
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      if (error) {
-        reject(error);
+  /** 单次 pi 调用：发送 manifest JSON，收集 text_delta 拼装输出 */
+  const runOnce = (): Promise<string> =>
+    new Promise((resolve, reject) => {
+      let child: ChildProcess;
+      try {
+        child = spawn('pi', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
         return;
       }
-      const content = extractSkillMarkdown(text);
-      if (!content) {
-        reject(new Error('plugin-skill-creator 未返回有效内容' + (stderr.trim() ? `：${stderr.trim().slice(0, 200)}` : '')));
-        return;
-      }
-      resolve(content);
-    };
-    timer = setTimeout(() => {
-      child.kill('SIGTERM');
-      setTimeout(() => {
-        if (child.exitCode === null) child.kill('SIGKILL');
-      }, 3000).unref();
-      finish(new Error('plugin-skill-creator 生成超时'));
-    }, timeoutMs);
+      let text = '';
+      let stderr = '';
+      let settled = false;
+      let timer: NodeJS.Timeout | null = null;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(extractSkillMarkdown(text));
+      };
+      timer = setTimeout(() => {
+        child.kill('SIGTERM');
+        setTimeout(() => {
+          if (child.exitCode === null) child.kill('SIGKILL');
+        }, 3000).unref();
+        finish(new Error('plugin-skill-creator 生成超时'));
+      }, timeoutMs);
 
     const rl = createInterface({ input: child.stdout!, crlfDelay: Infinity });
     rl.on('line', (line) => {
@@ -437,6 +447,18 @@ export async function runPluginSkillCreator(
     child.stdin?.write(input);
     child.stdin?.end();
   });
+
+  // 最多尝试 2 次：首次失败或输出不符合 SKILL.md 格式时重试一次
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const content = await runOnce();
+    if (content && looksLikeSkillMd(content)) return content;
+    // 最后一次尝试时仍不符合格式，用错误提示包裹后返回（让调用方决定是否回退自动版）
+    if (attempt === 1) {
+      if (content) return content; // 有内容但格式不对，仍然返回让调用方判断
+      throw new Error('plugin-skill-creator 未返回有效 SKILL.md 内容');
+    }
+  }
+  throw new Error('plugin-skill-creator 未返回有效 SKILL.md 内容');
 }
 
 /**
