@@ -297,7 +297,19 @@ export type JobEvent =
 
 async function http<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    const message = (() => {
+      try {
+        const body = JSON.parse(detail) as { error?: string };
+        if (typeof body.error === 'string' && body.error.trim()) return body.error.trim();
+      } catch {
+        /* 非 JSON 响应体 */
+      }
+      return detail.trim() || res.statusText;
+    })();
+    throw new Error(`HTTP ${res.status}: ${message}`);
+  }
   return res.json() as Promise<T>;
 }
 

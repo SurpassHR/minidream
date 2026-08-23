@@ -159,14 +159,7 @@ function graphFields(graph: WorkflowGraph): WorkflowGraphField[] {
   return graph.nodes.flatMap(node => node.fields);
 }
 
-function expectedApplyTo(graph: WorkflowGraph, field: WorkflowGraphField): string[] {
-  return graphFields(graph)
-    .filter(candidate => candidate.field === field.field && candidate.nodeId !== field.nodeId && candidate.selectable)
-    .map(candidate => candidate.nodeId)
-    .sort();
-}
-
-function validateParamMappings(manifest: WorkflowSpec, graph: WorkflowGraph): string | null {
+export function validateParamMappings(manifest: WorkflowSpec, graph: WorkflowGraph): string | null {
   const fields = graphFields(graph);
   const seen = new Set<string>();
   for (const param of manifest.params ?? []) {
@@ -179,7 +172,9 @@ function validateParamMappings(manifest: WorkflowSpec, graph: WorkflowGraph): st
     const generated = createParamFromGraphField(field);
     if (param.id !== generated.id) return `params 映射 ${param.id} 的 ID 不符合字段映射：应为 ${generated.id}`;
     if (param.type !== generated.type) return `params 映射 ${param.id} 的类型不可修改：应为 ${generated.type}`;
-    const expected = expectedApplyTo(graph, field);
+    // applyTo 只由 graph 对共享采样参数/逻辑 LoRA 字段生成；校验直接对比同一来源，
+    // 避免按“同名可勾选字段”重新推导导致 add_noise 等非共享重复字段误报结构不符。
+    const expected = [...(field.applyTo ?? [])].sort();
     if (JSON.stringify([...(param.applyTo ?? [])].sort()) !== JSON.stringify(expected)) {
       return `params 映射 ${param.id} 的 applyTo 不符合工作流结构`;
     }
@@ -247,7 +242,8 @@ export function serializeWorkflowForLlm(spec: WorkflowSpec): Record<string, any>
 }
 
 /**
- * workflow.list 的紧凑摘要：只保留选择工作流所需的 id/名称/用途/输入输出类型/可调参数名，
+ * workflow.list 的紧凑摘要：保留选择工作流所需的 id/名称/用途/输入输出类型/可调参数名，
+ * 以及每个映射的 description（用户为 LLM 填写的用途说明，类似 skill 的 description）。
  * 不含 default/min/max/step/options 等细节，避免 Agent 上下文被 JSON 细节淹没、误把原始 JSON 回贴给用户。
  */
 export function summarizeWorkflowsForLlm(specs: WorkflowSpec[]): Record<string, any>[] {
@@ -255,9 +251,22 @@ export function summarizeWorkflowsForLlm(specs: WorkflowSpec[]): Record<string, 
     id: spec.id,
     name: spec.name,
     description: spec.description,
-    inputs: (spec.inputs ?? []).filter(item => !item.hidden).map(item => ({ kind: item.kind, label: item.label })),
-    outputs: (spec.outputs ?? []).filter(item => !item.hidden).map(item => ({ kind: item.kind, label: item.label })),
-    params: (spec.params ?? []).filter(item => !item.hidden && item.llm !== false).map(item => ({ id: item.id, label: item.label, type: item.type })),
+    inputs: (spec.inputs ?? []).filter(item => !item.hidden).map(item => ({
+      kind: item.kind,
+      label: item.label,
+      ...(item.description?.trim() ? { description: item.description } : {}),
+    })),
+    outputs: (spec.outputs ?? []).filter(item => !item.hidden).map(item => ({
+      kind: item.kind,
+      label: item.label,
+      ...(item.description?.trim() ? { description: item.description } : {}),
+    })),
+    params: (spec.params ?? []).filter(item => !item.hidden && item.llm !== false).map(item => ({
+      id: item.id,
+      label: item.label,
+      type: item.type,
+      ...(item.description?.trim() ? { description: item.description } : {}),
+    })),
   }));
 }
 

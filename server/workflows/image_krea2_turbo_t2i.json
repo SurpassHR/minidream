@@ -1,17 +1,4 @@
 {
-  "476": {
-    "inputs": {
-      "text_0": "YOUR CONTEXT:\nYour photos exhibit sharp focus, realistic color reproduction, and a wide dynamic range that preserves detail in both shadows and highlights.\nThe colors are vibrant and high-quality with natural skin tones.\nYour photos have fine grain and a clean, detailed background.\nThe composition follows classic photographic rules (rule of thirds, guidelines, symmetry, etc.) and is well-framed, conveying a sense of deliberate artistry and craftsmanship.\nYour photos are high-resolution with crisp details.\nYOUR PHOTO:\nEnvironment: An American tour bus; outside, crowds are celebrating and parading.\n\nForeground: The side of the bus, with the word \"TOUR\" written on it.\n\nMiddle ground: A woman's upper body is leaning out of the window; she is wearing a mini-bikini and has large, soft, and bouncy breasts.\n\nCharacter: The woman is cheering with one hand extended outside, her face beaming with excitement and a wide smile; her mouth is open as if shouting \"woo,\" and she is looking down at the crowd, preparing to high-five them.\n\nComposition: A side-view perspective; on the left, male onlookers outside are cheering with their hands raised high; on the right, the camera angle is close to the bus body, capturing the woman leaning out of the window.(illustration:-1), (anime:-1), (pubic hair:-1), (water drop:-1), (fluid on body:-1), (extra hands:-1), (ribs:-1), (ass:-1), (on stomach:-1),",
-      "text": [
-        "553",
-        0
-      ]
-    },
-    "class_type": "ShowText|pysssss",
-    "_meta": {
-      "title": "Show Text 🐍"
-    }
-  },
   "477": {
     "inputs": {
       "text": [
@@ -151,7 +138,7 @@
       "upscale_method": "area",
       "scale_by": 0.5,
       "samples": [
-        "556:11",
+        "580",
         0
       ]
     },
@@ -758,14 +745,14 @@
       "title": "Preview Image"
     }
   },
-  "556:11": {
+  "580": {
     "inputs": {
       "width": [
-        "556:100",
+        "582",
         0
       ],
       "height": [
-        "556:101",
+        "583",
         0
       ],
       "batch_size": 1
@@ -775,114 +762,22 @@
       "title": "Empty Latent Image"
     }
   },
-  "556:102": {
+  "582": {
     "inputs": {
-      "value": true
-    },
-    "class_type": "PrimitiveBoolean",
-    "_meta": {
-      "title": "Switch"
-    }
-  },
-  "556:97": {
-    "inputs": {
-      "value": 832
+      "value": 1024
     },
     "class_type": "PrimitiveInt",
     "_meta": {
-      "title": "Length_a"
+      "title": "Width"
     }
   },
-  "556:98": {
+  "583": {
     "inputs": {
-      "value": 1216
+      "value": 1536
     },
     "class_type": "PrimitiveInt",
     "_meta": {
-      "title": "Length_b"
-    }
-  },
-  "556:339": {
-    "inputs": {
-      "value": 1.5
-    },
-    "class_type": "PrimitiveFloat",
-    "_meta": {
-      "title": "Multiplier"
-    }
-  },
-  "556:340": {
-    "inputs": {
-      "value": "a*b",
-      "a": [
-        "556:98",
-        0
-      ],
-      "b": [
-        "556:339",
-        0
-      ]
-    },
-    "class_type": "SimpleMath+",
-    "_meta": {
-      "title": "🔧 Simple Math"
-    }
-  },
-  "556:338": {
-    "inputs": {
-      "value": "a*b",
-      "a": [
-        "556:97",
-        0
-      ],
-      "b": [
-        "556:339",
-        0
-      ]
-    },
-    "class_type": "SimpleMath+",
-    "_meta": {
-      "title": "🔧 Simple Math"
-    }
-  },
-  "556:100": {
-    "inputs": {
-      "boolean": [
-        "556:102",
-        0
-      ],
-      "on_true": [
-        "556:340",
-        0
-      ],
-      "on_false": [
-        "556:338",
-        0
-      ]
-    },
-    "class_type": "easy ifElse",
-    "_meta": {
-      "title": "If else"
-    }
-  },
-  "556:101": {
-    "inputs": {
-      "boolean": [
-        "556:102",
-        0
-      ],
-      "on_true": [
-        "556:338",
-        0
-      ],
-      "on_false": [
-        "556:340",
-        0
-      ]
-    },
-    "class_type": "easy ifElse",
-    "_meta": {
-      "title": "If else"
+      "title": "Height"
     }
   }
 }

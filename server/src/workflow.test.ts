@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { WorkflowSpec } from './workflow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const wfDir = path.resolve(__dirname, '../workflows');
@@ -896,7 +897,7 @@ describe('workflow 引擎（通用自动适配）', () => {
     // 模型/提示词链路已由前端解析为直接连线
     expect(t2iPrompt['478'].inputs.model).toEqual(['487', 0]);
     expect(t2iPrompt['520'].inputs.model).toEqual(['538', 0]); // BYPASS(SEGA/DyPE) 透传
-    expect(t2iPrompt['476'].inputs.text).toEqual(['553', 0]);
+    expect(t2iPrompt['477'].inputs.text).toEqual(['553', 0]); // 553 → 477 正向 CLIPTextEncode
     // widget 值完整（前端导出即权威映射）
     expect(t2iPrompt['478'].inputs.steps).toBe(12);
     expect(t2iPrompt['478'].inputs.sampler_name).toBe('er_sde');
@@ -909,16 +910,18 @@ describe('workflow 引擎（通用自动适配）', () => {
       prompt: 'resolution test',
       resolution: { width: 1344, height: 768 },
     });
-    expect(prompt['556:11'].class_type).toBe('EmptyLatentImage');
-    expect(prompt['556:11'].inputs.width).toBe(1344);
-    expect(prompt['556:11'].inputs.height).toBe(768);
+    const latent = Object.values(prompt).find((n: any) => n.class_type === 'EmptyLatentImage');
+    expect(latent).toBeDefined();
+    expect(latent.inputs.width).toBe(1344);
+    expect(latent.inputs.height).toBe(768);
   });
 
   it('buildPrompt 不传 resolution 时保留原有链接（默认分辨率）', async () => {
     const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
     const prompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, { prompt: 'no resolution' });
-    expect(Array.isArray(prompt['556:11'].inputs.width)).toBe(true);
-    expect(Array.isArray(prompt['556:11'].inputs.height)).toBe(true);
+    const latent = Object.values(prompt).find((n: any) => n.class_type === 'EmptyLatentImage');
+    expect(Array.isArray(latent.inputs.width)).toBe(true);
+    expect(Array.isArray(latent.inputs.height)).toBe(true);
   });
 
   it('buildPrompt 注入视频分辨率：MiniMaxH3ImageToVideo 宽高覆写', async () => {
@@ -1104,6 +1107,49 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(prompt['549']).toBeUndefined(); // 死链上的 PathchSageAttentionKJ
     expect(prompt['523'].class_type).toBe('UNETLoader');
     expect(prompt['480'].class_type).toBe('CLIPLoader');
+  });
+
+  it('文本输入同时被勾选为参数时：prompt 注入优先于参数 default（不被模板默认提示词覆盖）', async () => {
+    // 最小 API 格式工作流：primary 提示词节点（Text Multiline）+ 负面提示词节点 + 输出
+    const apiWorkflow = {
+      '1': { class_type: 'Text Multiline', inputs: { text: '模板默认提示词（不应生效）' }, _meta: { title: 'Text Multiline', promptPlaceholder: true } },
+      '2': { class_type: 'Text Multiline', inputs: { text: '(anime:-1)' }, _meta: { title: 'Text Multiline' } },
+      '3': { class_type: 'CLIPTextEncode', inputs: { text: ['1', 0], clip: ['4', 0] } },
+      '4': { class_type: 'CLIPTextEncode', inputs: { text: ['2', 0], clip: ['4', 0] } },
+      '5': { class_type: 'KSampler', inputs: { model: ['4', 0], positive: ['3', 0], negative: ['4', 0], steps: 20 } },
+    };
+    const spec: WorkflowSpec = {
+      id: 'mini',
+      name: 'mini',
+      inputs: [
+        { id: 'text-1', kind: 'text', label: '提示词', nodeId: '1', field: 'text', classType: 'Text Multiline', primary: true, defaultValue: '模板默认提示词（不应生效）' },
+        { id: 'text-2', kind: 'text', label: '负面提示词', nodeId: '2', field: 'text', classType: 'Text Multiline' },
+      ],
+      params: [
+        // #1 同时被勾选为参数：default 是模板默认提示词，但必须被 prompt 注入覆盖
+        { id: 'text-1', label: '正面提示词', nodeId: '1', field: 'text', type: 'STRING', default: '模板默认提示词（不应生效）' },
+        // #2 负面提示词参数：由 params 注入
+        { id: 'text-2', label: '负面提示词', nodeId: '2', field: 'text', type: 'STRING', default: '(anime:-1)' },
+      ],
+      outputs: [{ id: 'img', kind: 'image', label: '输出', nodeId: '5', classType: 'KSampler' }],
+    };
+
+    // 模拟 queue 的兜底逻辑：文本输入对应的参数不注入 default，其他参数兜底
+    const textInputKeys = new Set(spec.inputs.filter(i => i.kind === 'text').map(i => `${i.nodeId}:${i.field}`));
+    const defaultParams = Object.fromEntries(
+      spec.params
+        .filter(param => !textInputKeys.has(`${param.nodeId}:${param.field}`))
+        .map(param => [param.id, param.default]),
+    );
+    const prompt = await workflow.buildPrompt(spec, apiWorkflow, {
+      prompt: 'LLM 生成的正面提示词',
+      params: { ...defaultParams, 'text-2': '(anime:-1), (watermark:-1)' },
+    });
+
+    // 正面提示词：prompt 注入生效，不被 text-1 参数 default 覆盖
+    expect(prompt['1'].inputs.text).toBe('LLM 生成的正面提示词');
+    // 负面提示词：作为参数注入到 #2 节点
+    expect(prompt['2'].inputs.text).toBe('(anime:-1), (watermark:-1)');
   });
 
   it('分离式采样链（KSamplerSelect/BasicScheduler）暴露采样器与调度器并可注入', async () => {

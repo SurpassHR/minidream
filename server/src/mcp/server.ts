@@ -41,7 +41,7 @@ const UPSCALE_INTENT = /放大|超分|upscale|enlarge|提升分辨率|分辨率�
 const MCP_TOOLS: McpToolDescriptor[] = [
   {
     name: 'workflow.list',
-    description: '获取系统支持的工作流列表（紧凑摘要：id、名称、用途描述、输入输出类型与可调参数名）。选择工作流前先调用本工具了解各工作流用途；向用户介绍工作流时用简洁的自然语言总结，不要把工具返回的原始 JSON 贴给用户。',
+    description: '获取系统支持的工作流列表（紧凑摘要：id、名称、用途描述、输入输出类型与可调参数名及各自用途说明 description）。选择工作流前先调用本工具了解各工作流用途；向用户介绍工作流时用简洁的自然语言总结，不要把工具返回的原始 JSON 贴给用户。',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -73,7 +73,7 @@ const MCP_TOOLS: McpToolDescriptor[] = [
         },
         params: {
           type: 'object',
-          description: '可选的参数覆盖项（如 steps, cfg, seed 等）',
+          description: '可选的参数覆盖项，键为 workflow.list 返回的参数 id。除数值参数（steps/cfg/seed 等）外，文本类参数（如负面提示词、风格 tag）也通过这里传入，键如 text-551，值为字符串。',
         },
         sessionId: {
           type: 'string',

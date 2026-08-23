@@ -439,10 +439,18 @@ export class TaskQueue extends EventEmitter {
     // 生成比例+尺寸 → 目标宽高（视频工作流分辨率上限远小于图像）
     const maxDimension = spec.outputs.some(o => o.kind === 'video') ? 1344 : 2048;
     const resolution = computeResolution(task.ratio, task.size, maxDimension);
+    // 文本输入由 prompt 注入驱动（primary/启发式写入对应 text 节点），
+    // 这些节点即使被勾选为参数也不能用 default 兜底——否则参数循环会用模板默认提示词覆盖刚注入的 prompt。
+    const textInputKeys = new Set(spec.inputs.filter(i => i.kind === 'text').map(i => `${i.nodeId}:${i.field}`));
+    const defaultParams = Object.fromEntries(
+      spec.params
+        .filter(param => !textInputKeys.has(`${param.nodeId}:${param.field}`))
+        .map(param => [param.id, param.default]),
+    );
     const prompt = task.promptGraph ?? await buildPrompt(spec, workflowJson, {
       prompt: task.prompt,
       uploaded,
-      params: { ...Object.fromEntries(spec.params.map(param => [param.id, param.default])), ...task.params },
+      params: { ...defaultParams, ...task.params },
       settings,
       resolution,
     });
