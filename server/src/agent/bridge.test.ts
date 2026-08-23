@@ -314,6 +314,7 @@ describe('Agent Bridge', () => {
     expect(spawnArgs).not.toContain('--print');
     expect(spawnArgs).toEqual(expect.arrayContaining(['--thinking', 'minimal']));
     expect(spawnArgs).toContain('--no-skills');
+    expect(spawnArgs).toContain('--no-context-files');
     const skillIndex = spawnArgs.indexOf('--skill');
     const skillPath = spawnArgs[skillIndex + 1];
     expect(skillPath).toMatch(/\.pi\/skills\/director-copilot\/SKILL\.md$/);

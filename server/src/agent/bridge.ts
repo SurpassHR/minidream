@@ -288,6 +288,10 @@ export async function runAgentStream(
     '--thinking', options.thinking ?? 'minimal',
   ];
   appendSkillIsolationArgs(args, true);
+  // 关闭 AGENTS.md/CLAUDE.md 上下文文件自动发现：导演 Agent 的知识来源
+  // 收敛为 director-copilot skill + --append-system-prompt + MCP 工具，
+  // 避免全局/项目 AGENTS.md 注入宿主编码环境规则。
+  args.push('--no-context-files');
 
   if (options.model?.trim()) {
     args.push('--model', options.model.trim());
