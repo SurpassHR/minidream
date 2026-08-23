@@ -18,3 +18,11 @@
   - 路由规则变化（如参考图 + 放大意图确定性路由到 SeedVR2）
   - 提示词注入/对话历史机制变化（虚构历史、参考图片命名、prompt 代码块要求等）
 - 系统提示词（`server/src/index.ts` 的 `agentSystemPrompt`）只保留无法归入 skill 的运行时行为，并引用 skill；不要在两侧重复堆叠同一规则
+
+## 工作流插件 Skill 自动生成
+
+- 每个工作流插件（内置+导入）自动生成 `.pi/skills/<plugin-id>/SKILL.md`（`server/src/workflow-skill.ts`），内容为可控制参数（默认值/范围/选项/applyTo 联动）、输入输出与使用规则，过滤口径与 `workflow.list` 一致（`!hidden && llm !== false`）。
+- 生成时机：启动幂等补齐、插件导入/保存 manifest 时重新生成、删除插件时删除；`GET /api/plugins/:id/skill` 预览、`POST /api/plugins/:id/skill/regenerate` 强制重写。
+- MCP `workflow.skill` 按需返回某插件的详细 skill，`workflow.list` 保持精简摘要（两级结构）。
+- 导演 Agent 启动参数含 `--no-context-files`：全局/项目 AGENTS.md 不再注入，知识来源仅 director-copilot skill + `--append-system-prompt` + MCP 工具。
+- 插件参数契约变更（params/inputs/llm 标记等）会经生成器自动反映到 skill，无需手工同步；但 MCP 工具契约变化仍须按上节同步 director-copilot skill。
