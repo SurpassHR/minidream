@@ -11,6 +11,7 @@ const h3T2vJson = readWf('video-minimax-h3-t2v.json');
 const h3I2vJson = readWf('video-minimax-h3-i2v.json');
 const h3R2vJson = readWf('video-minimax-h3-r2v.json');
 const krea2T2iJson = readWf('image_krea2_turbo_t2i.json');
+const seedvr2Json = readWf('image_seedvr2_upscale.json');
 
 /** 手写的最小 UI 格式（LiteGraph）工作流：全部是纯本地节点 */
 const uiFixtureJson = {
@@ -447,12 +448,105 @@ const OBJECT_INFO: Record<string, any> = {
     output: ['INT'],
   },
   'SimpleMath+': {
-    input: { required: { a: ['FLOAT', {}], b: ['FLOAT', {}], operation: ['COMBO', {}] } },
+    input: { required: { value: ['STRING', {}] }, optional: { a: ['FLOAT', {}], b: ['FLOAT', {}] } },
     output: ['FLOAT'],
   },
   'easy ifElse': {
     input: { optional: { boolean: ['BOOLEAN', {}], on_true: ['*', {}], on_false: ['*', {}] } },
     output: ['*'],
+  },
+  /* ---------- SeedVR2 图像放大（numz/ComfyUI-SeedVR2_VideoUpscaler + TTPlanetPig/Comfyui_TTP_Toolset） ---------- */
+  ImageScaleBy: {
+    input: { required: { upscale_method: [['lanczos', 'nearest-exact', 'bilinear'], {}], scale_by: ['FLOAT', {}] }, optional: { image: ['IMAGE', {}] } },
+    output: ['IMAGE'],
+  },
+  'Get Image Size': {
+    input: { optional: { image: ['IMAGE', {}] } },
+    output: ['INT', 'INT'],
+  },
+  TTP_Image_Tile_Batch: {
+    input: { required: { tile_width: ['INT', {}], tile_height: ['INT', {}] }, optional: { image: ['IMAGE', {}] } },
+    output: ['IMAGE', 'IMAGE', 'IMAGE', 'IMAGE'],
+  },
+  TTP_Tile_image_size: {
+    input: { required: { overlap_rate: ['FLOAT', {}] }, optional: { width_factor: ['FLOAT', {}], height_factor: ['FLOAT', {}], image: ['IMAGE', {}] } },
+    output: ['INT', 'INT'],
+  },
+  TTP_Image_Assy: {
+    input: { required: { padding: ['INT', {}] }, optional: { tiles: ['IMAGE', {}], positions: ['IMAGE', {}], original_size: ['IMAGE', {}], grid_size: ['IMAGE', {}] } },
+    output: ['IMAGE'],
+  },
+  SeedVR2LoadDiTModel: {
+    input: {
+      required: {
+        model: [['seedvr2_ema_3b_fp8_e4m3fn.safetensors', 'seedvr2_ema_3b_fp16.safetensors'], {}],
+        device: [['cuda:0', 'cpu'], {}],
+        blocks_to_swap: ['INT', {}],
+        swap_io_components: ['BOOLEAN', {}],
+        offload_device: [['cpu', 'cuda:0'], {}],
+        cache_model: ['BOOLEAN', {}],
+        attention_mode: [['sdpa', 'flash_attention'], {}],
+      },
+    },
+    output: ['SEEDVR2_DIT'],
+  },
+  SeedVR2LoadVAEModel: {
+    input: {
+      required: {
+        model: [['ema_vae_fp16.safetensors'], {}],
+        device: [['cuda:0', 'cpu'], {}],
+        encode_tiled: ['BOOLEAN', {}],
+        encode_tile_size: ['INT', {}],
+        encode_tile_overlap: ['INT', {}],
+        decode_tiled: ['BOOLEAN', {}],
+        decode_tile_size: ['INT', {}],
+        decode_tile_overlap: ['INT', {}],
+        tile_debug: [['false', 'true'], {}],
+        offload_device: [['cpu', 'cuda:0'], {}],
+        cache_model: ['BOOLEAN', {}],
+      },
+    },
+    output: ['SEEDVR2_VAE'],
+  },
+  SeedVR2VideoUpscaler: {
+    input: {
+      required: {
+        seed: ['INT', {}],
+        resolution: ['INT', {}],
+        max_resolution: ['INT', {}],
+        batch_size: ['INT', {}],
+        uniform_batch_size: ['BOOLEAN', {}],
+        color_correction: [['wavelet', 'lab', 'hsv', 'adain'], {}],
+        temporal_overlap: ['INT', {}],
+        prepend_frames: ['INT', {}],
+        input_noise_scale: ['FLOAT', {}],
+        latent_noise_scale: ['FLOAT', {}],
+        offload_device: [['cpu', 'cuda:0'], {}],
+        enable_debug: ['BOOLEAN', {}],
+      },
+      optional: { image: ['IMAGE', {}], dit: ['SEEDVR2_DIT', {}], vae: ['SEEDVR2_VAE', {}] },
+    },
+    output: ['IMAGE'],
+  },
+  ResizeImageMaskNode: {
+    input: {
+      required: {
+        resize_type: [
+          'COMFY_DYNAMICCOMBO_V3',
+          {
+            options: [
+              {
+                key: 'scale dimensions',
+                inputs: { required: { width: ['INT', {}], height: ['INT', {}] }, optional: { crop: ['COMBO', {}] } },
+              },
+            ],
+          },
+        ],
+        scale_method: [['lanczos', 'bilinear'], {}],
+      },
+      optional: { input: ['IMAGE', {}] },
+    },
+    output: ['IMAGE'],
   },
 };
 
@@ -601,6 +695,43 @@ describe('workflow 引擎（通用自动适配）', () => {
     }
     const t2i = specs.find(s => s.id === 'image_krea2_turbo_t2i');
     expect(t2i!.inputs.some(i => i.kind === 'image')).toBe(false);
+    const up = specs.find(s => s.id === 'image_seedvr2_upscale');
+    expect(up).toBeDefined();
+    const upImages = up!.inputs.filter(i => i.kind === 'image');
+    expect(upImages).toHaveLength(1);
+    expect(upImages[0]!.required).toBe(true);
+    expect(String(upImages[0]!.defaultValue ?? '').trim()).toBe('');
+  });
+
+  /* ---------- SeedVR2 图像放大（API 格式：numz 官方节点 + TTP Toolset 分块） ---------- */
+
+  it('SeedVR2 放大模板 introspection：图像输入 + 图片输出 + seed 参数', async () => {
+    const spec = await workflow.introspectWorkflow(seedvr2Json, OBJECT_INFO);
+    const images = spec.inputs.filter(i => i.kind === 'image');
+    expect(images).toHaveLength(1);
+    expect(images[0]!.classType).toBe('LoadImage');
+    expect(images[0]!.defaultValue).toBe('pasted/image (237).png');
+    expect(spec.inputs.some(i => i.kind === 'text')).toBe(false);
+    expect(spec.outputs).toEqual([expect.objectContaining({ kind: 'image', classType: 'PreviewImage' })]);
+    // 仅暴露 seed 参数（其余参数保持工作流默认值）
+    expect(spec.params).toEqual([expect.objectContaining({ field: 'seed', nodeId: '14', type: 'INT', default: 42 })]);
+  });
+
+  it('SeedVR2 放大模板 buildPrompt：上传图注入 + seed 注入 + 全节点保留', async () => {
+    const spec = await workflow.introspectWorkflow(seedvr2Json, OBJECT_INFO);
+    const prompt = await workflow.buildPrompt(spec, seedvr2Json, {
+      uploaded: { 'image-17': 'myphoto.png' },
+      settings: { seedMode: 'fixed', seed: 123, steps: 20, cfg: 1, sampler_name: 'euler', scheduler: 'normal', denoise: 1, width: 1024, height: 1024 },
+    });
+    expect(prompt['17'].inputs.image).toBe('myphoto.png');
+    expect(prompt['14'].inputs.seed).toBe(123);
+    expect(prompt['9'].class_type).toBe('PreviewImage');
+    expect(prompt['9'].inputs.images).toEqual(['4', 0]);
+    // 顶层 _meta 已剥离；无死节点裁剪（所有节点从 PreviewImage 反向可达）
+    expect(prompt['_meta']).toBeUndefined();
+    expect(Object.keys(prompt)).toHaveLength(15);
+    expect(Object.values(prompt).some((n: any) => n.class_type === 'TTP_Image_Assy')).toBe(true);
+    expect(Object.values(prompt).some((n: any) => n.class_type === 'SeedVR2VideoUpscaler')).toBe(true);
   });
 
   /* ---------- MiniMax H3 本地模板（templates/video_minimax_h3_*） ---------- */

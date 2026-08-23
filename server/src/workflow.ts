@@ -983,6 +983,15 @@ const KNOWN_CUSTOM_NODE_PACKAGES: Record<string, string> = {
   'Label (rgthree)': 'rgthree/rgthree-comfy',
   RTXVideoSuperResolution: 'Comfy-Org/Nvidia_RTX_Nodes_ComfyUI',
   'StyleStringInjector2 //ZImagePowerNodes': 'martin-rizzo/ComfyUI-ZImagePowerNodes',
+  // SeedVR2 图像/视频放大（numz/ComfyUI-SeedVR2_VideoUpscaler，四节点架构）
+  SeedVR2LoadDiTModel: 'numz/ComfyUI-SeedVR2_VideoUpscaler',
+  SeedVR2LoadVAEModel: 'numz/ComfyUI-SeedVR2_VideoUpscaler',
+  SeedVR2VideoUpscaler: 'numz/ComfyUI-SeedVR2_VideoUpscaler',
+  // TTP Toolset：分块放大（TTPlanetPig/Comfyui_TTP_Toolset）
+  TTP_Image_Tile_Batch: 'TTPlanetPig/Comfyui_TTP_Toolset',
+  TTP_Tile_image_size: 'TTPlanetPig/Comfyui_TTP_Toolset',
+  TTP_Image_Assy: 'TTPlanetPig/Comfyui_TTP_Toolset',
+  'SimpleMath+': 'cubiq/ComfyUI_essentials',
 };
 
 /**

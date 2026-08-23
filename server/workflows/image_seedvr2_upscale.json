@@ -1,0 +1,260 @@
+{
+  "1": {
+    "inputs": {
+      "tile_width": [
+        "2",
+        0
+      ],
+      "tile_height": [
+        "2",
+        1
+      ],
+      "image": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "TTP_Image_Tile_Batch",
+    "_meta": {
+      "title": "TTP_Image_Tile_Batch"
+    }
+  },
+  "2": {
+    "inputs": {
+      "width_factor": [
+        "7",
+        0
+      ],
+      "height_factor": [
+        "8",
+        0
+      ],
+      "overlap_rate": 0.1,
+      "image": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "TTP_Tile_image_size",
+    "_meta": {
+      "title": "TTP_Tile_image_size"
+    }
+  },
+  "4": {
+    "inputs": {
+      "padding": 64,
+      "tiles": [
+        "12",
+        0
+      ],
+      "positions": [
+        "1",
+        1
+      ],
+      "original_size": [
+        "1",
+        2
+      ],
+      "grid_size": [
+        "1",
+        3
+      ]
+    },
+    "class_type": "TTP_Image_Assy",
+    "_meta": {
+      "title": "TTP_Image_Assy"
+    }
+  },
+  "5": {
+    "inputs": {
+      "model": "seedvr2_ema_3b_fp8_e4m3fn.safetensors",
+      "device": "cuda:0",
+      "blocks_to_swap": 0,
+      "swap_io_components": false,
+      "offload_device": "cpu",
+      "cache_model": "sdpa",
+      "attention_mode": "sdpa"
+    },
+    "class_type": "SeedVR2LoadDiTModel",
+    "_meta": {
+      "title": "SeedVR2 (Down)Load DiT Model"
+    }
+  },
+  "6": {
+    "inputs": {
+      "model": "ema_vae_fp16.safetensors",
+      "device": "cuda:0",
+      "encode_tiled": true,
+      "encode_tile_size": 1024,
+      "encode_tile_overlap": 128,
+      "decode_tiled": true,
+      "decode_tile_size": 1024,
+      "decode_tile_overlap": 128,
+      "tile_debug": "false",
+      "offload_device": "cpu",
+      "cache_model": false
+    },
+    "class_type": "SeedVR2LoadVAEModel",
+    "_meta": {
+      "title": "SeedVR2 (Down)Load VAE Model"
+    }
+  },
+  "7": {
+    "inputs": {
+      "value": "a/1024",
+      "a": [
+        "15",
+        0
+      ]
+    },
+    "class_type": "SimpleMath+",
+    "_meta": {
+      "title": "🔧 Simple Math"
+    }
+  },
+  "8": {
+    "inputs": {
+      "value": "a/1024",
+      "a": [
+        "15",
+        1
+      ]
+    },
+    "class_type": "SimpleMath+",
+    "_meta": {
+      "title": "🔧 Simple Math"
+    }
+  },
+  "9": {
+    "inputs": {
+      "images": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "10": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 2,
+      "image": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Upscale Image By"
+    }
+  },
+  "11": {
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size"
+    }
+  },
+  "12": {
+    "inputs": {
+      "resize_type": "scale dimensions",
+      "resize_type.width": [
+        "11",
+        0
+      ],
+      "resize_type.height": [
+        "11",
+        1
+      ],
+      "resize_type.crop": "disabled",
+      "scale_method": "lanczos",
+      "input": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "ResizeImageMaskNode",
+    "_meta": {
+      "title": "Resize Image/Mask"
+    }
+  },
+  "14": {
+    "inputs": {
+      "seed": 42,
+      "resolution": 1080,
+      "max_resolution": 0,
+      "batch_size": 1,
+      "uniform_batch_size": false,
+      "color_correction": "wavelet",
+      "temporal_overlap": 0,
+      "prepend_frames": 0,
+      "input_noise_scale": 0,
+      "latent_noise_scale": 0,
+      "offload_device": "cpu",
+      "enable_debug": false,
+      "image": [
+        "16",
+        0
+      ],
+      "dit": [
+        "5",
+        0
+      ],
+      "vae": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "SeedVR2VideoUpscaler",
+    "_meta": {
+      "title": "SeedVR2 Video Upscaler (v2.5.17)"
+    }
+  },
+  "15": {
+    "inputs": {
+      "image": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "Get Image Size",
+    "_meta": {
+      "title": "Get Image Size"
+    }
+  },
+  "16": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 0.25,
+      "image": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Upscale Image By"
+    }
+  },
+  "17": {
+    "inputs": {
+      "image": "pasted/image (237).png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "_meta": {
+    "name": "SeedVR2 图像放大",
+    "description": "本地运行：SeedVR2 扩散模型图像高清放大（4K 级）。需安装 numz/ComfyUI-SeedVR2_VideoUpscaler 与 TTPlanetPig/Comfyui_TTP_Toolset 自定义节点，模型权重首次使用自动下载到 models/SEEDVR2。"
+  }
+}

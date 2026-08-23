@@ -94,6 +94,7 @@ server/workflows/img2img.json       示例：图生图（图像输入 → 图片
 server/workflows/video-minimax-h3-t2v.json  本地：MiniMax H3 文生视频（t2v，子图模板）
 server/workflows/video-minimax-h3-i2v.json  本地：MiniMax H3 图生视频（i2v，子图模板）
 server/workflows/video-minimax-h3-r2v.json  本地：MiniMax H3 参考图生视频（r2v，非子图）
+server/workflows/image_seedvr2_upscale.json  本地：SeedVR2 图像放大（numz 官方节点 + TTP 分块）
 web/src/api.ts              类型与接口（WorkflowSpec / JobEvent / cancel / SSE）
 web/src/components/Composer.tsx  工作流选择、动态参数控件、上传附件、必传 badge
 web/src/components/ChatView.tsx  实时模式 + 结果渲染（图片墙/视频/文本）
@@ -118,6 +119,8 @@ COMFYUI_BASE_URL=http://127.0.0.1:8188 pnpm dev
   `PrimitiveString(Multiline)` 承载的提示词同样识别为文字输入。
 - MiniMax H3 本地模板需本地安装 `comfyui-minimax-h3` 节点并下载 H3 模型权重
   （diffusion model / qwen3vl text encoder / 视频+音频 VAE / 可选 turbo LoRA，见模板内 Model Links）。
+- SeedVR2 图像放大模板需安装 `numz/ComfyUI-SeedVR2_VideoUpscaler` 与
+  `TTPlanetPig/Comfyui_TTP_Toolset` 自定义节点，模型权重首次使用自动下载到 `models/SEEDVR2`。
 - 图片经 `/comfyui/view` 由服务端代理返回，远程 ComfyUI 也不存在 CORS 问题。
 - 视频 workflow（Wan/Hunyuan 等）同样支持：识别 `VHS_VideoCombine` 输出即可，
   只需你有对应的 workflow 文件与模型。
