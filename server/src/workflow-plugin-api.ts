@@ -19,7 +19,7 @@ import {
 } from './workflow-catalog.js';
 import { getObjectInfo } from './comfyui.js';
 import { buildWorkflowGraph, createParamFromGraphField, type WorkflowGraph, type WorkflowGraphField } from './workflow-graph.js';
-import { PLUGIN_SKILLS_DIR, deletePluginSkill, readPluginSkill, writePluginSkill } from './workflow-skill.js';
+import { PLUGIN_SKILLS_DIR, deletePluginSkill, readPluginSkill, syncPluginSkill, writeCustomSkill, writePluginSkill } from './workflow-skill.js';
 
 export interface WorkflowNodeCandidate {
   nodeId: string;
@@ -36,6 +36,8 @@ export interface WorkflowPluginApiOptions {
   invalidate: () => void;
   /** skill 文件落盘目录（默认仓库 .pi/skills） */
   skillsDir?: string;
+  /** 用 plugin-skill-creator 为插件生成 SKILL.md 的调用方（未配置时 generate 端点返回 501） */
+  generateSkill?: (spec: WorkflowSpec) => Promise<string>;
 }
 
 function jsonError(res: Response, status: number, message: string): void {
@@ -334,7 +336,7 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
         writeWorkflowJson(options.dataRoot, id, raw);
         writeManifest(options.catalog.manifestDir, manifest);
         try {
-          writePluginSkill(manifest, skillsDir);
+          syncPluginSkill(manifest, skillsDir);
         } catch (error) {
           console.error(`[workflow-skill] 生成 ${id} 失败:`, error);
         }
@@ -343,7 +345,7 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
         return;
       }
 
-      const skillMatch = req.path.match(/^\/api\/plugins\/([^/]+)\/skill(?:\/regenerate)?$/);
+      const skillMatch = req.path.match(/^\/api\/plugins\/([^/]+)\/skill(?:\/(regenerate|generate))?$/);
       if (skillMatch) {
         const id = decodeURIComponent(skillMatch[1]!);
         const spec = await skillSpec(id);
@@ -361,9 +363,29 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           }
           return;
         }
-        if (req.method === 'POST') {
+        if (req.method === 'PUT') {
+          const content = req.body?.content;
+          if (typeof content !== 'string' || !content.trim()) {
+            jsonError(res, 400, 'content 必须是非空字符串');
+            return;
+          }
+          writeCustomSkill(id, content, skillsDir);
+          res.json({ ok: true });
+          return;
+        }
+        if (req.method === 'POST' && req.path.endsWith('/skill/regenerate')) {
           writePluginSkill(spec, skillsDir);
           res.json({ ok: true });
+          return;
+        }
+        if (req.method === 'POST' && req.path.endsWith('/skill/generate')) {
+          if (!options.generateSkill) {
+            res.status(501).json({ ok: false, error: '未配置 plugin-skill-creator 生成器' });
+            return;
+          }
+          const content = await options.generateSkill(spec);
+          writeCustomSkill(id, content, skillsDir);
+          res.json({ ok: true, content });
           return;
         }
       }
@@ -430,7 +452,7 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           writeManifest(options.catalog.manifestDir, normalized);
           try {
             const spec = await skillSpec(id);
-            if (spec) writePluginSkill(spec, skillsDir);
+            if (spec) syncPluginSkill(spec, skillsDir);
           } catch (error) {
             console.error(`[workflow-skill] 重新生成 ${id} 失败:`, error);
           }

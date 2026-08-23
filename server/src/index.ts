@@ -37,7 +37,7 @@ import { createWorkflowPluginRouter } from './workflow-plugin-api.js';
 import { migrateLegacyPluginConfig } from './workflow-plugin-migration.js';
 import { IMPORTED_WORKFLOWS_DIR, MANIFESTS_DIR, WORKFLOW_PLUGIN_DATA_DIR } from './workflow-plugin-store.js';
 import { ensurePluginSkills } from './workflow-skill.js';
-import { listAgentModels, runAgentStream, buildAgentInput, generateConversationTitle, toolCallFingerprint, type AgentStreamEvent } from './agent/bridge.js';
+import { listAgentModels, runAgentStream, buildAgentInput, generateConversationTitle, toolCallFingerprint, runPluginSkillCreator, type AgentStreamEvent } from './agent/bridge.js';
 import {
   SessionError,
   appendMessage,
@@ -121,6 +121,7 @@ app.use(createWorkflowPluginRouter({
   objectInfo: async () => (await import('./comfyui.js')).getObjectInfo(),
   isWorkflowEnabled,
   invalidate: invalidateComfyCaches,
+  generateSkill: runPluginSkillCreator,
 }));
 
 export const activityRegistry = new ActivityRegistry(taskQueue);

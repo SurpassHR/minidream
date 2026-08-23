@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createWorkflowPluginRouter, type WorkflowPluginApiOptions } from './workflow-plugin-api.js';
 import type { WorkflowSpec } from './workflow.js';
 import { readManifest, readWorkflowJson } from './workflow-plugin-store.js';
@@ -245,6 +245,68 @@ describe('workflow plugin API', () => {
     await withServer(makeApp(options), async baseUrl => {
       const res = await fetch(`${baseUrl}/api/plugins/no_such/skill`);
       expect(res.status).toBe(404);
+    });
+  });
+
+  it('PUT /api/plugins/:id/skill 保存自定义内容且不被 manifest 保存覆盖', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    await withServer(makeApp(options), async baseUrl => {
+      await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      const custom = '# 自定义 skill\n\n手工编写的内容';
+      const saved = await fetch(`${baseUrl}/api/plugins/demo/skill`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: custom }),
+      });
+      expect(saved.status).toBe(200);
+      expect(readPluginSkill('demo', options.skillsDir!)).toBe(custom);
+
+      // 保存 manifest 不应覆盖自定义版本
+      const current = (await (await fetch(`${baseUrl}/api/plugins`)).json() as WorkflowSpec[]).find(p => p.id === 'demo')!;
+      const resave = await fetch(`${baseUrl}/api/plugins/demo`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...current, name: '改名' }),
+      });
+      expect(resave.status).toBe(200);
+      expect(readPluginSkill('demo', options.skillsDir!)).toBe(custom);
+    });
+  });
+
+  it('POST /api/plugins/:id/skill/generate 调用注入的生成器并写入自定义内容', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    const generateSkill = vi.fn(async (spec: WorkflowSpec) => `# LLM skill for ${spec.id}\n\n生成内容`);
+    const app = express();
+    app.use(express.json({ limit: '10mb' }));
+    app.use(createWorkflowPluginRouter({ ...options, generateSkill }));
+    await withServer(app, async baseUrl => {
+      await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      const res = await fetch(`${baseUrl}/api/plugins/demo/skill/generate`, { method: 'POST' });
+      expect(res.status).toBe(200);
+      const body = await res.json() as { ok: boolean; content: string };
+      expect(body.ok).toBe(true);
+      expect(body.content).toContain('LLM skill for demo');
+      expect(generateSkill).toHaveBeenCalledWith(expect.objectContaining({ id: 'demo' }));
+      expect(readPluginSkill('demo', options.skillsDir!)).toBe(body.content);
+    });
+  });
+
+  it('POST /skill/generate 未配置生成器时返回错误', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    await withServer(makeApp(options), async baseUrl => {
+      await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      const res = await fetch(`${baseUrl}/api/plugins/demo/skill/generate`, { method: 'POST' });
+      expect(res.status).toBe(501);
     });
   });
 
