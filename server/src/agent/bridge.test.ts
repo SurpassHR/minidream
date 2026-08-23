@@ -150,6 +150,16 @@ describe('Agent Bridge', () => {
     expect(input).toContain('【用户指令】\n用 @图像2 做图生图');
   });
 
+  it('buildAgentInput 展示已上传文件名并保留 @图像N 标签', () => {
+    const input = buildAgentInput({
+      message: '放大 @图像1',
+      images: [{ name: '图像1', filename: 'chat-1750000000000-0.png' }],
+    });
+
+    expect(input).toContain('[图像1]: chat-1750000000000-0.png');
+    expect(input).toContain('【用户指令】\n放大 @图像1');
+  });
+
   it('buildAgentInput 在无上下文和图片时直接输出指令', () => {
     const input = buildAgentInput({
       message: '测试指令',

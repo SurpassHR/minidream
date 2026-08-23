@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DraftStore } from '../drafts.js';
-import { TaskQueue } from './queue.js';
+import { TaskQueue, extractHistoryError } from './queue.js';
 import type { TaskItem } from './types.js';
 
 let dir: string;
@@ -16,6 +16,27 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe('extractHistoryError：ComfyUI 执行错误识别', () => {
+  it('status=error 时返回 execution_error 消息', () => {
+    const history = {
+      status: {
+        status_str: 'error',
+        messages: [
+          ['execution_start', {}],
+          ['execution_error', { message: 'ValueError: height and width must be > 0' }],
+        ],
+      },
+    };
+    expect(extractHistoryError(history)).toBe('ComfyUI 执行出错：ValueError: height and width must be > 0');
+  });
+
+  it('status=success 或无状态时返回 null', () => {
+    expect(extractHistoryError({ status: { status_str: 'success' } })).toBeNull();
+    expect(extractHistoryError(undefined)).toBeNull();
+    expect(extractHistoryError({})).toBeNull();
+  });
 });
 
 describe('TaskQueue 基础功能与单测', () => {

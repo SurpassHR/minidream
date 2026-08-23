@@ -31,6 +31,8 @@ export default function ImageLightbox({
   /** 相对基础缩放的倍率：1 = 恰好适配屏幕 */
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  /** 原始分辨率（加载后读取，显示用） */
+  const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragStartRef = useRef({ mx: 0, my: 0, ox: 0, oy: 0 });
   const dragMovedRef = useRef(false);
@@ -40,6 +42,7 @@ export default function ImageLightbox({
     setBaseScale(1);
     setZoom(1);
     setOffset({ x: 0, y: 0 });
+    setNaturalSize(null);
   }, [image.url]);
 
   // Esc 关闭
@@ -56,6 +59,7 @@ export default function ImageLightbox({
     const wrap = wrapRef.current;
     const img = imgRef.current;
     if (!wrap || !img || !img.naturalWidth || !img.naturalHeight) return;
+    setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
     const scale = Math.min(
       (wrap.clientWidth - FIT_PADDING * 2) / img.naturalWidth,
       (wrap.clientHeight - FIT_PADDING * 2) / img.naturalHeight,
@@ -202,6 +206,9 @@ export default function ImageLightbox({
           ⤢
         </button>
         <span className="lightbox-zoom">{Math.round(zoom * 100)}%</span>
+        {naturalSize && (
+          <span className="lightbox-size">{naturalSize.w} × {naturalSize.h} px</span>
+        )}
       </div>
       <button
         className="lightbox-close"

@@ -199,13 +199,13 @@ export function buildAgentInput(
     | {
         message: string;
         sessionId?: string;
-        images?: Array<string | { name?: string; dataUrl?: string }>;
+        images?: Array<string | { name?: string; dataUrl?: string; filename?: string }>;
         videos?: Array<string | { name?: string; dataUrl?: string }>;
         context?: string;
       },
   options: {
     sessionId?: string;
-    images?: Array<string | { name?: string; dataUrl?: string }>;
+    images?: Array<string | { name?: string; dataUrl?: string; filename?: string }>;
     videos?: Array<string | { name?: string; dataUrl?: string }>;
     context?: string;
   } = {}
@@ -225,10 +225,13 @@ export function buildAgentInput(
     parts.push(
       `【参考图片】\n${opts.images
         .map((img, i) => {
-          const name = typeof img === 'string' ? '' : img.name || '';
+          const obj = typeof img === 'string' ? null : img;
+          const name = obj?.name || '';
           // 前端以 @图像N 提及的图片自动命名为「图像N」，这里用同一标识，便于 Agent 将指令中的 @图像N 与文件对应
           const label = name.startsWith('图像') ? name : `Image ${i + 1}`;
-          return `[${label}]: ${typeof img === 'string' ? img : name || 'image' + (i + 1)}`;
+          // 优先展示已上传到 ComfyUI 的真实文件名（Agent 提交时按序传入）
+          const shown = typeof img === 'string' ? img : obj?.filename || name || `image${i + 1}`;
+          return `[${label}]: ${shown}`;
         })
         .join('\n')}`
     );

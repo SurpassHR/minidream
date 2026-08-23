@@ -21,10 +21,13 @@ export interface McpServerInstance {
   handleRpcMessage(reqBody: any): Promise<JsonRpcResponse>;
 }
 
+/** 图像放大/超分意图关键词（配合参考图自动路由到 SeedVR2 放大工作流） */
+const UPSCALE_INTENT = /放大|超分|upscale|enlarge|提升分辨率|分辨率提升|高清化|变清晰|提高清晰|画质增强|画质提升|增强画质|锐化/i;
+
 const MCP_TOOLS: McpToolDescriptor[] = [
   {
     name: 'workflow.list',
-    description: '获取系统支持的工作流列表（包含 id、名称、输入与输出定义）',
+    description: '获取系统支持的工作流列表（包含 id、名称、用途描述、输入与输出定义）。选择工作流前应先调用本工具了解各工作流用途。',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -32,13 +35,13 @@ const MCP_TOOLS: McpToolDescriptor[] = [
   },
   {
     name: 'generation.submit',
-    description: '创建并提交生成任务入队（支持 Krea2 图像与 MiniMax H3 视频）',
+    description: '创建并提交生成任务入队（支持图像生成、图像放大与视频生成）',
     inputSchema: {
       type: 'object',
       properties: {
         workflowId: {
           type: 'string',
-          description: '工作流模板 ID（如 image_krea2_turbo_t2i 或 video-minimax-h3-t2v）',
+          description: '工作流模板 ID（如 image_krea2_turbo_t2i、image_seedvr2_upscale 或 video-minimax-h3-t2v，详见 workflow.list）',
         },
         prompt: {
           type: 'string',
@@ -124,6 +127,7 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
         const simplified = specs.map(s => ({
           id: s.id,
           name: s.name,
+          description: s.description,
           inputs: s.inputs.map(i => ({ kind: i.kind, label: i.label, required: i.required })),
           outputs: s.outputs.map(o => ({ kind: o.kind, label: o.label })),
         }));
@@ -139,14 +143,26 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
             isError: true,
           };
         }
-        if (!workflowEnabled(String(args.workflowId))) {
+        let workflowId = String(args.workflowId);
+        const promptText = String(args.prompt || '');
+        const hasImages = Array.isArray(args.images) && args.images.length > 0;
+        const hasVideos = Array.isArray(args.videos) && args.videos.length > 0;
+        // 用户提供参考图且意图为图像放大/超分时，确定性路由到 SeedVR2 放大工作流，
+        // 避免 Agent 误用文生图工作流（其无图像输入，参考图会被丢弃）。
+        const routed =
+          hasImages &&
+          !hasVideos &&
+          UPSCALE_INTENT.test(promptText) &&
+          workflowId !== 'image_seedvr2_upscale';
+        if (routed) workflowId = 'image_seedvr2_upscale';
+        if (!workflowEnabled(workflowId)) {
           return {
-            content: [{ type: 'text', text: `错误: 插件「${args.workflowId}」未启用，无法提交生成任务` }],
+            content: [{ type: 'text', text: `错误: 插件「${workflowId}」未启用，无法提交生成任务` }],
             isError: true,
           };
         }
         const task = taskQueue.submit({
-          workflowId: String(args.workflowId),
+          workflowId,
           prompt: String(args.prompt),
           images: Array.isArray(args.images) ? args.images.map(String) : undefined,
           videos: Array.isArray(args.videos) ? args.videos.map(String) : undefined,
@@ -162,7 +178,9 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
                 taskId: task.id,
                 status: task.status,
                 workflowId: task.workflowId,
-                message: '任务已成功提交至队列',
+                message: routed
+                  ? '任务已提交（检测到图像放大意图，已自动路由到 SeedVR2 图像放大工作流）'
+                  : '任务已成功提交至队列',
               }),
             },
           ],

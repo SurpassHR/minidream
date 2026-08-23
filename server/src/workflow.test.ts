@@ -725,6 +725,16 @@ describe('workflow 引擎（通用自动适配）', () => {
     });
     expect(prompt['17'].inputs.image).toBe('myphoto.png');
     expect(prompt['14'].inputs.seed).toBe(123);
+
+    // 随机种子必须落在节点字段上限内（uint32），避免 ComfyUI 校验拒绝
+    const promptRandom = await workflow.buildPrompt(spec, seedvr2Json, {
+      uploaded: { 'image-17': 'myphoto.png' },
+      settings: { seedMode: 'random', seed: -1, steps: 20, cfg: 1, sampler_name: 'euler', scheduler: 'normal', denoise: 1, width: 1024, height: 1024 },
+    });
+    const seedVal = promptRandom['14'].inputs.seed as number;
+    expect(Number.isInteger(seedVal)).toBe(true);
+    expect(seedVal).toBeGreaterThanOrEqual(0);
+    expect(seedVal).toBeLessThanOrEqual(4294967295);
     expect(prompt['9'].class_type).toBe('PreviewImage');
     expect(prompt['9'].inputs.images).toEqual(['4', 0]);
     // 顶层 _meta 已剥离；无死节点裁剪（所有节点从 PreviewImage 反向可达）

@@ -42,6 +42,19 @@ export interface TaskQueueOptions {
   executor?: TaskExecutor;
 }
 
+/**
+ * 从 ComfyUI history 中提取执行错误（status=error 时的 execution_error 消息）。
+ * 返回 null 表示执行成功。
+ */
+export function extractHistoryError(history: Record<string, any> | undefined): string | null {
+  if (history?.status?.status_str !== 'error') return null;
+  const execError = (history.status.messages ?? [])
+    .filter((m: unknown[]) => m?.[0] === 'execution_error')
+    .map((m: unknown[]) => (m?.[1] as { message?: string } | undefined)?.message)
+    .find(Boolean);
+  return `ComfyUI 执行出错：${execError || '未知错误'}`;
+}
+
 export class TaskQueue extends EventEmitter {
   private dataFile: string;
   private settingsFile?: string;
@@ -495,6 +508,10 @@ export class TaskQueue extends EventEmitter {
       if (!history) {
         throw new Error('等待生成超时或未获取到输出历史');
       }
+
+      // ComfyUI 执行出错（如节点异常）时标记失败，而不是当作完成
+      const historyError = extractHistoryError(history);
+      if (historyError) throw new Error(historyError);
 
       const outputs: TaskOutput[] = [];
       for (const outNode of Object.values(history?.outputs || {})) {

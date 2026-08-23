@@ -2142,6 +2142,15 @@
   user-select: none;
 }
 
+.lightbox-size {
+  padding: 0 4px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  white-space: nowrap;
+}
+
 .lightbox-close {
   position: absolute;
   top: 16px;

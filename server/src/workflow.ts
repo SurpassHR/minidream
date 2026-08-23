@@ -1209,7 +1209,11 @@ export async function buildPrompt(
         if (s.seedMode === 'fixed' && s.seed >= 0) {
           v = s.seed;
         } else {
-          v = Math.floor(Math.random() * 1125899906842624);
+          // 随机种子：优先取参数声明上限（如 SeedVR2 为 uint32），无上限时按 2^32-1 安全截断，
+          // 避免超过节点字段最大值导致 ComfyUI 校验失败
+          const max = typeof p.max === 'number' ? p.max : 4294967295;
+          const min = typeof p.min === 'number' ? p.min : 0;
+          v = min + Math.floor(Math.random() * (max - min + 1));
         }
       } else if (p.field === 'steps' && typeof s.steps === 'number') {
         v = s.steps;

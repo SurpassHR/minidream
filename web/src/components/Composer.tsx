@@ -66,9 +66,6 @@ const Composer = forwardRef<ComposerHandle, {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const dragDepth = useRef(0);
   const dropErrorTimer = useRef<number>(0);
-  /** 图片自动命名序号（单调递增，避免与历史消息里的 @图像N 冲突） */
-  const imgSeq = useRef(0);
-  const nextImageName = () => `图像${++imgSeq.current}`;
 
   const showDropError = (msg: string) => {
     setDropError(msg);
@@ -82,14 +79,13 @@ const Composer = forwardRef<ComposerHandle, {
   // 当前比例+尺寸对应的像素预览（智能比例 → null）
   const preview = computeResolution(ratio, size);
 
-  // 暴露给父组件：注入「引用」图片并聚焦输入框（图片自动命名 图像N）
+  // 暴露给父组件：注入「引用」图片并聚焦输入框（图片名按列表位置派生 图像N）
   useImperativeHandle(ref, () => ({
     addAttachment: att => {
       const isImg = att.kind === 'image';
-      const name = isImg ? nextImageName() : att.name;
       setAttachments(prev => [
         ...prev,
-        { ...att, id: att.id ?? `a${Date.now()}`, name, sourceName: isImg ? att.name : undefined },
+        { ...att, id: att.id ?? `a${Date.now()}`, name: isImg ? '' : att.name, sourceName: isImg ? att.name : undefined },
       ]);
     },
     focus: () => taRef.current?.focus(),
@@ -97,7 +93,7 @@ const Composer = forwardRef<ComposerHandle, {
 
   const submit = () => {
     if (!canSend) return;
-    // 只有输入框中 @图像N 提及的图片才进入上下文
+    // 只有输入框中 @图像N 提及的图片才进入上下文（N = 图片在引用列表中的位置）
     const mentioned = new Set<string>();
     const re = /@(图像\d+)/g;
     let m: RegExpExecArray | null;
@@ -105,10 +101,11 @@ const Composer = forwardRef<ComposerHandle, {
       const name = m[1];
       if (name) mentioned.add(name);
     }
-    const imageAtts = attachments.filter(a => a.kind === 'image' && mentioned.has(a.name));
+    const allImages = attachments.filter(a => a.kind === 'image');
+    const imageAtts = allImages.filter((_a, i) => mentioned.has(`图像${i + 1}`));
     const videoAtts = attachments.filter(a => a.kind === 'video');
     onSubmit({
-      images: imageAtts.map(a => ({ name: a.name, dataUrl: a.dataUrl })),
+      images: imageAtts.map((a, i) => ({ name: `图像${allImages.indexOf(a) + 1}`, dataUrl: a.dataUrl })),
       videos: videoAtts.map(a => ({ name: a.name, dataUrl: a.dataUrl })),
       ratio,
       size,
@@ -137,7 +134,7 @@ const Composer = forwardRef<ComposerHandle, {
         added.push({
           id: `a${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           kind,
-          name: kind === 'image' ? nextImageName() : file.name || '粘贴视频.mp4',
+          name: kind === 'image' ? '' : file.name || '粘贴视频.mp4',
           sourceName: kind === 'image' ? file.name : undefined,
           dataUrl: String(reader.result),
         });
@@ -184,7 +181,7 @@ const Composer = forwardRef<ComposerHandle, {
         {
           id: `a${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           kind: 'image',
-          name: nextImageName(),
+          name: '',
           sourceName,
           dataUrl,
           url,
@@ -234,9 +231,10 @@ const Composer = forwardRef<ComposerHandle, {
 
   const kindLabel = { image: '图片', video: '视频', text: '文本' };
 
-  // 当前可 @ 的图片列表（按输入过滤）
+  // 当前可 @ 的图片列表（图片名按列表位置派生：第 N 张 = 图像N）
   const imageAtts = attachments.filter(a => a.kind === 'image');
-  const filteredImages = mention ? imageAtts.filter(a => a.name.includes(mention.query)) : [];
+  const imageName = (a: Attachment) => `图像${imageAtts.indexOf(a) + 1}`;
+  const filteredImages = mention ? imageAtts.filter(a => imageName(a).includes(mention.query)) : [];
 
   // 输入变化时检测光标前的 @，打开/更新提及弹窗
   const onInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -246,7 +244,7 @@ const Composer = forwardRef<ComposerHandle, {
     const match = /@([^\s@]*)$/.exec(text.slice(0, pos));
     if (match && imageAtts.length > 0) {
       const query = match[1] ?? '';
-      if (imageAtts.some(a => a.name.includes(query))) {
+      if (imageAtts.some(a => imageName(a).includes(query))) {
         setMention({ query, index: 0 });
         return;
       }
@@ -270,13 +268,14 @@ const Composer = forwardRef<ComposerHandle, {
       return;
     }
     const partial = match[1] ?? '';
+    const mentionText = imageName(item);
     const insertAt = pos - partial.length - 1; // '@' 所在位置
-    const next = text.slice(0, insertAt) + '@' + item.name + text.slice(pos);
+    const next = text.slice(0, insertAt) + '@' + mentionText + text.slice(pos);
     onChange(next);
     setMention(null);
     requestAnimationFrame(() => {
       ta.focus();
-      const newPos = insertAt + 1 + item.name.length;
+      const newPos = insertAt + 1 + mentionText.length;
       ta.setSelectionRange(newPos, newPos);
     });
   };
@@ -316,11 +315,11 @@ const Composer = forwardRef<ComposerHandle, {
                 key={a.id}
                 className={`attachment-chip image${a.referenced ? ' referenced' : ''}`}
                 title={a.sourceName ? `${a.sourceName} · 点击预览图片` : '点击预览图片'}
-                onClick={() => setLightbox({ url: a.url ?? a.dataUrl, alt: a.name })}
+                onClick={() => setLightbox({ url: a.url ?? a.dataUrl, alt: imageName(a) })}
               >
-                <img className="attachment-thumb" src={a.url ?? a.dataUrl} alt={a.name} />
+                <img className="attachment-thumb" src={a.url ?? a.dataUrl} alt={imageName(a)} />
                 <em className="attachment-kind image">{a.referenced ? '引用' : kindLabel.image}</em>
-                <span className="attachment-name">{a.name}</span>
+                <span className="attachment-name">{imageName(a)}</span>
                 <button
                   className="attachment-remove"
                   aria-label="移除"
@@ -356,8 +355,8 @@ const Composer = forwardRef<ComposerHandle, {
                 onMouseDown={e => e.preventDefault()}
                 onClick={() => insertMention(i)}
               >
-                <img src={a.url ?? a.dataUrl} alt={a.name} />
-                <span className="mention-name">{a.name}</span>
+                <img src={a.url ?? a.dataUrl} alt={imageName(a)} />
+                <span className="mention-name">{imageName(a)}</span>
                 {a.referenced && <span className="mention-tag">引用</span>}
               </button>
             ))}

@@ -91,42 +91,47 @@ export const mcpServer: McpServerInstance = createDirectorMCPServer(
 export const activityRegistry = new ActivityRegistry(taskQueue);
 
 /**
- * 把聊天请求携带的图片素材（data URL）预上传到 ComfyUI input 目录，
- * 返回可被 Agent 在 generation.submit 中引用的文件名列表（图生图/图生视频）。
+ * 把聊天请求携带的图片素材（data URL）预上传到 ComfyUI input 目录。
+ * 返回 { name, filename } 列表：name 保留前端引用名（图像N，供 Agent 与用户指令中的 @图像N 对应），
+ * filename 为上传到 ComfyUI 的文件名（供 generation.submit 使用）。
  * ComfyUI 未连接或上传失败时回退为原文件名（Agent 无法引用，但不中断对话）。
  */
-async function uploadChatImages(images: unknown): Promise<string[]> {
+async function uploadChatImages(
+  images: unknown,
+): Promise<Array<{ name: string; filename: string }>> {
   if (!Array.isArray(images)) return [];
-  const filenames: string[] = [];
+  const result: Array<{ name: string; filename: string }> = [];
   for (let i = 0; i < images.length; i++) {
     const item = images[i] as { name?: string; dataUrl?: string } | string | undefined;
+    const fallback = `image${i + 1}`;
     if (typeof item === 'string') {
-      filenames.push(item);
+      result.push({ name: item, filename: item });
       continue;
     }
     if (!item) {
-      filenames.push(`image${i + 1}`);
+      result.push({ name: fallback, filename: fallback });
       continue;
     }
+    const name = item.name || fallback;
     const dataUrl = item.dataUrl;
     if (typeof dataUrl !== 'string') {
-      filenames.push(item.name || `image${i + 1}`);
+      result.push({ name, filename: name });
       continue;
     }
     const parsed = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl);
     if (!parsed) {
-      filenames.push(item.name || `image${i + 1}`);
+      result.push({ name, filename: name });
       continue;
     }
-    const ext = item.name?.includes('.') ? (item.name.split('.').pop() ?? 'png') : 'png';
+    const ext = name.includes('.') ? (name.split('.').pop() ?? 'png') : 'png';
     try {
       const upRes = await uploadFile('image', `chat-${Date.now()}-${i}.${ext}`, Buffer.from(parsed[2] ?? '', 'base64'));
-      filenames.push(upRes.subfolder ? `${upRes.subfolder}/${upRes.name}` : upRes.name);
+      result.push({ name, filename: upRes.subfolder ? `${upRes.subfolder}/${upRes.name}` : upRes.name });
     } catch {
-      filenames.push(item.name || `image${i + 1}`);
+      result.push({ name, filename: name });
     }
   }
-  return filenames;
+  return result;
 }
 
 
@@ -903,11 +908,11 @@ app.post('/api/chat', async (req, res) => {
       typeof req.body?.size === 'number' && Number.isFinite(req.body.size) && req.body.size > 0
         ? req.body.size
         : undefined;
-    // 预上传请求携带的图片到 ComfyUI，把真实文件名暴露给 Agent，使其能用于图生图/图生视频
-    const chatImageFilenames = await uploadChatImages(req.body?.images);
+    // 预上传请求携带的图片到 ComfyUI，把「图像N 名 + 上传文件名」暴露给 Agent，使其能用于图生图/图像放大
+    const chatImages = await uploadChatImages(req.body?.images);
     const agentInput = buildAgentInput({
       message: message.trim(),
-      images: chatImageFilenames.length > 0 ? chatImageFilenames : undefined,
+      images: chatImages.length > 0 ? chatImages : undefined,
       videos: Array.isArray(req.body?.videos) ? req.body.videos : undefined,
     });
     const agentSystemPrompt = [
@@ -915,8 +920,10 @@ app.post('/api/chat', async (req, res) => {
       '不要向用户报告内部文件名、存储路径、接口地址或任务 ID 等实现细节，',
       '任务完成后简短确认即可，保持输出简洁。',
       '若用户指令中以 @图像N 提及参考图片（【参考图片】中 [图像N] 即对应文件），',
-      '图生图/图生视频时必须在 generation.submit 的 images 参数中按序传入对应文件名，',
-      '并优先选择带图像输入的工作流（如图生视频 video-minimax-h3-i2v）。',
+      '图生图/图生视频时必须在 generation.submit 的 images 参数中按序传入对应文件名。',
+      '图像放大/超分/高清化（如「放大、放大图片、upscale、变清晰、高清化」）必须使用',
+      '「SeedVR2 图像放大」工作流（image_seedvr2_upscale），并在 images 中传入被放大的参考图文件名，',
+      '禁止使用文生图工作流重新生成一张新图。选择工作流前先调用 workflow.list 查看用途。',
     ].join('\n');
 
     try {

@@ -165,6 +165,61 @@ describe('Director MCP Server', () => {
     }
   });
 
+  it('generation.submit 放大意图 + 参考图时自动路由到 SeedVR2 放大工作流', async () => {
+    const res = await sendRpc({
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: {
+        name: 'generation.submit',
+        arguments: {
+          workflowId: 'image_krea2_turbo_t2i',
+          prompt: '将这张图片放大并提高清晰度',
+          images: ['chat-1-0.png'],
+        },
+      },
+    });
+
+    const parsed = JSON.parse(res.result.content[0].text);
+    expect(parsed.workflowId).toBe('image_seedvr2_upscale');
+    expect(parsed.message).toMatch(/自动路由/);
+    expect(taskQueue.get(parsed.taskId)?.workflowId).toBe('image_seedvr2_upscale');
+    expect(taskQueue.get(parsed.taskId)?.images).toEqual(['chat-1-0.png']);
+  });
+
+  it('generation.submit 无参考图或非放大意图时不路由', async () => {
+    const resNoImg = await sendRpc({
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: {
+        name: 'generation.submit',
+        arguments: {
+          workflowId: 'image_krea2_turbo_t2i',
+          prompt: '放大一张夕阳下的城市图',
+        },
+      },
+    });
+    const parsedNoImg = JSON.parse(resNoImg.result.content[0].text);
+    expect(parsedNoImg.workflowId).toBe('image_krea2_turbo_t2i');
+
+    const resNoIntent = await sendRpc({
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: {
+        name: 'generation.submit',
+        arguments: {
+          workflowId: 'image_krea2_turbo_t2i',
+          prompt: '根据参考图生成一张赛博朋克城市',
+          images: ['chat-1-0.png'],
+        },
+      },
+    });
+    const parsedNoIntent = JSON.parse(resNoIntent.result.content[0].text);
+    expect(parsedNoIntent.workflowId).toBe('image_krea2_turbo_t2i');
+  });
+
   it('calls generation.submit and creates a queued task', async () => {
     const res = await sendRpc({
       jsonrpc: '2.0',
