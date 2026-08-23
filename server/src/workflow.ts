@@ -41,8 +41,16 @@ const IMAGE_OUTPUT_CLASSES = new Set([
 ]);
 const VIDEO_OUTPUT_CLASSES = new Set(['VHS_VideoCombine', 'SaveVideo', 'SaveAnimatedWEBP']);
 const TEXT_OUTPUT_CLASSES = new Set(['ShowText', 'SaveText', 'PreviewText', 'TextOutputNode']);
-/** UI 格式转换时跳过的节点（纯 UI 元素） */
-const SKIP_NODE_TYPES = new Set(['MarkdownNote', 'Note', 'Reroute', 'PrimitiveNode', 'Comment']);
+/** UI 格式转换时跳过的节点（纯 UI 元素，无输入输出、不影响图） */
+const SKIP_NODE_TYPES = new Set([
+  'MarkdownNote',
+  'Note',
+  'Reroute',
+  'PrimitiveNode',
+  'Comment',
+  'Bookmark (rgthree)',
+  'Label (rgthree)',
+]);
 /** 文件名类 combo（ckpt_name/vae_name/lora_name...），不作为参数暴露 */
 const FILE_COMBO_FIELDS = new Set(['ckpt_name', 'vae_name', 'lora_name', 'unet_name', 'clip_name', 'control_net_name', 'audio_name']);
 
@@ -109,6 +117,8 @@ export interface WorkflowParam {
   max?: number;
   step?: number;
   options?: string[];
+  /** 与 id 指向节点同字段的其他节点（分阶段采样链的多个 KSampler 等），注入时一并写入 */
+  applyTo?: string[];
 }
 
 export interface WorkflowOutput {
@@ -160,6 +170,11 @@ interface UiLink {
 
 /** seed 类字段的 control_after_generate 额外值（widgets_values 里夹在字段中间，非 schema 字段） */
 const CONTROL_SET = new Set(['randomize', 'fixed', 'increment', 'decrement']);
+
+/** seed 类字段：seed/noise_seed 等，其后可能跟着 frontend-only 的 control_after_generate 值 */
+function isSeedField(name: string): boolean {
+  return name === 'seed' || /seed$/i.test(name);
+}
 
 function widgetTypeOf(def: any): string | null {
   if (Array.isArray(def)) {
@@ -220,6 +235,12 @@ function expandSubgraphs(json: Record<string, any>): { nodes: any[]; links: any[
   while (guard++ < 10) {
     const inst = nodes.find(n => defById.has(n.type));
     if (!inst) break;
+    if (inst.mode === 2 || inst.mode === 4) {
+      // muted / bypass 的子图实例不参与生成：移除实例及其连线
+      nodes = nodes.filter(n => n.id !== inst.id);
+      links = links.filter(l => l[3] !== inst.id && l[1] !== inst.id);
+      continue;
+    }
     const def = defById.get(inst.type)!;
 
     // 子图内部节点 id → 唯一新 id（实例 id 前缀，避免与主图冲突）
@@ -369,15 +390,15 @@ function convertUiNode(
         // 已由 link/上游值提供且属于 widget 类型的字段：跳过其对应位置的 widget 值（及可能的 control_after_generate）
         if (def && isWidgetType(def)) {
           wi++;
-          if (normalizeField(full) === 'seed' && wi < widgets.length && CONTROL_SET.has(String(widgets[wi]))) {
+          if (isSeedField(normalizeField(full)) && wi < widgets.length && CONTROL_SET.has(String(widgets[wi]))) {
             wi++;
           }
         }
         continue;
       }
       if (!isWidgetType(def)) continue; // link-only 类型没有 widget 值
-      // 跳过 seed 的 control_after_generate 额外值
-      if (lastField === 'seed' && wi < widgets.length && CONTROL_SET.has(String(widgets[wi]))) wi++;
+      // 跳过 seed 类字段的 control_after_generate 额外值
+      if (isSeedField(lastField) && wi < widgets.length && CONTROL_SET.has(String(widgets[wi]))) wi++;
       if (wi >= widgets.length) break;
       let value = widgets[wi];
       wi++;
@@ -411,8 +432,100 @@ function convertUiNode(
   return { class_type: node.type, inputs, _meta: { title: node.title ?? node.type } };
 }
 
+/* ---------- Set/Get 虚拟节点解析 ---------- */
+
+/**
+ * Set/Get 是前端虚拟节点（KJNodes / diffus3 SetGet 等，仅有 JS 实现、无 Python 后端类），
+ * ComfyUI 界面在排队前会把它们解析成直接连线；服务端转换必须做同样的解析，
+ * 否则 API 格式里残留 SetNode/GetNode 会导致 /prompt 报 missing_node_type。
+ */
+const SET_GET_SET_TYPES = new Set(['SetNode', 'KJNodes.SetNode', 'diffus3.SetNode']);
+const SET_GET_GET_TYPES = new Set(['GetNode', 'KJNodes.GetNode', 'diffus3.GetNode']);
+
+/** 取 Set/Get 节点名：Constant widget → widgets_values[0] → previousName → 标题去 Set_/Get_ 前缀 */
+function setGetName(node: any): string {
+  const named = node.widgets_values_named;
+  if (named && typeof named.Constant === 'string' && named.Constant.trim()) return named.Constant.trim();
+  const w = Array.isArray(node.widgets_values) ? (node.widgets_values as unknown[]) : [];
+  if (typeof w[0] === 'string' && (w[0] as string).trim()) return (w[0] as string).trim();
+  const prev = node.properties?.previousName;
+  if (typeof prev === 'string' && prev.trim()) return prev.trim();
+  return String(node.title ?? '').replace(/^(Set|Get)_?/i, '').trim();
+}
+
+/**
+ * 把 Set/Get 虚拟节点重写为直接连线：
+ * - GetNode 的输出 = 同名 SetNode 输入的真实来源；SetNode 输出 = 其输入透传；
+ * - 解析后删除所有 Set/Get 节点，指向它们的连线被吞掉，从它们出发的连线重定向到真实来源；
+ * - 找不到同名 Set 的 Get（如 Set 在静音子图中）被丢弃，其输出连线一并移除。
+ */
+function resolveSetGet(nodes: any[], links: any[]): { nodes: any[]; links: any[] } {
+  const linksMap = new Map<number, UiLink>();
+  for (const l of links) {
+    if (Array.isArray(l) && l.length >= 3) linksMap.set(l[0] as number, { originId: l[1] as number, originSlot: l[2] as number });
+  }
+  const nodesById = new Map<number, any>(nodes.map(n => [n.id, n]));
+  const setByName = new Map<string, number>();
+  for (const n of nodes) {
+    if (!SET_GET_SET_TYPES.has(n.type)) continue;
+    const name = setGetName(n);
+    if (name && !setByName.has(name)) setByName.set(name, n.id);
+  }
+
+  const resolveCache = new Map<number, UiLink | null>();
+  const visiting = new Set<number>();
+  const resolveSource = (id: number): UiLink | null => {
+    if (resolveCache.has(id)) return resolveCache.get(id)!;
+    if (visiting.has(id)) return null; // 循环引用（非法图）
+    visiting.add(id);
+    let result: UiLink | null = null;
+    const node = nodesById.get(id);
+    if (node) {
+      if (SET_GET_SET_TYPES.has(node.type)) {
+        const input = (node.inputs ?? []).find((i: any) => i.link != null);
+        const src = input?.link != null ? linksMap.get(input.link) : undefined;
+        if (src) result = resolveSource(src.originId) ?? src;
+      } else if (SET_GET_GET_TYPES.has(node.type)) {
+        const setId = setByName.get(setGetName(node));
+        if (setId !== undefined) result = resolveSource(setId);
+      }
+    }
+    visiting.delete(id);
+    resolveCache.set(id, result);
+    return result;
+  };
+
+  const virtualIds = new Set<number>(
+    nodes.filter(n => SET_GET_SET_TYPES.has(n.type) || SET_GET_GET_TYPES.has(n.type)).map(n => n.id),
+  );
+
+  const newLinks: any[] = [];
+  for (const l of links) {
+    if (!Array.isArray(l) || l.length < 3) continue;
+    const [, originId, originSlot, targetId] = l as [number, number, number, number];
+    if (virtualIds.has(targetId)) continue; // 指向 Set/Get 的输入连线被内部吞掉
+    let newOriginId = originId;
+    let newOriginSlot = originSlot;
+    if (virtualIds.has(originId)) {
+      const src = resolveSource(originId);
+      if (!src) continue; // 无法解析的 Get → 丢弃其输出连线
+      newOriginId = src.originId;
+      newOriginSlot = src.originSlot;
+    }
+    newLinks.push([l[0], newOriginId, newOriginSlot, targetId, l[4], l[5]]);
+  }
+
+  return {
+    nodes: nodes.filter(n => !virtualIds.has(n.id)),
+    links: newLinks,
+  };
+}
+
 export function convertUiToApi(json: Record<string, any>, objectInfoData: Record<string, any>): Record<string, any> {
-  const { nodes, links } = expandSubgraphs(json);
+  // 1. 展开子图实例
+  let { nodes, links } = expandSubgraphs(json);
+  // 2. 解析 Set/Get 虚拟节点为直接连线（重连后 links 仍保留原 link id）
+  ({ nodes, links } = resolveSetGet(nodes, links));
   const linksMap = new Map<number, UiLink>();
   for (const l of links) {
     if (Array.isArray(l) && l.length >= 3) linksMap.set(l[0] as number, { originId: l[1] as number, originSlot: l[2] as number });
@@ -448,11 +561,56 @@ function genericTextInputFields(
   return fields;
 }
 
+/* ---------- 死节点裁剪 ---------- */
+
+/** 类名去掉 pysssss 等自定义节点的 `|命名空间` 后缀 */
+function baseClass(cls: string): string {
+  return cls.split('|')[0] ?? cls;
+}
+
+/** 输出节点类（SaveImage/PreviewImage/ShowText 等，含 | 命名空间形式） */
+const OUTPUT_NODE_CLASSES = new Set([
+  ...IMAGE_OUTPUT_CLASSES,
+  ...VIDEO_OUTPUT_CLASSES,
+  ...TEXT_OUTPUT_CLASSES,
+]);
+
+/**
+ * 裁剪「死节点」：输出不被任何节点消费、且自身不是输出节点的节点（如被停用的备用模型分支）。
+ * ComfyUI 只执行从输出节点反向可达的节点，死节点不参与生成，只会污染参数面板、
+ * 且若其引用的模型缺失还会导致提交前校验误报。从输出节点沿输入连线反向标记可达节点。
+ */
+export function pruneDeadNodes(api: Record<string, any>): Record<string, any> {
+  const alive = new Set<string>();
+  for (const [id, node] of Object.entries(api)) {
+    if (node && OUTPUT_NODE_CLASSES.has(baseClass(String(node.class_type ?? '')))) alive.add(id);
+  }
+  // 从输出节点沿 input 连线（[originId, slot]）反向扩散
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [id, node] of Object.entries(api)) {
+      if (!alive.has(id) || !node || typeof node.inputs !== 'object') continue;
+      for (const v of Object.values(node.inputs as Record<string, unknown>)) {
+        if (Array.isArray(v) && typeof v[0] === 'string' && !alive.has(v[0])) {
+          alive.add(v[0]);
+          changed = true;
+        }
+      }
+    }
+  }
+  const out: Record<string, any> = {};
+  for (const [id, node] of Object.entries(api)) {
+    if (alive.has(id)) out[id] = node;
+  }
+  return out;
+}
+
 /* ---------- introspection ---------- */
 
 export async function introspectWorkflow(json: Record<string, any>, objectInfoData?: Record<string, any>): Promise<WorkflowSpec> {
   const oi = objectInfoData ?? (await objectInfo().catch(() => undefined));
-  const apiJson = isUiFormat(json) ? convertUiToApi(json, oi ?? {}) : json;
+  const apiJson = pruneDeadNodes(isUiFormat(json) ? convertUiToApi(json, oi ?? {}) : json);
 
   const inputs: WorkflowInput[] = [];
   const params: WorkflowParam[] = [];
@@ -657,11 +815,27 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
     }
   }
 
+  // 采样类字段（全局采样设置本就对同名参数逐一写入同一值）：同一字段只保留一个控件，
+  // 注入时通过 applyTo 应用到该字段的全部节点（分阶段采样链的多个 KSampler 只显示一组采样器/调度器）。
+  // 文件类 combo（unet/clip/vae/lora 等）不去重：工作流里可能存在多个真正不同的加载器。
+  const SAMPLING_FIELDS = new Set(['seed', 'noise_seed', 'steps', 'cfg', 'denoise', 'sampler_name', 'scheduler']);
+  const byField = new Map<string, WorkflowParam>();
+  const deduped: WorkflowParam[] = [];
+  for (const p of params) {
+    const first = SAMPLING_FIELDS.has(p.field) ? byField.get(p.field) : undefined;
+    if (!first) {
+      byField.set(p.field, p);
+      deduped.push(p);
+    } else {
+      (first.applyTo ??= []).push(p.nodeId);
+    }
+  }
+
   return {
     id: '',
     name: '',
     inputs,
-    params,
+    params: deduped,
     outputs,
   };
 }
@@ -793,6 +967,66 @@ export interface BuildValues {
 
 /* ---------- 提交前模型/参数可用性校验 ---------- */
 
+/** 常见自定义节点类 → 提供它的自定义节点包（API 格式工作流没有 properties.aux_id，靠此表补充安装提示） */
+const KNOWN_CUSTOM_NODE_PACKAGES: Record<string, string> = {
+  SetNode: 'kijai/ComfyUI-KJNodes',
+  GetNode: 'kijai/ComfyUI-KJNodes',
+  KJNodes_SetNode: 'kijai/ComfyUI-KJNodes',
+  KJNodes_GetNode: 'kijai/ComfyUI-KJNodes',
+  PathchSageAttentionKJ: 'kijai/ComfyUI-KJNodes',
+  ApplyKrea2NegPiP: 'blue-pen5805/ComfyUI-krea2-negpip',
+  CLIPLoaderGGUF: 'city96/ComfyUI-GGUF',
+  DyPE_FLUX: 'wildminder/ComfyUI-DyPE',
+  SEGA: 'wildminder/ComfyUI-DyPE',
+  'Power Lora Loader (rgthree)': 'rgthree/rgthree-comfy',
+  'Bookmark (rgthree)': 'rgthree/rgthree-comfy',
+  'Label (rgthree)': 'rgthree/rgthree-comfy',
+  RTXVideoSuperResolution: 'Comfy-Org/Nvidia_RTX_Nodes_ComfyUI',
+  'StyleStringInjector2 //ZImagePowerNodes': 'martin-rizzo/ComfyUI-ZImagePowerNodes',
+};
+
+/**
+ * 提交前校验：工作流用到的节点类型是否都在 ComfyUI 中安装。
+ * 自定义节点（如 KJNodes 的 SetNode/GetNode）缺失时 ComfyUI 会返回 missing_node_type 400，
+ * 这里提前检查并一次性列出全部缺失类型，附上对应的自定义节点包方便安装。
+ */
+export function assertNodeTypesInstalled(
+  prompt: Record<string, any>,
+  objectInfoData: Record<string, any>,
+  json: Record<string, any>,
+): void {
+  const missing = new Map<string, string[]>();
+  for (const [nodeId, node] of Object.entries(prompt)) {
+    if (!node || typeof node !== 'object') continue;
+    const cls = String((node as any).class_type ?? '');
+    if (!cls || objectInfoData[cls]) continue;
+    const title = (node as any)._meta?.title;
+    const label = title && title !== cls ? `${title}（节点 ${nodeId}）` : `节点 ${nodeId}`;
+    missing.set(cls, [...(missing.get(cls) ?? []), label]);
+  }
+  if (missing.size === 0) return;
+
+  // UI 格式工作流带 properties.aux_id（优先），API 格式用已知包名表兜底
+  const auxByClass = new Map<string, string>();
+  const uiNodes: any[] = [
+    ...((json?.nodes ?? []) as any[]),
+    ...((json?.definitions?.subgraphs ?? []) as any[]).flatMap((d: any) => d?.nodes ?? []),
+  ];
+  for (const n of uiNodes) {
+    const aux = n?.properties?.aux_id;
+    if (typeof aux === 'string' && aux) auxByClass.set(String(n.type), aux);
+  }
+
+  const lines = [...missing.entries()].map(([cls, labels]) => {
+    const aux = auxByClass.get(cls) ?? KNOWN_CUSTOM_NODE_PACKAGES[cls];
+    return `- ${cls}${aux ? `（需安装自定义节点 ${aux}）` : ''}：${labels.join('、')}`;
+  });
+  throw new ComfyUIError(
+    `工作流使用了 ComfyUI 未安装的节点类型：\n${lines.join('\n')}\n` +
+      '请在 ComfyUI 中安装对应的自定义节点（ComfyUI Manager → Install Custom Nodes 搜索安装），安装后重启 ComfyUI 再重试；或改用其他工作流。',
+  );
+}
+
 /** 文件类 combo 字段 → ComfyUI models 子目录（缺失模型错误提示用） */
 const FILE_COMBO_FOLDERS: Record<string, string> = {
   ckpt_name: 'checkpoints',
@@ -916,13 +1150,15 @@ export async function buildPrompt(
 ): Promise<Record<string, any>> {
   const oi = await objectInfo().catch(() => undefined);
   // UI 格式模板 → 先转成 API 格式（widget 默认值来自模板本身）
-  const prompt = isUiFormat(json)
-    ? convertUiToApi(json, oi ?? {})
-    : (() => {
-        const copy = JSON.parse(JSON.stringify(json)) as Record<string, any>;
-        delete copy._meta; // API 格式顶层 _meta 是工作流元信息，不是节点
-        return copy;
-      })();
+  const prompt = pruneDeadNodes(
+    isUiFormat(json)
+      ? convertUiToApi(json, oi ?? {})
+      : (() => {
+          const copy = JSON.parse(JSON.stringify(json)) as Record<string, any>;
+          delete copy._meta; // API 格式顶层 _meta 是工作流元信息，不是节点
+          return copy;
+        })(),
+  );
 
   // 文字输入注入
   const textInputs = spec.inputs.filter(i => i.kind === 'text');
@@ -984,7 +1220,10 @@ export async function buildPrompt(
     }
 
     if (v === undefined) continue;
-    prompt[p.nodeId].inputs[p.field] = v;
+    // 同一字段去重后应用到全部节点（分阶段采样链的多个 KSampler 等）
+    for (const nid of [...(p.applyTo ?? []), p.nodeId]) {
+      if (prompt[nid]?.inputs) prompt[nid].inputs[p.field] = v;
+    }
   }
 
   // 生成尺寸注入：把链接型 width/height（来自 ResolutionSelector 等）替换为具体数值
@@ -995,8 +1234,9 @@ export async function buildPrompt(
   // checkpoint 自动探测（仅当工作流含 checkpoint 节点）
   if (oi) await resolveCheckpoints(prompt, oi);
 
-  // 提交前校验：子目录模型别名解析 + 缺失模型/非法参数给出可读错误
+  // 提交前校验：节点类型已安装 → 子目录模型别名解析 + 缺失模型/非法参数给出可读错误
   if (oi) {
+    assertNodeTypesInstalled(prompt, oi, json);
     resolveModelCombos(prompt, oi);
     validateComboValues(prompt, oi);
   }

@@ -44,4 +44,31 @@ describe('ComfyUI 客户端', () => {
       /工作流校验失败：Value not in list.*unet_name.*节点 5/,
     );
   });
+
+  it('submitPrompt 对 missing_node_type 400 给出安装自定义节点的可读错误', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL | Request) => {
+        const u = String(url);
+        if (u.includes('/prompt')) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                type: 'missing_node_type',
+                message: "Node 'Set_PRMT-' not found. The custom node may not be installed.",
+                details: "Node ID '#465'",
+                extra_info: { node_id: '465', class_type: 'SetNode', node_title: 'Set_PRMT-' },
+              },
+              node_errors: {},
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        throw new Error(`unexpected fetch: ${u}`);
+      }),
+    );
+    await expect(comfyui.submitPrompt({ '465': { class_type: 'SetNode', inputs: {} } }, 'client-1')).rejects.toThrow(
+      /未安装的节点「SetNode」（Set_PRMT-）.*自定义节点/,
+    );
+  });
 });

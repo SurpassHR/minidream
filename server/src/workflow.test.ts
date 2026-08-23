@@ -109,6 +109,18 @@ const OBJECT_INFO: Record<string, any> = {
     input: { required: { filename_prefix: ['STRING', { default: 'ComfyUI' }], images: ['IMAGE', {}] } },
     output: ['IMAGE'],
   },
+  PreviewImage: {
+    input: { required: { images: ['IMAGE', {}] } },
+    output: ['IMAGE'],
+  },
+  SaveVideo: {
+    input: { required: { filename_prefix: ['STRING', { default: 'ComfyUI' }] }, optional: { images: ['IMAGE', {}], video: ['VIDEO', {}] } },
+    output: ['VIDEO'],
+  },
+  LatentUpscaleBy: {
+    input: { required: { upscale_method: ['COMBO', {}], scale_by: ['FLOAT', {}] }, optional: { samples: ['LATENT', {}] } },
+    output: ['LATENT'],
+  },
   /* ---------- MiniMax H3 本地节点（comfyui-minimax-h3） ---------- */
   ResolutionSelector: {
     input: { required: { aspect_ratio: ['COMBO', {}], megapixels: ['FLOAT', {}], multiple: ['INT', {}] } },
@@ -126,7 +138,14 @@ const OBJECT_INFO: Record<string, any> = {
     input: {
       required: {
         vae_name: [
-          ['a.safetensors', 'minimax_h3_video_vae_fp16.safetensors', 'minimax_h3_audio_vae_fp32.safetensors', 'qwen_image_vae.safetensors'],
+          [
+            'a.safetensors',
+            'minimax_h3_video_vae_fp16.safetensors',
+            'minimax_h3_audio_vae_fp32.safetensors',
+            'qwen_image_vae.safetensors',
+            'Wan2.1_VAE.pth',
+            'flux2-vae.safetensors',
+          ],
           {},
         ],
       },
@@ -168,6 +187,8 @@ const OBJECT_INFO: Record<string, any> = {
             'minimax_h3_ref2va_pruned_int8_convrot.safetensors',
             'krea2_turbo_fp8_scaled.safetensors',
             'KREA2/krea2_turbo_int8_convrot.safetensors',
+            'FLUX/KLEIN/fluxKleinFP8_flux2Klein9bFp8.safetensors',
+            'KREA2/pornmasterKrea2_v2TurboInt8.safetensors',
           ],
           {},
         ],
@@ -207,7 +228,7 @@ const OBJECT_INFO: Record<string, any> = {
     input: {
       required: {
         clip_name: [
-          ['a.safetensors', 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', 'qwen3vl_4b_fp8_scaled.safetensors'],
+          ['a.safetensors', 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', 'qwen3vl_4b_fp8_scaled.safetensors', 'Huihui-Qwen3-VL-4B-Instruct-abliterated-fp8_scaled.safetensors'],
           {},
         ],
         type: ['COMBO', {}],
@@ -300,6 +321,139 @@ const OBJECT_INFO: Record<string, any> = {
     },
     output: ['CONDITIONING', 'LATENT'],
   },
+  /* ---------- 新 Krea2 Turbo 模板（fluxKlein + KJNodes 全局变量）节点 ---------- */
+  GetNode: {
+    input: { required: { Constant: ['STRING', {}] } },
+    output: ['MODEL'],
+  },
+  SetNode: {
+    input: {
+      optional: {
+        MODEL: ['MODEL', {}],
+        CLIP: ['CLIP', {}],
+        CONDITIONING: ['CONDITIONING', {}],
+        LATENT: ['LATENT', {}],
+        VAE: ['VAE', {}],
+        STRING: ['STRING', {}],
+      },
+    },
+    output: [],
+  },
+  KSamplerAdvanced: {
+    input: {
+      // 与真实 ComfyUI 一致：control_after_generate 是前端专用值，不在后端 schema 里
+      required: {
+        model: ['MODEL', {}],
+        add_noise: [['enable', 'disable'], {}],
+        noise_seed: ['INT', {}],
+        steps: ['INT', {}],
+        cfg: ['FLOAT', {}],
+        sampler_name: [['euler', 'er_sde', 'dpmpp_sde', 'dpmpp_2m'], {}],
+        scheduler: [['normal', 'simple', 'karras'], {}],
+        positive: ['CONDITIONING', {}],
+        negative: ['CONDITIONING', {}],
+        latent_image: ['LATENT', {}],
+        start_at_step: ['INT', {}],
+        end_at_step: ['INT', {}],
+        return_with_leftover_noise: [['enable', 'disable'], {}],
+      },
+      optional: {},
+    },
+    output: ['LATENT'],
+  },
+  CLIPLoaderGGUF: {
+    input: {
+      required: {
+        clip_name: [['Qwen3-8B-Q8_0.gguf'], {}],
+        type: [['flux2'], {}],
+      },
+    },
+    output: ['CLIP'],
+  },
+  ApplyKrea2NegPiP: {
+    input: {
+      required: {
+        value_strength: ['FLOAT', {}],
+        patch_txtfusion_refiners: ['BOOLEAN', {}],
+        block_start: ['INT', {}],
+        block_end: ['INT', {}],
+        block_stride: ['INT', {}],
+      },
+      optional: { model: ['MODEL', {}], clip: ['CLIP', {}] },
+    },
+    output: ['MODEL', 'CLIP'],
+  },
+  PathchSageAttentionKJ: {
+    input: { optional: { model: ['MODEL', {}] } },
+    output: ['MODEL'],
+  },
+  FluxKVCache: {
+    input: { optional: { model: ['MODEL', {}] } },
+    output: ['MODEL'],
+  },
+  DyPE_FLUX: {
+    input: { optional: { model: ['MODEL', {}] } },
+    output: ['MODEL'],
+  },
+  SEGA: {
+    input: { optional: { model: ['MODEL', {}] } },
+    output: ['MODEL'],
+  },
+  'Power Lora Loader (rgthree)': {
+    input: { optional: { model: ['MODEL', {}] } },
+    output: ['MODEL'],
+  },
+  RTXVideoSuperResolution: {
+    input: {
+      required: {
+        upscale_method: ['COMBO', {}],
+        factor: ['INT', {}],
+        quality: ['COMBO', {}],
+      },
+      optional: { image: ['IMAGE', {}] },
+    },
+    output: ['IMAGE'],
+  },
+  'Text Concatenate': {
+    input: {
+      required: {
+        text_a: ['STRING', { multiline: true }],
+        text_b: ['STRING', { multiline: true }],
+        text_c: ['STRING', { multiline: true }],
+        text_d: ['STRING', {}],
+      },
+    },
+    output: ['STRING'],
+  },
+  'Text Multiline': {
+    input: { required: { text: ['STRING', { multiline: true }] } },
+    output: ['STRING'],
+  },
+  'StyleStringInjector2 //ZImagePowerNodes': {
+    input: { optional: { string: ['STRING', {}] } },
+    output: ['STRING'],
+  },
+  'ShowText|pysssss': {
+    input: { required: { text: ['STRING', {}] } },
+    output: ['STRING'],
+  },
+  Seed: {
+    input: {
+      required: {
+        seed: ['INT', {}],
+        control_after_generate: [['randomize', 'fixed', 'increment', 'decrement'], {}],
+      },
+    },
+    output: ['INT'],
+  },
+  'SimpleMath+': {
+    input: { required: { a: ['FLOAT', {}], b: ['FLOAT', {}], operation: ['COMBO', {}] } },
+    output: ['FLOAT'],
+  },
+  'easy ifElse': {
+    input: { optional: { boolean: ['BOOLEAN', {}], on_true: ['*', {}], on_false: ['*', {}] } },
+    output: ['*'],
+  },
 };
 
 describe('workflow 引擎（通用自动适配）', () => {
@@ -350,6 +504,29 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(api['5'].inputs.height).toBe(768);
     expect(api['6'].inputs.filename_prefix).toBe('director-wb');
     expect(api['6'].inputs.images).toEqual(['4', 0]);
+  });
+
+  it('UI 格式 Set/Get 虚拟节点解析：Get 输出重定向到同名 Set 输入来源，虚拟节点移除', () => {
+    const fixture = {
+      last_node_id: 4,
+      nodes: [
+        { id: 1, type: 'UNETLoader', widgets_values: ['a.safetensors', 'default'], outputs: [{ name: 'MODEL', links: [10] }] },
+        { id: 2, type: 'SetNode', widgets_values: ['MOD'], properties: { previousName: 'MOD' }, inputs: [{ name: 'MODEL', link: 10 }], outputs: [{ name: 'MODEL', links: [] }] },
+        { id: 3, type: 'GetNode', widgets_values: ['MOD'], outputs: [{ name: 'MODEL', links: [11] }] },
+        { id: 4, type: 'FluxKVCache', inputs: [{ name: 'model', link: 11 }], outputs: [] },
+      ],
+      links: [
+        [10, 1, 0, 2, 0, 'MODEL'],
+        [11, 3, 0, 4, 0, 'MODEL'],
+      ],
+    };
+    const api = workflow.convertUiToApi(fixture, OBJECT_INFO);
+    // Get(MOD) → Set(MOD) 输入来源 UNETLoader
+    expect(api['4'].inputs.model).toEqual(['1', 0]);
+    // Set/Get 虚拟节点不再出现在 API 图里（否则 /prompt 报 missing_node_type）
+    expect(Object.keys(api)).not.toContain('2');
+    expect(Object.keys(api)).not.toContain('3');
+    expect(Object.values(api).some((n: any) => n.class_type === 'SetNode' || n.class_type === 'GetNode')).toBe(false);
   });
 
   it('UI 格式工作流 introspection：文字输入 + 图片输出 + 参数提取', async () => {
@@ -498,16 +675,31 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(r2vPrompt['136'].inputs.prompt).toEqual(['138', 0]);
   });
 
-  it('Krea2 Turbo 模板 introspection 与 buildPrompt 正确处理子图展开与提示词注入', async () => {
+  it('Krea2 Turbo 模板（官方导出的 API 格式）introspection 与 buildPrompt 正确处理提示词/参数注入', async () => {
+    // 官方导出的 API 格式：Set/Get 与 BYPASS 已由 ComfyUI 前端解析为直接连线
     const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
     expect(t2iSpec.inputs.some(i => i.kind === 'image')).toBe(false);
     expect(t2iSpec.inputs.some(i => i.kind === 'text')).toBe(true);
-    expect(t2iSpec.outputs).toEqual([expect.objectContaining({ kind: 'image', classType: 'SaveImage' })]);
+    expect(t2iSpec.outputs.some(o => o.kind === 'image' && o.classType === 'SaveImage')).toBe(true);
+    expect(t2iSpec.outputs.some(o => o.kind === 'image' && o.classType === 'PreviewImage')).toBe(true);
 
     const t2iPrompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, { prompt: 'A futuristic city in neon rain' });
-    expect(t2iPrompt['30_sg19'].class_type).toBe('PrimitiveStringMultiline');
-    expect(t2iPrompt['30_sg19'].inputs.value).toBe('A futuristic city in neon rain');
-    expect(t2iPrompt['29'].class_type).toBe('SaveImage');
+    // 提示词注入到 CLIPTextEncode，SaveImage 输出
+    expect(t2iPrompt['477'].class_type).toBe('CLIPTextEncode');
+    expect(t2iPrompt['477'].inputs.text).toBe('A futuristic city in neon rain');
+    expect(t2iPrompt['532'].class_type).toBe('SaveImage');
+    // API 图里不残留 Set/Get 虚拟节点
+    const classTypes = Object.values(t2iPrompt).map((n: any) => n.class_type);
+    expect(classTypes).not.toContain('SetNode');
+    expect(classTypes).not.toContain('GetNode');
+    // 模型/提示词链路已由前端解析为直接连线
+    expect(t2iPrompt['478'].inputs.model).toEqual(['487', 0]);
+    expect(t2iPrompt['520'].inputs.model).toEqual(['538', 0]); // BYPASS(SEGA/DyPE) 透传
+    expect(t2iPrompt['476'].inputs.text).toEqual(['553', 0]);
+    // widget 值完整（前端导出即权威映射）
+    expect(t2iPrompt['478'].inputs.steps).toBe(12);
+    expect(t2iPrompt['478'].inputs.sampler_name).toBe('er_sde');
+    expect(t2iPrompt['478'].inputs.return_with_leftover_noise).toBe('disable');
   });
 
   it('buildPrompt 注入生成尺寸：EmptyLatentImage 宽高由链接值替换为具体数值', async () => {
@@ -516,16 +708,16 @@ describe('workflow 引擎（通用自动适配）', () => {
       prompt: 'resolution test',
       resolution: { width: 1344, height: 768 },
     });
-    expect(prompt['30_sg5'].class_type).toBe('EmptyLatentImage');
-    expect(prompt['30_sg5'].inputs.width).toBe(1344);
-    expect(prompt['30_sg5'].inputs.height).toBe(768);
+    expect(prompt['556:11'].class_type).toBe('EmptyLatentImage');
+    expect(prompt['556:11'].inputs.width).toBe(1344);
+    expect(prompt['556:11'].inputs.height).toBe(768);
   });
 
   it('buildPrompt 不传 resolution 时保留原有链接（默认分辨率）', async () => {
     const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
     const prompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, { prompt: 'no resolution' });
-    expect(Array.isArray(prompt['30_sg5'].inputs.width)).toBe(true);
-    expect(Array.isArray(prompt['30_sg5'].inputs.height)).toBe(true);
+    expect(Array.isArray(prompt['556:11'].inputs.width)).toBe(true);
+    expect(Array.isArray(prompt['556:11'].inputs.height)).toBe(true);
   });
 
   it('buildPrompt 注入视频分辨率：MiniMaxH3ImageToVideo 宽高覆写', async () => {
@@ -540,29 +732,54 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(videoNode.inputs.height).toBe(768);
   });
 
-  it('introspection 暴露文件类 combo 参数（unet/clip/vae/lora）供插件配置使用', async () => {
+  it('introspection 暴露文件类 combo 参数（unet/clip/vae）供插件配置使用', async () => {
     const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
-    const byField = Object.fromEntries(t2iSpec.params.map(p => [p.field, p]));
-    // 扩散模型 / CLIP / VAE / LoRA 均为 combo 且带选项
-    expect(byField.unet_name?.type).toBe('combo');
-    expect(byField.unet_name?.options).toContain('krea2_turbo_fp8_scaled.safetensors');
-    expect(byField.clip_name?.type).toBe('combo');
-    expect(byField.clip_name?.options?.length).toBeGreaterThan(0);
-    expect(byField.vae_name?.type).toBe('combo');
-    expect(byField.vae_name?.options?.length).toBeGreaterThan(0);
-    expect(byField.lora_name?.type).toBe('combo');
-    expect(byField.lora_name?.options).toContain('KREA2/Afterlight_v1.safetensors');
+    const unets = t2iSpec.params.filter(p => p.field === 'unet_name');
+    const clips = t2iSpec.params.filter(p => p.field === 'clip_name');
+    const vaes = t2iSpec.params.filter(p => p.field === 'vae_name');
+    // 活链上的加载器（523/480/481）暴露为 combo 且带选项
+    expect(unets.some(p => p.type === 'combo' && p.options?.includes('KREA2/pornmasterKrea2_v2TurboInt8.safetensors'))).toBe(true);
+    expect(clips.some(p => p.type === 'combo' && p.options?.includes('Huihui-Qwen3-VL-4B-Instruct-abliterated-fp8_scaled.safetensors'))).toBe(true);
+    expect(vaes.some(p => p.type === 'combo' && p.options?.includes('Wan2.1_VAE.pth'))).toBe(true);
+    // 死节点（fluxKlein 分支 482/483/484）已被裁剪：不暴露对应节点的参数
+    expect(t2iSpec.params.some(p => p.nodeId === '482')).toBe(false);
+    expect(t2iSpec.params.some(p => p.nodeId === '483')).toBe(false);
+    expect(t2iSpec.params.some(p => p.nodeId === '484')).toBe(false);
     // 采样器/调度器仍为 combo
-    expect(byField.sampler_name?.type).toBe('combo');
-    expect(byField.scheduler?.type).toBe('combo');
+    expect(t2iSpec.params.some(p => p.field === 'sampler_name' && p.type === 'combo')).toBe(true);
+    expect(t2iSpec.params.some(p => p.field === 'scheduler' && p.type === 'combo')).toBe(true);
 
     // 通过 params 注入文件 combo 值
     const prompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, {
       prompt: 'model config test',
-      params: { [byField.unet_name!.id]: 'KREA2/krea2_turbo_int8_convrot.safetensors' },
+      params: { [unets[0]!.id]: 'KREA2/pornmasterKrea2_v2TurboInt8.safetensors' },
     });
-    expect(prompt['30_sg10'].class_type).toBe('UNETLoader');
-    expect(prompt['30_sg10'].inputs.unet_name).toBe('KREA2/krea2_turbo_int8_convrot.safetensors');
+    const unetLoader = Object.values(prompt).find((n: any) => n.class_type === 'UNETLoader');
+    expect(unetLoader?.class_type).toBe('UNETLoader');
+    expect(unetLoader?.inputs.unet_name).toBe('KREA2/pornmasterKrea2_v2TurboInt8.safetensors');
+  });
+
+  it('死节点裁剪：输出无人消费的加载器不进入参数面板与提交图', async () => {
+    const t2iSpec = await workflow.introspectWorkflow(krea2T2iJson, OBJECT_INFO);
+    // 采样器/调度器只暴露一组（3 个 KSamplerAdvanced 去重），注入应用到全部 3 个采样节点
+    const samplers = t2iSpec.params.filter(p => p.field === 'sampler_name');
+    expect(samplers).toHaveLength(1);
+    expect(samplers[0]!.nodeId).toBe('478'); // 主节点为第一个 KSamplerAdvanced
+    expect(samplers[0]!.applyTo?.sort()).toEqual(['542', '545']); // 其余采样节点一并应用
+    const prompt = await workflow.buildPrompt(t2iSpec, krea2T2iJson, {
+      prompt: 'dedupe test',
+      params: { [samplers[0]!.id]: 'dpmpp_2m' },
+    });
+    expect(prompt['478'].inputs.sampler_name).toBe('dpmpp_2m');
+    expect(prompt['542'].inputs.sampler_name).toBe('dpmpp_2m');
+    expect(prompt['545'].inputs.sampler_name).toBe('dpmpp_2m');
+    // 死节点从提交图中消失，活链保留
+    expect(prompt['482']).toBeUndefined(); // fluxKlein UNET
+    expect(prompt['483']).toBeUndefined(); // Qwen3-8B GGUF CLIP
+    expect(prompt['484']).toBeUndefined(); // flux2-vae
+    expect(prompt['549']).toBeUndefined(); // 死链上的 PathchSageAttentionKJ
+    expect(prompt['523'].class_type).toBe('UNETLoader');
+    expect(prompt['480'].class_type).toBe('CLIPLoader');
   });
 
   it('分离式采样链（KSamplerSelect/BasicScheduler）暴露采样器与调度器并可注入', async () => {
@@ -642,6 +859,27 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(() => workflow.validateComboValues(prompt, oi)).toThrowError(/sampler_name.*not_a_sampler/);
   });
 
+  it('buildPrompt 在自定义节点未安装时一次性列出全部缺失节点并提示安装包', async () => {
+    const oiNoKj = JSON.parse(JSON.stringify(OBJECT_INFO)) as typeof OBJECT_INFO;
+    delete oiNoKj.ApplyKrea2NegPiP;
+    delete oiNoKj.PathchSageAttentionKJ;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL | Request) => {
+        const u = String(url);
+        if (u.includes('/object_info')) {
+          return new Response(JSON.stringify(oiNoKj), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        throw new Error(`unexpected fetch: ${u}`);
+      }),
+    );
+    workflow.invalidateComfyCaches();
+    const spec = await workflow.introspectWorkflow(krea2T2iJson, oiNoKj);
+    await expect(workflow.buildPrompt(spec, krea2T2iJson, { prompt: 'test' })).rejects.toThrowError(
+      /ApplyKrea2NegPiP（需安装自定义节点 blue-pen5805\/ComfyUI-krea2-negpip）[\s\S]*PathchSageAttentionKJ（需安装自定义节点 kijai\/ComfyUI-KJNodes）/,
+    );
+  });
+
   it('buildPrompt 在 FP8 模型缺失时直接给出可读错误（而非 ComfyUI 的 Value not in list）', async () => {
     const oiNoFp8 = JSON.parse(JSON.stringify(OBJECT_INFO)) as typeof OBJECT_INFO;
     oiNoFp8.UNETLoader.input.required.unet_name[0] = ['KREA2/krea2_turbo_int8_convrot.safetensors'];
@@ -657,8 +895,9 @@ describe('workflow 引擎（通用自动适配）', () => {
     );
     workflow.invalidateComfyCaches();
     const spec = await workflow.introspectWorkflow(krea2T2iJson, oiNoFp8);
+    // fluxKlein 死节点已被裁剪，活链上的 pornmasterKrea2 缺失时给出可读错误
     await expect(workflow.buildPrompt(spec, krea2T2iJson, { prompt: '可爱的小猫' })).rejects.toThrowError(
-      /krea2_turbo_fp8_scaled\.safetensors/,
+      /KREA2\/pornmasterKrea2_v2TurboInt8\.safetensors.*models\/diffusion_models\//s,
     );
   });
 });

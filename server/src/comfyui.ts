@@ -23,6 +23,8 @@ export class ComfyUIError extends Error {
   constructor(
     message: string,
     public readonly status?: number,
+    /** 非 2xx 响应体（JSON 时解析后的对象），供上层生成可读错误 */
+    public readonly body?: unknown,
   ) {
     super(message);
     this.name = 'ComfyUIError';
@@ -38,7 +40,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new ComfyUIError(`ComfyUI ${path} 返回 ${res.status}: ${text.slice(0, 300)}`, res.status);
+    let body: unknown;
+    try {
+      body = JSON.parse(text) as unknown;
+    } catch {
+      body = undefined;
+    }
+    throw new ComfyUIError(`ComfyUI ${path} 返回 ${res.status}: ${text.slice(0, 300)}`, res.status, body);
   }
   return (await res.json()) as T;
 }
@@ -99,15 +107,37 @@ export interface SubmitResult {
 
 /** POST /prompt — 提交 API 格式工作流（仅本地 ComfyUI，不注入任何云端凭证） */
 export async function submitPrompt(prompt: Record<string, unknown>, clientId: string): Promise<SubmitResult> {
-  const res = await request<SubmitResult>('/prompt', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      prompt,
-      client_id: clientId,
-      extra_data: { comfy_usage_source: 'director-workbench' },
-    }),
-  });
+  let res: SubmitResult;
+  try {
+    res = await request<SubmitResult>('/prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        client_id: clientId,
+        extra_data: { comfy_usage_source: 'director-workbench' },
+      }),
+    });
+  } catch (e) {
+    // ComfyUI 400 常见错误转成可读中文（如自定义节点未安装）
+    if (e instanceof ComfyUIError && e.status === 400 && e.body && typeof e.body === 'object') {
+      const err = (e.body as any)?.error;
+      if (err?.type === 'missing_node_type') {
+        const cls = String(err.extra_info?.class_type ?? err.node_title ?? '');
+        const title = err.extra_info?.node_title ?? err.node_title;
+        const clsPart = cls ? `「${cls}」` : '';
+        const titlePart = title && title !== cls ? `（${title}）` : '';
+        throw new ComfyUIError(
+          `工作流使用了未安装的节点${clsPart}${titlePart}：请先在 ComfyUI 中安装对应的自定义节点` +
+            '（ComfyUI Manager → Install Custom Nodes 搜索安装），安装后重启 ComfyUI 再重试。',
+        );
+      }
+      if (typeof err?.message === 'string' && err?.type) {
+        throw new ComfyUIError(`ComfyUI 拒绝该工作流：${err.message}`);
+      }
+    }
+    throw e;
+  }
   if (res.node_errors && Object.keys(res.node_errors).length > 0) {
     // node_errors: { [nodeId]: { errors: [{ type, message, details }] } }
     const [nodeId, nodeError] = Object.entries(res.node_errors)[0] as [
