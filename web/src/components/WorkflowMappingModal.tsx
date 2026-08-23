@@ -29,17 +29,17 @@ function copyManifest(manifest: WorkflowManifest): WorkflowManifest {
 
 export default function WorkflowMappingModal({ manifest, saving, error, onSave, onRedetect, onClose }: Props) {
   const [draft, setDraft] = useState(() => copyManifest(manifest));
-  const [view, setView] = useState<'node' | 'form'>('node');
+  const [view, setView] = useState<'node' | 'form' | 'skill'>('node');
   const [fullscreen, setFullscreen] = useState(false);
   const [graph, setGraph] = useState<WorkflowGraph | null>(null);
   const [graphLoading, setGraphLoading] = useState(true);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [redetectNotice, setRedetectNotice] = useState(false);
-  const [skillOpen, setSkillOpen] = useState(false);
   const [skillContent, setSkillContent] = useState<string | null>(null);
   const [skillLoading, setSkillLoading] = useState(false);
   const [skillError, setSkillError] = useState<string | null>(null);
+  const [skillLoaded, setSkillLoaded] = useState(false);
 
   const loadGraph = async (id: string) => {
     setGraphLoading(true);
@@ -56,11 +56,11 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   };
 
   const loadSkill = async (id: string) => {
-    setSkillOpen(true);
     setSkillLoading(true);
     setSkillError(null);
     try {
       setSkillContent(await fetchPluginSkill(id));
+      setSkillLoaded(true);
     } catch (e) {
       setSkillContent(null);
       setSkillError((e as Error).message);
@@ -69,9 +69,17 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     }
   };
 
+  const selectView = (next: 'node' | 'form' | 'skill') => {
+    setView(next);
+    if (next === 'skill' && !skillLoaded) void loadSkill(draft.id);
+  };
+
   useEffect(() => {
     setDraft(copyManifest(manifest));
     setLocalError(null);
+    setSkillLoaded(false);
+    setSkillContent(null);
+    setSkillError(null);
     void loadGraph(manifest.id);
   }, [manifest]);
 
@@ -173,17 +181,30 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
           </div>
           <div className="workflow-mapping-head-actions">
             {view === 'node' && <button className="settings-btn" onClick={() => setFullscreen(value => !value)}>{fullscreen ? '退出全屏' : '全屏'}</button>}
-            <button className="settings-btn" onClick={() => void loadSkill(draft.id)}>Skill 预览</button>
             <button className="settings-close" onClick={onClose} aria-label="关闭">×</button>
           </div>
         </header>
         <div className="workflow-mapping-tabs" role="tablist" aria-label="映射编辑视图">
           <button className={view === 'node' ? 'active' : ''} role="tab" aria-selected={view === 'node'} onClick={() => setView('node')}>节点视图</button>
           <button className={view === 'form' ? 'active' : ''} role="tab" aria-selected={view === 'form'} onClick={() => setView('form')}>表单视图</button>
+          <button className={view === 'skill' ? 'active' : ''} role="tab" aria-selected={view === 'skill'} onClick={() => selectView('skill')}>Skill 预览</button>
         </div>
         <div className="workflow-mapping-body">
           {view === 'node' ? (
             <WorkflowNodeGraph graph={displayGraph} loading={graphLoading} error={graphError} onRetry={() => void loadGraph(draft.id)} onToggleParam={toggleField} onChangeParamDefault={updateParamDefault} onRemoveParam={removePinnedParam} onFullscreen={() => setFullscreen(value => !value)} fullscreen={fullscreen} />
+          ) : view === 'skill' ? (
+            <section className="workflow-mapping-section workflow-skill-view">
+              <div className="workflow-mapping-section-head">
+                <div>
+                  <h3>Skill 预览</h3>
+                  <p>LLM 通过 MCP 工具 workflow.skill 获取的插件使用说明（由 manifest 自动生成）。</p>
+                </div>
+                {skillError && <button className="settings-btn" onClick={() => void loadSkill(draft.id)}>重试</button>}
+              </div>
+              {skillLoading && <p className="workflow-skill-hint">加载中…</p>}
+              {skillError && <p className="workflow-mapping-error">{skillError}</p>}
+              {!skillLoading && skillContent && <pre className="workflow-skill-content">{skillContent}</pre>}
+            </section>
           ) : (
             <section className="workflow-mapping-section workflow-parameter-form">
               <div className="workflow-mapping-section-head">
@@ -214,21 +235,6 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
           <button className="settings-btn" onClick={onClose}>取消</button>
           <button className="settings-btn primary" disabled={saving} onClick={save}>{saving ? '保存中…' : '保存映射'}</button>
         </footer>
-        {skillOpen && (
-          <div className="skill-preview-overlay" onClick={() => setSkillOpen(false)}>
-            <div className="skill-preview-panel" onClick={event => event.stopPropagation()}>
-              <header className="skill-preview-head">
-                <h3>Skill 预览 · {draft.name || draft.id}</h3>
-                <button className="settings-close" onClick={() => setSkillOpen(false)} aria-label="关闭">×</button>
-              </header>
-              <div className="skill-preview-body">
-                {skillLoading && <p>加载中…</p>}
-                {skillError && <p className="workflow-mapping-error">{skillError}</p>}
-                {skillContent && <pre className="skill-preview-content">{skillContent}</pre>}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
