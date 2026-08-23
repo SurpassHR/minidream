@@ -241,6 +241,10 @@ export default function App() {
   const chatRef = useRef<HTMLDivElement>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const sessionEventUnsubscribeRef = useRef<(() => void) | null>(null);
+  /** 当前展示的会话（ref 同步，供流式回调判断事件归属，避免闭包读到旧值） */
+  const activeConvRef = useRef<string | null>(null);
+  /** 当前进行中的流所属会话；用户切换会话后用于丢弃不属于当前视图的事件 */
+  const streamSessionRef = useRef<string | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -307,6 +311,11 @@ export default function App() {
     chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight });
   }, [messages]);
 
+  // 同步当前展示会话到 ref（切换会话后，仍在运行的旧流靠它识别自己已被切走）
+  useEffect(() => {
+    activeConvRef.current = activeConv;
+  }, [activeConv]);
+
   // 刷新后重新订阅仍在运行的会话；后端会先回放断线期间的事件。
   useEffect(() => {
     if (!loadedConv) return;
@@ -322,7 +331,10 @@ export default function App() {
         setSending(true);
         closeSubscription = openSessionEvents(loadedConv, event => {
           if (event.type === 'agent:started' || event.type === 'agent:end') {
-            if (event.sessionId) setActiveConv(event.sessionId);
+            if (event.sessionId) {
+              activeConvRef.current = event.sessionId;
+              setActiveConv(event.sessionId);
+            }
           }
           if (event.type === 'session:renamed') {
             setConversations(prev =>
@@ -358,6 +370,8 @@ export default function App() {
     setSending(true);
     const streamAbort = new AbortController();
     streamAbortRef.current = streamAbort;
+    // 记录该流所属会话：切换会话后，属于旧会话的事件不再写入当前视图
+    streamSessionRef.current = activeConv;
 
     // 预置一条空的助手消息用于流式填充
     const initialAssistantMsg = newAssistantMessage();
@@ -392,13 +406,19 @@ export default function App() {
             if (event.sessionId) {
               const targetId = event.sessionId;
               sid = targetId;
-              setActiveConv(targetId);
+              streamSessionRef.current = targetId;
+              // 侧边栏列表总是更新（新会话出现/时间戳）；仅当用户未切走（仍是该流所属会话，
+              // 或新会话尚未建立时 activeConvRef 为 null）才跟随切换活动会话，避免把视图拉回旧会话
               setConversations(prev => {
                 const now = Date.now();
                 const exists = prev.some(c => c.id === targetId);
                 if (!exists) return [...prev, { id: targetId, title: '新会话', updatedAt: now }];
                 return prev.map(c => (c.id === targetId ? { ...c, updatedAt: now } : c));
               });
+              if (activeConvRef.current === null || activeConvRef.current === targetId) {
+                activeConvRef.current = targetId;
+                setActiveConv(targetId);
+              }
             }
           }
 
@@ -408,6 +428,10 @@ export default function App() {
               prev.map(c => (c.id === event.sessionId ? { ...c, title: event.title } : c)),
             );
           }
+
+          // 该流已不属于当前展示的会话（用户已切换/新建/删除会话）→ 丢弃后续 UI 更新，
+          // 避免旧会话的流式内容串进新会话的视图
+          if (activeConvRef.current !== streamSessionRef.current) return;
 
           setMessages(prev => {
             const lastIdx = prev.length - 1;
@@ -506,8 +530,9 @@ export default function App() {
         streamAbort.signal,
       );
 
-      // 流结束，将最后完整的助手消息持久化落盘
-      if (sid) {
+      // 流结束，将最后完整的助手消息持久化落盘（仅当仍停留在该流所属会话时，
+      // 避免把当前展示会话的最后一条消息写进 sid 的会话文件）
+      if (sid && activeConvRef.current === sid) {
         setMessages(latest => {
           const lastMsg = latest[latest.length - 1];
           if (lastMsg && lastMsg.role === 'assistant') {
@@ -520,6 +545,8 @@ export default function App() {
       if (streamAbort.signal.aborted) {
         return;
       }
+      // 非中止错误（如网络失败）也不写入已切换走的会话视图
+      if (sid && activeConvRef.current !== sid) return;
       setMessages(prev => [
         ...prev,
         {
@@ -588,9 +615,13 @@ export default function App() {
   };
 
   const handleNewChat = async () => {
+    // 中止进行中的流，避免其事件写入新建的空会话
+    streamAbortRef.current?.abort();
+    activeConvRef.current = null;
     try {
       const r = await createSession();
       setConversations(r.sessions);
+      activeConvRef.current = r.activeId;
       setActiveConv(r.activeId);
       setLoadedConv(null);
       setMessages([]);
@@ -602,6 +633,10 @@ export default function App() {
 
   const handleSelectConversation = (id: string) => {
     if (id === activeConv) return;
+    // 中止旧会话的流：服务端生成继续（事件按会话缓冲），切回时由会话事件订阅回放；
+    // 同步更新 ref，确保旧流残余事件不会写入新会话视图
+    streamAbortRef.current?.abort();
+    activeConvRef.current = id;
     setActiveConv(id);
     setLoadedConv(null);
     setMessages([]);
@@ -628,10 +663,13 @@ export default function App() {
 
   const handleDeleteConversation = async (id: string) => {
     if (!window.confirm('删除该会话？此操作不可恢复。')) return;
+    // 中止进行中的流，避免其事件写入删除后切换到的会话
+    streamAbortRef.current?.abort();
     try {
       const r = await apiDeleteSession(id);
       setConversations(r.sessions);
       if (r.activeId) {
+        activeConvRef.current = r.activeId;
         setActiveConv(r.activeId);
         setLoadedConv(null);
         fetchSessionMessages(r.activeId)
@@ -641,6 +679,7 @@ export default function App() {
           })
           .catch(() => undefined);
       } else {
+        activeConvRef.current = null;
         setActiveConv(null);
         setLoadedConv(null);
         setMessages([]);
