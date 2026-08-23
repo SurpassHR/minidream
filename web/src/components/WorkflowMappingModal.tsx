@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   fetchPluginSkill,
   fetchWorkflowGraph,
+  generatePluginSkillLlm,
+  savePluginSkill,
   type WorkflowGraph,
   type WorkflowGraphField,
   type WorkflowManifest,
@@ -40,6 +42,8 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   const [skillLoading, setSkillLoading] = useState(false);
   const [skillError, setSkillError] = useState<string | null>(null);
   const [skillLoaded, setSkillLoaded] = useState(false);
+  const [skillSaving, setSkillSaving] = useState(false);
+  const [skillGenerating, setSkillGenerating] = useState(false);
 
   const loadGraph = async (id: string) => {
     setGraphLoading(true);
@@ -72,6 +76,33 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   const selectView = (next: 'node' | 'form' | 'skill') => {
     setView(next);
     if (next === 'skill' && !skillLoaded) void loadSkill(draft.id);
+  };
+
+  const generateSkill = async (id: string) => {
+    setSkillGenerating(true);
+    setSkillError(null);
+    try {
+      const res = await generatePluginSkillLlm(id);
+      setSkillContent(res.content);
+      setSkillLoaded(true);
+    } catch (e) {
+      setSkillError((e as Error).message);
+    } finally {
+      setSkillGenerating(false);
+    }
+  };
+
+  const saveSkill = async (id: string) => {
+    if (skillContent === null) return;
+    setSkillSaving(true);
+    setSkillError(null);
+    try {
+      await savePluginSkill(id, skillContent);
+    } catch (e) {
+      setSkillError((e as Error).message);
+    } finally {
+      setSkillSaving(false);
+    }
   };
 
   useEffect(() => {
@@ -187,7 +218,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
         <div className="workflow-mapping-tabs" role="tablist" aria-label="映射编辑视图">
           <button className={view === 'node' ? 'active' : ''} role="tab" aria-selected={view === 'node'} onClick={() => setView('node')}>节点视图</button>
           <button className={view === 'form' ? 'active' : ''} role="tab" aria-selected={view === 'form'} onClick={() => setView('form')}>表单视图</button>
-          <button className={view === 'skill' ? 'active' : ''} role="tab" aria-selected={view === 'skill'} onClick={() => selectView('skill')}>Skill 预览</button>
+          <button className={view === 'skill' ? 'active' : ''} role="tab" aria-selected={view === 'skill'} onClick={() => selectView('skill')}>Skill</button>
         </div>
         <div className="workflow-mapping-body">
           {view === 'node' ? (
@@ -196,14 +227,26 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
             <section className="workflow-mapping-section workflow-skill-view">
               <div className="workflow-mapping-section-head">
                 <div>
-                  <h3>Skill 预览</h3>
-                  <p>LLM 通过 MCP 工具 workflow.skill 获取的插件使用说明（由 manifest 自动生成）。</p>
+                  <h3>Skill</h3>
+                  <p>LLM 通过 MCP 工具 workflow.skill 获取的插件使用说明；可直接编辑保存，或用 plugin-skill-creator 重新生成。</p>
                 </div>
-                {skillError && <button className="settings-btn" onClick={() => void loadSkill(draft.id)}>重试</button>}
+                <div className="workflow-skill-actions">
+                  {skillError && <button className="settings-btn" onClick={() => void loadSkill(draft.id)}>重试</button>}
+                  <button className="settings-btn" disabled={skillLoading || skillGenerating} onClick={() => void generateSkill(draft.id)}>{skillGenerating ? '生成中…' : '生成 Skill'}</button>
+                  <button className="settings-btn primary" disabled={skillLoading || skillSaving || skillContent === null} onClick={() => void saveSkill(draft.id)}>{skillSaving ? '保存中…' : '保存'}</button>
+                </div>
               </div>
               {skillLoading && <p className="workflow-skill-hint">加载中…</p>}
               {skillError && <p className="workflow-mapping-error">{skillError}</p>}
-              {!skillLoading && skillContent && <pre className="workflow-skill-content">{skillContent}</pre>}
+              {!skillLoading && skillContent !== null && (
+                <textarea
+                  className="workflow-skill-editor"
+                  value={skillContent}
+                  onChange={event => setSkillContent(event.target.value)}
+                  spellCheck={false}
+                  aria-label="插件 Skill 内容"
+                />
+              )}
             </section>
           ) : (
             <section className="workflow-mapping-section workflow-parameter-form">

@@ -315,18 +315,25 @@
   color: var(--text-secondary);
   font-size: 12px;
 }
-.workflow-skill-content {
+.workflow-skill-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workflow-skill-editor {
   flex: 1 1 auto;
   min-height: 0;
-  margin: 0;
+  width: 100%;
+  resize: none;
   padding: 14px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
   color: var(--text-primary);
   background: transparent;
   border: 1px solid var(--border);
   border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
 }

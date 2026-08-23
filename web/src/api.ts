@@ -442,9 +442,23 @@ export async function fetchPluginSkill(id: string): Promise<string> {
   return res.text();
 }
 
-/** 强制重新生成插件 SKILL.md */
+/** 强制重新生成插件 SKILL.md（自动版） */
 export async function regeneratePluginSkill(id: string): Promise<{ ok: boolean }> {
   return http(`/api/plugins/${encodeURIComponent(id)}/skill/regenerate`, { method: 'POST' });
+}
+
+/** 保存插件 SKILL.md 的自定义内容（手工编辑） */
+export async function savePluginSkill(id: string, content: string): Promise<{ ok: boolean }> {
+  return http(`/api/plugins/${encodeURIComponent(id)}/skill`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+}
+
+/** 用 plugin-skill-creator 为插件生成 SKILL.md（覆盖当前内容） */
+export async function generatePluginSkillLlm(id: string): Promise<{ ok: boolean; content: string }> {
+  return http(`/api/plugins/${encodeURIComponent(id)}/skill/generate`, { method: 'POST' });
 }
 
 export async function deleteWorkflowPlugin(id: string): Promise<{ ok: boolean }> {
