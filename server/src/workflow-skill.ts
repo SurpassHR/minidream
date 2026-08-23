@@ -1,0 +1,153 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { WorkflowSpec } from './workflow.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+export const PLUGIN_SKILLS_DIR = path.resolve(__dirname, '../../.pi/skills');
+
+const ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+function assertPluginId(id: string): void {
+  if (!ID_RE.test(id)) throw new Error(`非法工作流插件 ID: ${id}`);
+}
+
+const KIND_LABEL: Record<string, string> = { image: '图像', video: '视频', text: '文本' };
+const TYPE_LABEL: Record<string, string> = {
+  INT: '整数', FLOAT: '浮点数', BOOLEAN: '布尔', SEED: '随机种子', STRING: '文本', combo: '下拉选项',
+};
+
+function formatDefault(value: unknown): string {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '空列表';
+    return `[${value.map(v => (typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v))).join(', ')}]`;
+  }
+  if (value === undefined || value === null || value === '') return '未设置';
+  return String(value);
+}
+
+function paramLines(params: WorkflowSpec['params']): string {
+  const visible = params.filter(p => !p.hidden && p.llm !== false);
+  if (visible.length === 0) return '无（该工作流的 widget 由模板固定，不可由 LLM 调整）';
+  return visible.map(p => {
+    const bits: string[] = [`id \`${p.id}\``, `类型 ${TYPE_LABEL[p.type] ?? p.type}`];
+    if (p.multiple) bits.push(p.strengthable ? '多选（每项可调强度）' : '多选');
+    if (p.default !== undefined && p.default !== null && p.default !== '') bits.push(`默认 ${formatDefault(p.default)}`);
+    if (p.min !== undefined) bits.push(`范围 ${p.min} ~ ${p.max ?? '∞'}${p.step ? `，步长 ${p.step}` : ''}`);
+    if (p.type === 'combo' && p.options?.length) {
+      const shown = p.options.slice(0, 8).join('、');
+      bits.push(`可选：${shown}${p.options.length > 8 ? '…' : ''}`);
+    }
+    if (p.applyTo?.length) bits.push(`同时作用于节点 ${p.applyTo.join('、')}`);
+    return `- **${p.label || p.field}**（${bits.join('；')}）${p.description ? `\n  - ${p.description}` : ''}`;
+  }).join('\n');
+}
+
+function deriveRules(spec: WorkflowSpec): string[] {
+  const rules: string[] = [];
+  const textInputs = spec.inputs.filter(i => i.kind === 'text' && !i.hidden);
+  const imageInputs = spec.inputs.filter(i => i.kind === 'image' && !i.hidden);
+  const videoInputs = spec.inputs.filter(i => i.kind === 'video' && !i.hidden);
+  if (textInputs.length === 0) {
+    rules.push('本工作流不接受提示词，仅用于图像放大/增强等处理任务；必须通过 `images` 传入参考素材。');
+  }
+  const requiredImages = imageInputs.filter(i => i.required || !String(i.defaultValue ?? '').trim());
+  if (requiredImages.length > 0) {
+    rules.push(`必须按顺序传入 ${requiredImages.length} 张参考图（\`generation.submit\` 的 \`images\` 参数）。`);
+  }
+  const requiredVideos = videoInputs.filter(i => i.required || !String(i.defaultValue ?? '').trim());
+  if (requiredVideos.length > 0) {
+    rules.push(`必须按顺序传入 ${requiredVideos.length} 个参考视频（\`generation.submit\` 的 \`videos\` 参数）。`);
+  }
+  if (rules.length === 0) rules.push('按提示词直接生成即可，无额外素材要求。');
+  return rules;
+}
+
+/** 从 WorkflowSpec 生成插件 SKILL.md（纯函数，无 IO）。过滤口径与 workflow.list 一致：!hidden && llm !== false。 */
+export function generatePluginSkill(spec: WorkflowSpec): string {
+  assertPluginId(spec.id);
+  const description = (spec.description ?? `工作流插件 ${spec.id}`).trim().replace(/\s+/g, ' ');
+  const inputs = spec.inputs.filter(i => !i.hidden);
+  const inputLines = inputs.map(i => {
+    const bits: string[] = [`类型 ${KIND_LABEL[i.kind] ?? i.kind}`];
+    if (i.kind === 'text' && i.primary) bits.push('提示词占位节点（primary，注入主提示词）');
+    if (i.kind !== 'text' && (i.required || !String(i.defaultValue ?? '').trim())) bits.push('必传');
+    if (i.defaultValue !== undefined && String(i.defaultValue).trim()) bits.push('默认值非空（模板内置）');
+    return `- **${i.label}**（${bits.join('；')}）${i.description ? `\n  - ${i.description}` : ''}`;
+  }).join('\n');
+  const outputs = spec.outputs.filter(o => !o.hidden);
+  const outputLines = outputs.map(o => `- **${o.label}**（${KIND_LABEL[o.kind] ?? o.kind}）${o.description ? `\n  - ${o.description}` : ''}`).join('\n');
+
+  return [
+    '---',
+    `name: ${spec.id}`,
+    `description: ${description.slice(0, 100)}`,
+    '---',
+    '',
+    `# ${spec.name || spec.id}`,
+    '',
+    '> 本文件由 server/src/workflow-skill.ts 自动生成，勿手工编辑；修改插件 manifest 或重新识别后会自动重新生成。',
+    '',
+    '## 用途',
+    '',
+    description,
+    '',
+    '## 输入',
+    '',
+    inputs.length > 0 ? inputLines : '无（工作流不接收外部输入）。',
+    '',
+    '## 可控制参数',
+    '',
+    '以下参数可由 LLM 通过 `generation.submit` 的 `params` 调整（键为参数 id）：',
+    '',
+    paramLines(spec.params),
+    '',
+    '## 输出',
+    '',
+    outputs.length > 0 ? outputLines : '无。',
+    '',
+    '## 使用规则',
+    '',
+    ...deriveRules(spec).map(rule => `- ${rule}`),
+    '',
+  ].join('\n');
+}
+
+export function pluginSkillPath(id: string, root: string = PLUGIN_SKILLS_DIR): string {
+  assertPluginId(id);
+  return path.join(root, id, 'SKILL.md');
+}
+
+/** 生成并原子写入 SKILL.md，返回内容。 */
+export function writePluginSkill(spec: WorkflowSpec, root: string = PLUGIN_SKILLS_DIR): string {
+  const content = generatePluginSkill(spec);
+  const file = pluginSkillPath(spec.id, root);
+  mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp`;
+  writeFileSync(tmp, content, 'utf8');
+  renameSync(tmp, file);
+  return content;
+}
+
+export function deletePluginSkill(id: string, root: string = PLUGIN_SKILLS_DIR): void {
+  const file = pluginSkillPath(id, root);
+  if (existsSync(file)) rmSync(file, { force: true });
+}
+
+export function readPluginSkill(id: string, root: string = PLUGIN_SKILLS_DIR): string | null {
+  const file = pluginSkillPath(id, root);
+  return existsSync(file) ? readFileSync(file, 'utf8') : null;
+}
+
+/** 启动幂等补齐：只写缺失的 skill 文件，不覆盖已有内容。 */
+export function ensurePluginSkills(specs: WorkflowSpec[], root: string = PLUGIN_SKILLS_DIR): void {
+  for (const spec of specs) {
+    if (!existsSync(pluginSkillPath(spec.id, root))) {
+      try {
+        writePluginSkill(spec, root);
+      } catch (error) {
+        console.error(`[workflow-skill] 生成 ${spec.id} 失败:`, error);
+      }
+    }
+  }
+}
