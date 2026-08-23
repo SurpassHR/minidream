@@ -232,7 +232,7 @@ function llmSpec(spec: WorkflowSpec): Record<string, any> {
     ...item,
     ...(defaultValue !== undefined ? { defaultValue } : {}),
   }));
-  const params = spec.params.filter(item => !item.hidden).map(({ nodeId: _nodeId, field: _field, applyTo: _applyTo, multiple, strengthable, options, ...item }) => ({
+  const params = spec.params.filter(item => !item.hidden && item.llm !== false).map(({ nodeId: _nodeId, field: _field, applyTo: _applyTo, multiple, strengthable, options, llm: _llm, ...item }) => ({
     ...item,
     ...(multiple !== undefined ? { multiple } : {}),
     ...(strengthable !== undefined ? { strengthable } : {}),
@@ -244,6 +244,21 @@ function llmSpec(spec: WorkflowSpec): Record<string, any> {
 
 export function serializeWorkflowForLlm(spec: WorkflowSpec): Record<string, any> {
   return llmSpec(spec);
+}
+
+/**
+ * workflow.list 的紧凑摘要：只保留选择工作流所需的 id/名称/用途/输入输出类型/可调参数名，
+ * 不含 default/min/max/step/options 等细节，避免 Agent 上下文被 JSON 细节淹没、误把原始 JSON 回贴给用户。
+ */
+export function summarizeWorkflowsForLlm(specs: WorkflowSpec[]): Record<string, any>[] {
+  return specs.map(spec => ({
+    id: spec.id,
+    name: spec.name,
+    description: spec.description,
+    inputs: (spec.inputs ?? []).filter(item => !item.hidden).map(item => ({ kind: item.kind, label: item.label })),
+    outputs: (spec.outputs ?? []).filter(item => !item.hidden).map(item => ({ kind: item.kind, label: item.label })),
+    params: (spec.params ?? []).filter(item => !item.hidden && item.llm !== false).map(item => ({ id: item.id, label: item.label, type: item.type })),
+  }));
 }
 
 function currentSource(options: WorkflowPluginApiOptions, id: string): WorkflowCatalogSource | undefined {

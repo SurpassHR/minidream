@@ -11,6 +11,7 @@ interface Props {
   error?: string | null;
   onToggleParam: (field: WorkflowGraphField) => void;
   onChangeParamDefault: (field: WorkflowGraphField, value: unknown) => void;
+  onRemoveParam?: (field: WorkflowGraphField) => void;
   onRetry?: () => void;
   onFullscreen?: () => void;
   fullscreen?: boolean;
@@ -53,7 +54,7 @@ function fieldKey(nodeId: string, field: string): string {
   return `${nodeId}:${field}`;
 }
 
-export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam, onChangeParamDefault, onRetry, onFullscreen, fullscreen }: Props) {
+export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam, onChangeParamDefault, onRemoveParam, onRetry, onFullscreen, fullscreen }: Props) {
   const [scale, setScale] = useState(0.72);
   const [pan, setPan] = useState({ x: 24, y: 24 });
   const [positions, setPositions] = useState<WorkflowNodePositions>({});
@@ -166,7 +167,7 @@ export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam
   return (
     <div className="workflow-graph-shell">
       <div className="workflow-graph-toolbar">
-        <span>节点视图 · 普通参数可勾选，连接字段只读 · 中键拖动节点</span>
+        <span>节点视图 · 勾选参数加入 LLM 上下文，combo 均可直接配置固定值 · 连接字段只读 · 中键拖动节点</span>
         <div className="workflow-graph-toolbar-actions">
           <span className="workflow-graph-zoom">{Math.round(scale * 100)}%</span>
           {onFullscreen && <button className="workflow-graph-action" onClick={onFullscreen}>{fullscreen ? '退出全屏' : '全屏'}</button>}
@@ -227,13 +228,14 @@ export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam
                               checked={field.selected}
                               onChange={() => onToggleParam(field)}
                               onPointerDown={event => event.stopPropagation()}
-                              aria-label={`选择参数 ${node.nodeId}.${field.field}`}
+                              aria-label={`将 ${node.nodeId}.${field.field} 加入/移出 LLM 上下文`}
+                              title="勾选后参数加入 LLM 上下文，由 LLM 控制"
                             />
                           ) : <span className="workflow-graph-lock" aria-label="连接字段，不可选择">↔</span>}
                           <span className="workflow-graph-field-name">{field.field}</span>
                           <span className="workflow-graph-field-type">{field.type}</span>
                           <span className="workflow-graph-field-value" title={linkedTo || displayValue(field.value)}>{linkedTo || displayValue(field.value)}</span>
-                          {field.selected && field.type === 'COMBO' && field.options?.length && (
+                          {field.selectable && field.type === 'COMBO' && field.options?.length && (
                             <div className="workflow-graph-combo-control" onPointerDown={event => event.stopPropagation()}>
                               {field.multiple ? (
                                 <MultiFilterSelect
@@ -258,9 +260,18 @@ export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam
                                   searchPlaceholder={`筛选 ${field.field}…`}
                                 />
                               )}
+                              {field.paramId && !field.selected && (
+                                <button
+                                  type="button"
+                                  className="workflow-graph-combo-reset"
+                                  title="删除参数并恢复模板默认值"
+                                  aria-label={`删除参数 ${node.nodeId}.${field.field}`}
+                                  onClick={() => onRemoveParam?.(field)}
+                                >×</button>
+                              )}
                             </div>
                           )}
-                          {field.selected && <span className="workflow-graph-param-mark">{field.paramId || '参数'}</span>}
+                          {field.paramId && <span className={`workflow-graph-param-mark${field.selected ? '' : ' pinned'}`}>{field.selected ? (field.paramId || '参数') : '已固定'}</span>}
                         </div>
                       );
                     })}

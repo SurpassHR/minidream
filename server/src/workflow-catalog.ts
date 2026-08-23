@@ -100,6 +100,7 @@ function preserve<T extends { nodeId: string; field?: string; label: string; id:
     label: previous.label,
     ...(Object.prototype.hasOwnProperty.call(previous, 'description') ? { description: (previous as T & { description?: string }).description } : {}),
     ...(Object.prototype.hasOwnProperty.call(previous, 'hidden') ? { hidden: (previous as T & { hidden?: boolean }).hidden } : {}),
+    ...(Object.prototype.hasOwnProperty.call(previous, 'llm') ? { llm: (previous as T & { llm?: boolean }).llm } : {}),
     ...(Object.prototype.hasOwnProperty.call(previous, 'required') ? { required: (previous as T & { required?: boolean }).required } : {}),
   };
 }

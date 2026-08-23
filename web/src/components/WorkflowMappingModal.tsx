@@ -7,7 +7,7 @@ import {
   type WorkflowParam,
 } from '../api';
 import WorkflowNodeGraph from './WorkflowNodeGraph';
-import { isParamSelected, paramForField, removeParam, addParamFromField } from './workflowMappingDraft';
+import { isParamSelected, paramForField, removeParam, addParamFromField, pinComboValue, setParamExposed } from './workflowMappingDraft';
 import './WorkflowMappingModal.css';
 
 interface Props {
@@ -79,28 +79,43 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     };
   }, [graph, draft]);
 
+  /** 直接在节点视图配置 combo 值：无参数时生成一个不加入 LLM 上下文的固定参数 */
   const updateParamDefault = (field: WorkflowGraphField, value: unknown) => {
-    setDraft(current => {
-      const param = paramForField(current, field);
-      if (!param) return current;
-      return {
-        ...current,
-        params: current.params.map(item => item.id === param.id ? { ...item, default: value } : item),
-      };
-    });
+    setDraft(current => pinComboValue(current, field, value));
+  };
+
+  /** 完全移除参数（含固定值），恢复模板默认 */
+  const removePinnedParam = (field: WorkflowGraphField) => {
+    const existing = paramForField(draft, field);
+    if (existing?.description) {
+      if (!window.confirm(`删除参数「${existing.label}」？\n说明：${existing.description}\n删除后将恢复模板默认值。`)) return;
+    }
+    setDraft(current => removeParam(current, field));
   };
 
   const toggleField = (field: WorkflowGraphField) => {
     if (!field.selectable || field.connected) return;
     const existing = paramForField(draft, field);
     if (existing) {
-      const detail = existing.description ? `\n说明：${existing.description}` : '';
-      if (!window.confirm(`取消参数「${existing.label}」？${detail}\n取消后将丢失已填写配置。`)) return;
-      setDraft(current => removeParam(current, field));
+      if (isParamSelected(draft, field)) {
+        // 取消勾选：combo 保留固定值仅退出 LLM 上下文；普通参数无独立配置，整项删除
+        if (field.type === 'COMBO') {
+          setDraft(current => setParamExposed(current, field, false));
+          return;
+        }
+        const detail = existing.description ? `\n说明：${existing.description}` : '';
+        if (!window.confirm(`取消参数「${existing.label}」？${detail}\n取消后将丢失已填写配置。`)) return;
+        setDraft(current => removeParam(current, field));
+        return;
+      }
+      // 已固定的 combo → 勾选加入 LLM 上下文
+      setDraft(current => setParamExposed(current, field, true));
       return;
     }
     setDraft(current => addParamFromField(current, field));
   };
+
+  const exposedParams = useMemo(() => draft.params.filter(item => item.llm !== false), [draft.params]);
 
   const validate = (): string | null => {
     if (!draft.name.trim()) return '工作流名称不能为空';
@@ -148,23 +163,23 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
         </div>
         <div className="workflow-mapping-body">
           {view === 'node' ? (
-            <WorkflowNodeGraph graph={displayGraph} loading={graphLoading} error={graphError} onRetry={() => void loadGraph(draft.id)} onToggleParam={toggleField} onChangeParamDefault={updateParamDefault} onFullscreen={() => setFullscreen(value => !value)} fullscreen={fullscreen} />
+            <WorkflowNodeGraph graph={displayGraph} loading={graphLoading} error={graphError} onRetry={() => void loadGraph(draft.id)} onToggleParam={toggleField} onChangeParamDefault={updateParamDefault} onRemoveParam={removePinnedParam} onFullscreen={() => setFullscreen(value => !value)} fullscreen={fullscreen} />
           ) : (
             <section className="workflow-mapping-section workflow-parameter-form">
               <div className="workflow-mapping-section-head">
                 <div>
                   <h3>Widget 参数配置</h3>
-                  <p>这里只显示节点视图中已勾选的 widget；返回节点视图可继续选择参数。</p>
+                  <p>这里只显示加入 LLM 上下文的 widget；未勾选但固定了 combo 值的参数只在节点视图中维护。</p>
                 </div>
               </div>
-              {draft.params.length > 0 ? (
-                draft.params.map((item, index) => (
-                  <ParamRow key={item.id || index} item={item} onChange={patch => updateParam(index, patch)} />
+              {exposedParams.length > 0 ? (
+                exposedParams.map((item, index) => (
+                  <ParamRow key={item.id || index} item={item} onChange={patch => updateParam(draft.params.indexOf(item), patch)} />
                 ))
               ) : (
                 <div className="workflow-form-empty">
-                  <strong>暂无已勾选的 widget</strong>
-                  <span>请先切换到节点视图，在节点字段上勾选需要暴露给 LLM 的参数。</span>
+                  <strong>暂无加入 LLM 上下文的参数</strong>
+                  <span>请先切换到节点视图，在节点字段上勾选需要暴露给 LLM 的参数；combo 可直接在节点上配置固定值。</span>
                   <button className="settings-btn" onClick={() => setView('node')}>前往节点视图</button>
                 </div>
               )}
@@ -184,24 +199,47 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   );
 }
 
+function Field({ label, wide, children }: { label: string; wide?: boolean; children: React.ReactNode }) {
+  return (
+    <label className={`workflow-mapping-field${wide ? ' wide' : ''}`}>
+      <span className="workflow-mapping-field-label">{label}</span>
+      {children}
+    </label>
+  );
+}
+
 function ParamRow({ item, onChange }: { item: WorkflowParam; onChange: (patch: Partial<WorkflowParam>) => void }) {
+  const isNumeric = item.type === 'INT' || item.type === 'FLOAT';
+  const isCombo = item.type === 'combo';
+  const comboOptions = isCombo && !item.multiple ? (item.options ?? []) : [];
   return (
     <div className="workflow-mapping-row">
       <div className="workflow-mapping-row-head"><strong>参数</strong><span className="workflow-mapping-locked">节点视图选择</span></div>
       <div className="workflow-mapping-grid">
-        <input value={item.id} readOnly aria-label="参数映射 ID" />
-        <input value={item.label} onChange={e => onChange({ label: e.target.value })} placeholder="名称" />
-        <input value={item.type} readOnly aria-label="参数类型" />
-        <input value={item.nodeId} readOnly aria-label="参数节点" />
-        <input value={item.field} readOnly aria-label="参数字段" />
-        <input className="wide" value={item.description ?? ''} onChange={e => onChange({ description: e.target.value })} placeholder="description：给用户/LLM 的用途" />
-        <input value={String(item.default ?? '')} onChange={item.type === 'combo' ? undefined : e => onChange({ default: e.target.value })} readOnly={item.type === 'combo'} placeholder={item.type === 'combo' ? '节点视图中配置' : '默认值'} />
-        <input type="number" value={item.min ?? ''} onChange={e => onChange({ min: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="最小值" />
-        <input type="number" value={item.max ?? ''} onChange={e => onChange({ max: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="最大值" />
-        <input type="number" value={item.step ?? ''} onChange={e => onChange({ step: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="步长" />
-        <input className="wide" value={item.options?.join(', ') ?? ''} readOnly aria-label="combo 选项" placeholder="节点视图中配置 combo 选项" />
+        <Field label="映射 ID"><input value={item.id} readOnly aria-label="参数映射 ID" /></Field>
+        <Field label="名称"><input value={item.label} onChange={e => onChange({ label: e.target.value })} placeholder="名称" /></Field>
+        <Field label="参数类型"><input value={item.type} readOnly aria-label="参数类型" /></Field>
+        <Field label="节点 ID"><input value={item.nodeId} readOnly aria-label="参数节点" /></Field>
+        <Field label="字段"><input value={item.field} readOnly aria-label="参数字段" /></Field>
+        <Field label="description" wide><input className="wide" value={item.description ?? ''} onChange={e => onChange({ description: e.target.value })} placeholder="description：给用户/LLM 的用途" /></Field>
+        {comboOptions.length > 0 ? (
+          <Field label="默认值" wide>
+            <select value={String(item.default ?? '')} onChange={e => onChange({ default: e.target.value })} aria-label="combo 默认值">
+              <option value="" disabled>请选择…</option>
+              {comboOptions.map(option => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </Field>
+        ) : (
+          <Field label="默认值">
+            <input value={String(item.default ?? '')} onChange={isCombo ? undefined : e => onChange({ default: e.target.value })} readOnly={isCombo} placeholder={isCombo ? '节点视图中配置' : '默认值'} />
+          </Field>
+        )}
+        {isNumeric && <Field label="最小值"><input type="number" value={item.min ?? ''} onChange={e => onChange({ min: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="最小值" /></Field>}
+        {isNumeric && <Field label="最大值"><input type="number" value={item.max ?? ''} onChange={e => onChange({ max: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="最大值" /></Field>}
+        {isNumeric && <Field label="步长"><input type="number" value={item.step ?? ''} onChange={e => onChange({ step: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="步长" /></Field>}
+        {isCombo && comboOptions.length === 0 && <Field label="combo 选项" wide><input className="wide" value={item.options?.join(', ') ?? ''} readOnly aria-label="combo 选项" placeholder="节点视图中配置 combo 选项" /></Field>}
       </div>
-      <label><input type="checkbox" checked={item.hidden ?? false} onChange={e => onChange({ hidden: e.target.checked })} /> 隐藏</label>
+      <label className="workflow-mapping-hidden"><input type="checkbox" checked={item.hidden ?? false} onChange={e => onChange({ hidden: e.target.checked })} /> 隐藏</label>
     </div>
   );
 }

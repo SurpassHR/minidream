@@ -2,7 +2,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { TaskQueue } from '../tasks/queue.js';
 import { buildSpecsCached } from '../workflow.js';
-import { serializeWorkflowForLlm } from '../workflow-plugin-api.js';
+import { summarizeWorkflowsForLlm } from '../workflow-plugin-api.js';
 import type { JsonRpcRequest, JsonRpcResponse, McpCallToolResult, McpToolDescriptor } from './types.js';
 
 export type WorkflowRouteIntent = 'text_to_image' | 'image_to_image' | 'image_upscale' | 'text_to_video' | 'image_to_video' | 'unknown';
@@ -41,7 +41,7 @@ const UPSCALE_INTENT = /放大|超分|upscale|enlarge|提升分辨率|分辨率�
 const MCP_TOOLS: McpToolDescriptor[] = [
   {
     name: 'workflow.list',
-    description: '获取系统支持的工作流列表（包含 id、名称、用途描述、输入与输出定义）。选择工作流前应先调用本工具了解各工作流用途。',
+    description: '获取系统支持的工作流列表（紧凑摘要：id、名称、用途描述、输入输出类型与可调参数名）。选择工作流前先调用本工具了解各工作流用途；向用户介绍工作流时用简洁的自然语言总结，不要把工具返回的原始 JSON 贴给用户。',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -138,9 +138,9 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
     switch (name) {
       case 'workflow.list': {
         const specs = (await buildSpecsCached()).filter(s => workflowEnabled(s.id));
-        const simplified = specs.map(serializeWorkflowForLlm);
+        const summary = summarizeWorkflowsForLlm(specs);
         return {
-          content: [{ type: 'text', text: JSON.stringify(simplified, null, 2) }],
+          content: [{ type: 'text', text: JSON.stringify(summary, null, 2) }],
         };
       }
 

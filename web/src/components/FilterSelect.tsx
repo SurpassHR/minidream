@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
+import FloatingMenu from './FloatingMenu';
 
 /**
  * 可筛选下拉：适合选项较多的场景（模型/采样器/调度器等）。
@@ -27,27 +28,9 @@ export default function FilterSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const q = query.trim().toLowerCase();
   const filtered = options.filter(o => o.toLowerCase().includes(q));
-
-  useEffect(() => {
-    if (!open) return;
-    const onDocMouseDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('mousedown', onDocMouseDown);
-    document.addEventListener('keydown', onKey);
-    inputRef.current?.focus();
-    return () => {
-      document.removeEventListener('mousedown', onDocMouseDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
 
   const select = (v: string) => {
     onChange(v);
@@ -75,14 +58,14 @@ export default function FilterSelect({
         </svg>
       </button>
       {open && (
-        <div className="filter-select-menu" role="listbox">
+        <FloatingMenu triggerRef={rootRef} open={open} onClose={() => setOpen(false)} className="filter-select-menu" role="listbox">
           <input
-            ref={inputRef}
             className="filter-select-search"
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder={searchPlaceholder}
             aria-label={searchPlaceholder}
+            autoFocus
           />
           <div className="filter-select-options">
             {filtered.length === 0 ? (
@@ -108,7 +91,7 @@ export default function FilterSelect({
               ))
             )}
           </div>
-        </div>
+        </FloatingMenu>
       )}
     </div>
   );

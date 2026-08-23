@@ -156,6 +156,7 @@
 
 .workflow-graph-field.connected {
   color: var(--graph-node-muted);
+  background: var(--bg-active);
 }
 
 .workflow-graph-field input[type='checkbox'] {
@@ -211,10 +212,41 @@
   white-space: nowrap;
 }
 
+.workflow-graph-param-mark.pinned {
+  color: var(--text-tertiary);
+}
+
 .workflow-graph-combo-control {
   grid-column: 3 / -1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   min-width: 0;
   margin-top: 3px;
+}
+
+.workflow-graph-combo-control .workflow-graph-combo-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.workflow-graph-combo-reset {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--text-tertiary);
+  background: var(--bg-hover);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.workflow-graph-combo-reset:hover {
+  color: var(--error-fg);
+  border-color: var(--error-fg);
 }
 
 .workflow-graph-combo-select .filter-select-trigger {

@@ -160,14 +160,14 @@
 
 ## LLM 契约
 
-MCP `workflow.list` 使用与 `/api/workflows` 相同的最终 spec，但只暴露面向 LLM 的字段：
+MCP `workflow.list` 返回基于最终 spec 的**紧凑摘要**（`summarizeWorkflowsForLlm`），供 Agent 选择工作流并介绍给用户，避免 JSON 细节淹没上下文或让 Agent 误把原始 JSON 回贴给用户：
 
 - 工作流 `id`、`name`、用途 `description`；
-- 非隐藏输入的 `kind`、`label`、`description`、`required`；
-- 非隐藏参数的 `id`、`label`、`type`、`description`、必要的默认值/范围/有限选项；
-- 非隐藏输出的 `kind`、`label`、`description`。
+- 非隐藏输入的 `kind`、`label`；
+- 非隐藏输出的 `kind`、`label`；
+- 非隐藏且加入 LLM 上下文（`llm !== false`）参数的 `id`、`label`、`type`。
 
-不向 LLM 暴露底层 `nodeId`、`field`、本地文件路径或内部存储信息。`options` 需限制数量，避免模型列表造成不必要的上下文膨胀。
+摘要不包含默认值、范围、有限选项、`nodeId`、`field`、本地文件路径等实现细节；参数默认值等完整契约仍由 `serializeWorkflowForLlm` 维护。Agent 被要求用简洁的自然语言向用户介绍工作流，不输出原始 JSON。
 
 `generation.submit` 的调用方式保持不变。LLM 先调用 `workflow.list`，再根据描述选择 `workflowId` 和参数；后端仍通过最终 spec 的 `nodeId + field` 完成注入。
 

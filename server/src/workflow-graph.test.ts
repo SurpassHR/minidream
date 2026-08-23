@@ -55,6 +55,20 @@ describe('workflow graph', () => {
     expect(cfg.selected).toBe(false);
   });
 
+  it('keeps llm:false params configured but not selected', () => {
+    const graph = buildWorkflowGraph(apiWorkflow, objectInfo, {
+      params: [
+        { id: 'steps-2', label: '步数', nodeId: '2', field: 'steps', type: 'INT', default: 20 },
+        { id: 'cfg-2', label: 'CFG', nodeId: '2', field: 'cfg', type: 'FLOAT', default: 4, llm: false },
+      ],
+    });
+    const steps = graph.nodes.find(node => node.nodeId === '2')!.fields.find(item => item.field === 'steps')!;
+    const cfg = graph.nodes.find(node => node.nodeId === '2')!.fields.find(item => item.field === 'cfg')!;
+
+    expect(steps).toMatchObject({ selected: true, paramId: 'steps-2' });
+    expect(cfg).toMatchObject({ selected: false, paramId: 'cfg-2', value: 4 });
+  });
+
   it('uses UI positions and keeps API fallback layout deterministic', () => {
     const uiWorkflow = {
       nodes: [

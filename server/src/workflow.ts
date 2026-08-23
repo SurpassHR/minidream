@@ -138,6 +138,8 @@ export interface WorkflowParam {
   description?: string;
   /** 仅供内部注入使用，不显示在普通参数面板或 LLM 契约中 */
   hidden?: boolean;
+  /** 是否加入 LLM 上下文：false 表示仅在节点视图固定值（仍参与运行时注入），不暴露给 LLM */
+  llm?: boolean;
 }
 
 export interface WorkflowOutput {

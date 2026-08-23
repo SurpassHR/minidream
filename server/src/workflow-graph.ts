@@ -336,8 +336,9 @@ export function buildWorkflowGraph(
         const connected = Boolean(connection) || (!logicalLora && Array.isArray(value));
         const fileCombo = FILE_COMBO_FIELDS.has(field);
         const selectable = !connected && (WIDGET_TYPES.has(definition.type) || (definition.type === 'STRING' && value !== undefined));
-        const selected = Boolean(selectedParamFor(nodeId, field, params));
         const param = selectedParamFor(nodeId, field, params);
+        // selected = 已加入 LLM 上下文；仅固定值（llm:false）的参数不算勾选
+        const selected = Boolean(param && param.llm !== false);
         return {
           nodeId,
           field,

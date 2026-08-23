@@ -150,10 +150,31 @@
 .workflow-mapping-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 7px;
+  gap: 9px 7px;
 }
 
-.workflow-mapping-grid input {
+.workflow-mapping-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.workflow-mapping-field.wide {
+  grid-column: 1 / -1;
+}
+
+.workflow-mapping-field-label {
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workflow-mapping-field input,
+.workflow-mapping-field select {
   width: 100%;
   min-width: 0;
   height: 32px;
@@ -165,21 +186,28 @@
   font-size: 11px;
 }
 
-.workflow-mapping-grid input:focus {
+.workflow-mapping-field select {
+  appearance: auto;
+  cursor: pointer;
+}
+
+.workflow-mapping-field select option {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.workflow-mapping-field input:focus,
+.workflow-mapping-field select:focus {
   border-color: var(--brand-deep);
   outline: none;
 }
 
-.workflow-mapping-grid input[readonly] {
+.workflow-mapping-field input[readonly] {
   color: var(--text-tertiary);
   background: var(--bg-hover);
 }
 
-.workflow-mapping-grid input.wide {
-  grid-column: 1 / -1;
-}
-
-.workflow-mapping-row > label {
+.workflow-mapping-hidden {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -188,7 +216,7 @@
   font-size: 11px;
 }
 
-.workflow-mapping-row > label input {
+.workflow-mapping-hidden input {
   accent-color: var(--brand-deep);
 }
 
