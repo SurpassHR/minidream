@@ -99,9 +99,46 @@ describe('Director MCP Server', () => {
     expect(Array.isArray(res.result.tools)).toBe(true);
     const toolNames = res.result.tools.map((t: any) => t.name);
     expect(toolNames).toContain('workflow.list');
+    expect(toolNames).toContain('workflow.skill');
     expect(toolNames).toContain('generation.submit');
     expect(toolNames).toContain('generation.status');
     expect(toolNames).toContain('generation.cancel');
+  });
+
+  it('workflow.skill 返回插件的详细使用说明', async () => {
+    const res = (await mcpServer.handleRpcMessage({
+      jsonrpc: '2.0',
+      id: 60,
+      method: 'tools/call',
+      params: { name: 'workflow.skill', arguments: { workflowId: 'image_krea2_turbo_t2i' } },
+    })) as any;
+    expect(res.result.isError).toBeFalsy();
+    const text = res.result.content[0].text as string;
+    expect(text).toMatch(/^---\nname: image_krea2_turbo_t2i/);
+    expect(text).toMatch(/可控制参数/);
+    expect(text).toMatch(/text-551/);
+    expect(text).toMatch(/text-555/);
+  });
+
+  it('workflow.skill 拒绝未启用或未知的插件', async () => {
+    const filtered = createMcpServer({ taskQueue, port: 0, isWorkflowEnabled: id => id !== 'image_krea2_turbo_t2i' });
+    try {
+      const disabled = (await filtered.handleRpcMessage({
+        jsonrpc: '2.0', id: 61, method: 'tools/call',
+        params: { name: 'workflow.skill', arguments: { workflowId: 'image_krea2_turbo_t2i' } },
+      })) as any;
+      expect(disabled.result.isError).toBe(true);
+      expect(JSON.stringify(disabled.result.content)).toMatch(/未启用/);
+
+      const missing = (await filtered.handleRpcMessage({
+        jsonrpc: '2.0', id: 62, method: 'tools/call',
+        params: { name: 'workflow.skill', arguments: { workflowId: 'no_such_plugin' } },
+      })) as any;
+      expect(missing.result.isError).toBe(true);
+      expect(JSON.stringify(missing.result.content)).toMatch(/未找到/);
+    } finally {
+      await filtered.close();
+    }
   });
 
   it('calls workflow.list to inspect workflows', async () => {

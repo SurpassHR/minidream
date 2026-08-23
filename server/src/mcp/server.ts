@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { TaskQueue } from '../tasks/queue.js';
 import { buildSpecsCached } from '../workflow.js';
 import { summarizeWorkflowsForLlm } from '../workflow-plugin-api.js';
+import { generatePluginSkill } from '../workflow-skill.js';
 import type { JsonRpcRequest, JsonRpcResponse, McpCallToolResult, McpToolDescriptor } from './types.js';
 
 export type WorkflowRouteIntent = 'text_to_image' | 'image_to_image' | 'image_upscale' | 'text_to_video' | 'image_to_video' | 'unknown';
@@ -45,6 +46,20 @@ const MCP_TOOLS: McpToolDescriptor[] = [
     inputSchema: {
       type: 'object',
       properties: {},
+    },
+  },
+  {
+    name: 'workflow.skill',
+    description: '获取某个工作流插件的详细使用说明（Skill）：可控制的 widget 参数（含默认值/范围/选项/applyTo 联动）、输入素材要求与使用规则。选定 workflowId 后如需了解该插件的完整可调参数，调用本工具；不要把这些原始内容转贴给用户。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflowId: {
+          type: 'string',
+          description: '工作流插件 ID（来自 workflow.list）',
+        },
+      },
+      required: ['workflowId'],
     },
   },
   {
@@ -141,6 +156,31 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
         const summary = summarizeWorkflowsForLlm(specs);
         return {
           content: [{ type: 'text', text: JSON.stringify(summary, null, 2) }],
+        };
+      }
+
+      case 'workflow.skill': {
+        if (typeof args.workflowId !== 'string' || !args.workflowId.trim()) {
+          return {
+            content: [{ type: 'text', text: '错误: workflowId 为必填参数' }],
+            isError: true,
+          };
+        }
+        const spec = (await buildSpecsCached()).find(s => s.id === args.workflowId);
+        if (!spec) {
+          return {
+            content: [{ type: 'text', text: `未找到工作流: ${args.workflowId}` }],
+            isError: true,
+          };
+        }
+        if (!workflowEnabled(spec.id)) {
+          return {
+            content: [{ type: 'text', text: `插件「${spec.id}」未启用，无法获取其 Skill` }],
+            isError: true,
+          };
+        }
+        return {
+          content: [{ type: 'text', text: generatePluginSkill(spec) }],
         };
       }
 
