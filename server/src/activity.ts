@@ -1,6 +1,7 @@
 import EventEmitter from 'node:events';
 import type { TaskQueue } from './tasks/queue.js';
 import type { TaskItem } from './tasks/types.js';
+import type { PluginResponsePolicy } from './workflow-skill.js';
 
 export type ActiveSessionStatus = 'running' | 'canceled' | 'completed' | 'failed';
 
@@ -41,6 +42,7 @@ export class ActivityRegistry {
   private readonly controllers = new Map<string, AbortController>();
   private readonly sessionEvents = new Map<string, SessionEventEnvelope[]>();
   private readonly sessionSubscribers = new Map<string, Set<(event: SessionEventEnvelope) => void>>();
+  private readonly responsePolicies = new Map<string, PluginResponsePolicy>();
   private readonly emitter = new EventEmitter();
   private readonly onTaskChange: (task: TaskItem) => void;
   private readonly onTaskProgress: (task: TaskItem) => void;
@@ -68,8 +70,13 @@ export class ActivityRegistry {
     this.controllers.set(sessionId, controller);
     this.sessionEvents.set(sessionId, []);
     this.sessionSubscribers.set(sessionId, new Set());
+    this.responsePolicies.delete(sessionId);
     this.emit({ type: 'session:started', session: this.cloneSession(session) });
     return session;
+  }
+
+  public setSessionResponsePolicy(sessionId: string, policy: PluginResponsePolicy): void {
+    this.responsePolicies.set(sessionId, policy);
   }
 
   public attachTask(sessionId: string, taskId: string): void {
@@ -78,7 +85,7 @@ export class ActivityRegistry {
     session.taskIds.push(taskId);
     this.emit({ type: 'session:updated', session: this.cloneSession(session) });
     const task = this.taskQueue.get(taskId);
-    if (task) this.emit({ type: 'task:updated', task });
+    if (task) this.emit({ type: 'task:updated', task: this.taskForActivity(task) });
   }
 
   public finishSession(sessionId: string, status: Exclude<ActiveSessionStatus, 'running'>): void {
@@ -93,6 +100,7 @@ export class ActivityRegistry {
         this.sessions.delete(sessionId);
         this.sessionEvents.delete(sessionId);
         this.sessionSubscribers.delete(sessionId);
+        this.responsePolicies.delete(sessionId);
       }
     }, 60_000).unref();
   }
@@ -156,7 +164,8 @@ export class ActivityRegistry {
     const tasks = this.taskQueue
       .list()
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, 50);
+      .slice(0, 50)
+      .map(task => this.taskForActivity(task));
     return {
       sessions: Array.from(this.sessions.values()).map(session => this.cloneSession(session)),
       tasks,
@@ -174,7 +183,23 @@ export class ActivityRegistry {
   }
 
   private emit(event: ActivityEvent): void {
+    if (event.type === 'task:updated') {
+      this.emitter.emit('activity', { ...event, task: this.taskForActivity(event.task) });
+      return;
+    }
     this.emitter.emit('activity', event);
+  }
+
+  private taskForActivity(task: TaskItem): TaskItem {
+    const policy = task.sessionId ? this.responsePolicies.get(task.sessionId) : undefined;
+    if (!policy || policy.prompt !== 'hidden') return task;
+    return {
+      ...task,
+      prompt: '',
+      outputs: task.outputs?.map(output => output.generation
+        ? { ...output, generation: { ...output.generation, prompt: '' } }
+        : output),
+    };
   }
 
   private cloneSession(session: ActiveSession): ActiveSession {

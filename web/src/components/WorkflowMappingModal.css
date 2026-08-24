@@ -322,9 +322,9 @@
 }
 .workflow-skill-editor {
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 220px;
   width: 100%;
-  resize: none;
+  resize: vertical;
   padding: 14px;
   color: var(--text-primary);
   background: transparent;
@@ -336,4 +336,201 @@
   white-space: pre-wrap;
   word-break: break-word;
   overflow: auto;
+}
+
+.workflow-skill-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  flex: 0 0 auto;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-page);
+}
+
+.workflow-skill-chat-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workflow-skill-chat-head strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.workflow-skill-chat-head span {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.workflow-skill-chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.workflow-skill-chat-message {
+  padding: 8px 10px;
+  border-left: 2px solid var(--border-strong);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workflow-skill-chat-message.user {
+  border-left-color: var(--brand-deep);
+}
+
+.workflow-skill-chat-message p {
+  margin: 3px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workflow-skill-chat-role {
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.workflow-skill-chat-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.workflow-skill-chat-form textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 42px;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.workflow-skill-chat-form textarea:focus {
+  border-color: var(--brand-deep);
+  outline: none;
+}
+
+.workflow-response-view {
+  min-height: 0;
+  overflow: auto;
+}
+
+.workflow-response-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workflow-response-thinking,
+.workflow-response-block {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-page);
+}
+
+.workflow-response-row-head,
+.workflow-response-toolbar,
+.workflow-response-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workflow-response-row-head span {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.workflow-response-toolbar > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workflow-response-control,
+.workflow-response-field,
+.workflow-response-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 10px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.workflow-response-control select,
+.workflow-response-field select,
+.workflow-response-controls select,
+.workflow-response-controls input,
+.workflow-response-block-id,
+.workflow-response-template {
+  min-width: 0;
+  padding: 6px 8px;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.workflow-response-field {
+  display: flex;
+  justify-content: space-between;
+}
+
+.workflow-response-field select {
+  flex: 1;
+  margin-left: 8px;
+}
+
+.workflow-response-block-id {
+  flex: 1;
+  font-weight: 600;
+}
+
+.workflow-response-template {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.workflow-response-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.workflow-response-controls label {
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .workflow-skill-chat-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }

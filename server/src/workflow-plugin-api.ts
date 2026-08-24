@@ -19,7 +19,9 @@ import {
 } from './workflow-catalog.js';
 import { getObjectInfo } from './comfyui.js';
 import { buildWorkflowGraph, createParamFromGraphField, type WorkflowGraph, type WorkflowGraphField } from './workflow-graph.js';
-import { PLUGIN_SKILLS_DIR, deletePluginSkill, readPluginSkill, syncPluginSkill, writeCustomSkill, writePluginSkill } from './workflow-skill.js';
+import { PLUGIN_SKILLS_DIR, deletePluginSkill, generatePluginSkill, readPluginSkill, syncPluginSkill, writeCustomSkill, writePluginSkill } from './workflow-skill.js';
+import { defaultPluginResponseProtocol, deletePluginResponseProtocol, readPluginResponseProtocol, syncPluginResponseProtocol, validatePluginResponseProtocol, writePluginResponseProtocol, resolvePluginResponseProtocol, type PluginResponseProtocol } from './workflow-response.js';
+import type { PluginSkillChatMessage, PluginSkillChatResult } from './agent/bridge.js';
 
 export interface WorkflowNodeCandidate {
   nodeId: string;
@@ -38,6 +40,13 @@ export interface WorkflowPluginApiOptions {
   skillsDir?: string;
   /** 用 plugin-skill-creator 为插件生成 SKILL.md 的调用方（未配置时 generate 端点返回 501） */
   generateSkill?: (spec: WorkflowSpec) => Promise<string>;
+  /** 对话调整 Skill 的调用方；返回预览内容，不应在此处写盘 */
+  chatSkill?: (
+    spec: WorkflowSpec,
+    currentSkill: string,
+    history: PluginSkillChatMessage[],
+    userMessage: string,
+  ) => Promise<PluginSkillChatResult>;
 }
 
 function jsonError(res: Response, status: number, message: string): void {
@@ -337,6 +346,7 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
         writeManifest(options.catalog.manifestDir, manifest);
         try {
           syncPluginSkill(manifest, skillsDir);
+          syncPluginResponseProtocol(manifest, skillsDir);
         } catch (error) {
           console.error(`[workflow-skill] 生成 ${id} 失败:`, error);
         }
@@ -345,7 +355,39 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
         return;
       }
 
-      const skillMatch = req.path.match(/^\/api\/plugins\/([^/]+)\/skill(?:\/(regenerate|generate))?$/);
+      const responseMatch = req.path.match(/^\/api\/plugins\/([^/]+)\/response(?:\/(regenerate))?$/);
+      if (responseMatch) {
+        const id = decodeURIComponent(responseMatch[1]!);
+        const spec = await skillSpec(id);
+        if (!spec) {
+          jsonError(res, 404, `未找到工作流插件：${id}`);
+          return;
+        }
+        if (req.method === 'GET') {
+          const protocol = resolvePluginResponseProtocol(id, spec, skillsDir);
+          res.json({ ok: true, protocol });
+          return;
+        }
+        if (req.method === 'PUT' && !responseMatch[2]) {
+          const protocol = req.body?.protocol as unknown;
+          const errors = validatePluginResponseProtocol(protocol, spec);
+          if (errors.length > 0) {
+            jsonError(res, 400, errors.join('；'));
+            return;
+          }
+          writePluginResponseProtocol(id, protocol as PluginResponseProtocol, skillsDir);
+          res.json({ ok: true, protocol });
+          return;
+        }
+        if (req.method === 'POST' && responseMatch[2] === 'regenerate') {
+          const protocol = defaultPluginResponseProtocol();
+          writePluginResponseProtocol(id, protocol, skillsDir);
+          res.json({ ok: true, protocol });
+          return;
+        }
+      }
+
+      const skillMatch = req.path.match(/^\/api\/plugins\/([^/]+)\/skill(?:\/(regenerate|generate|chat))?$/);
       if (skillMatch) {
         const id = decodeURIComponent(skillMatch[1]!);
         const spec = await skillSpec(id);
@@ -386,6 +428,35 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           const content = await options.generateSkill(spec);
           writeCustomSkill(id, content, skillsDir);
           res.json({ ok: true, content });
+          return;
+        }
+        if (req.method === 'POST' && req.path.endsWith('/skill/chat')) {
+          if (!options.chatSkill) {
+            res.status(501).json({ ok: false, error: '未配置 Skill 对话生成器' });
+            return;
+          }
+          const userMessage = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+          if (!userMessage) {
+            jsonError(res, 400, 'message 必须是非空字符串');
+            return;
+          }
+          const rawHistory = Array.isArray(req.body?.history) ? req.body.history : [];
+          const history: PluginSkillChatMessage[] = rawHistory
+            .filter((item: unknown): item is { role: string; content: string } => {
+              if (!item || typeof item !== 'object') return false;
+              const value = item as { role?: unknown; content?: unknown };
+              return (value.role === 'user' || value.role === 'assistant')
+                && typeof value.content === 'string'
+                && value.content.trim().length > 0;
+            })
+            .slice(-20)
+            .map((item: { role: string; content: string }) => ({ role: item.role as 'user' | 'assistant', content: item.content.slice(0, 12_000) }));
+          const suppliedSkill = typeof req.body?.currentSkill === 'string' ? req.body.currentSkill : '';
+          const currentSkill = suppliedSkill.trim()
+            ? suppliedSkill.slice(0, 100_000)
+            : readPluginSkill(id, skillsDir) ?? generatePluginSkill(spec);
+          const result = await options.chatSkill(spec, currentSkill, history, userMessage);
+          res.json({ ok: true, reply: result.reply, skill: result.skill });
           return;
         }
       }
@@ -452,7 +523,10 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           writeManifest(options.catalog.manifestDir, normalized);
           try {
             const spec = await skillSpec(id);
-            if (spec) syncPluginSkill(spec, skillsDir);
+            if (spec) {
+              syncPluginSkill(spec, skillsDir);
+              syncPluginResponseProtocol(spec, skillsDir);
+            }
           } catch (error) {
             console.error(`[workflow-skill] 重新生成 ${id} 失败:`, error);
           }
@@ -467,6 +541,7 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           deleteManifest(options.catalog.manifestDir, id);
           try {
             deletePluginSkill(id, skillsDir);
+            deletePluginResponseProtocol(id, skillsDir);
           } catch (error) {
             console.error(`[workflow-skill] 删除 ${id} skill 失败:`, error);
           }

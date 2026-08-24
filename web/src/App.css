@@ -1368,6 +1368,67 @@
 }
 
 /* 生成提示词预览 */
+.response-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.response-block {
+  color: var(--text-primary);
+}
+
+.response-block-collapsible {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.response-block-collapsible summary {
+  cursor: pointer;
+  padding: 9px 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  user-select: none;
+}
+
+.response-block-content {
+  padding: 0 12px 12px;
+}
+
+.response-block-text {
+  padding: 2px 0;
+}
+
+.response-block-label {
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.response-block-plain {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+}
+
+.response-block-code {
+  max-width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-radius: 6px;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .generation-prompt-list {
   display: flex;
   flex-direction: column;

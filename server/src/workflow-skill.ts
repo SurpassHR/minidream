@@ -14,6 +14,74 @@ function assertPluginId(id: string): void {
 
 const KIND_LABEL: Record<string, string> = { image: '图像', video: '视频', text: '文本' };
 
+export type PluginThinkingDisplay = 'hidden' | 'collapsed' | 'visible';
+export type PluginBinaryDisplay = 'hidden' | 'visible';
+export type PluginResultDisplay = 'outside-bubble';
+
+export interface PluginResponsePolicy {
+  thinking: PluginThinkingDisplay;
+  prompt: PluginBinaryDisplay;
+  route: PluginBinaryDisplay;
+  result: PluginResultDisplay;
+}
+
+export const DEFAULT_PLUGIN_RESPONSE_POLICY: PluginResponsePolicy = {
+  thinking: 'collapsed',
+  prompt: 'visible',
+  route: 'visible',
+  result: 'outside-bubble',
+};
+
+export type PluginResponseEventKind = 'thinking' | 'prompt' | 'route';
+
+export function pluginResponseAllows(policy: PluginResponsePolicy, kind: PluginResponseEventKind): boolean {
+  return policy[kind] !== 'hidden';
+}
+
+export function filterPluginGenerationArgs(
+  args: Record<string, unknown>,
+  policy: PluginResponsePolicy,
+): Record<string, unknown> {
+  const visible = { ...args };
+  if (!pluginResponseAllows(policy, 'prompt')) delete visible.prompt;
+  return visible;
+}
+
+const PLUGIN_RESPONSE_KEYS = new Set(['thinking', 'prompt', 'route', 'result']);
+
+/**
+ * 从插件 Skill 的 frontmatter 读取受限回复协议。
+ * 只解析 response 下的简单键值，非法或缺失字段逐项回退兼容默认值。
+ */
+export function parsePluginResponsePolicy(content: string | null | undefined): PluginResponsePolicy {
+  const policy: PluginResponsePolicy = { ...DEFAULT_PLUGIN_RESPONSE_POLICY };
+  if (!content) return policy;
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match?.[1]) return policy;
+  let inResponse = false;
+  for (const line of match[1].split(/\r?\n/)) {
+    if (/^response\s*:\s*$/.test(line)) {
+      inResponse = true;
+      continue;
+    }
+    if (inResponse && line.trim() && !/^\s+/.test(line)) {
+      inResponse = false;
+    }
+    if (!inResponse) continue;
+    const entry = line.match(/^\s{2,}(thinking|prompt|route|result)\s*:\s*([^#]+?)\s*$/);
+    if (!entry || !PLUGIN_RESPONSE_KEYS.has(entry[1]!)) continue;
+    const value = entry[2]!.trim();
+    if (entry[1] === 'thinking' && (value === 'hidden' || value === 'collapsed' || value === 'visible')) {
+      policy.thinking = value;
+    } else if ((entry[1] === 'prompt' || entry[1] === 'route') && (value === 'hidden' || value === 'visible')) {
+      policy[entry[1]] = value;
+    } else if (entry[1] === 'result' && value === 'outside-bubble') {
+      policy.result = value;
+    }
+  }
+  return policy;
+}
+
 /** 自动生成标记：syncPluginSkill 据此识别哪些文件可以安全地重新同步 */
 const AUTO_GENERATED_MARKER = '本文件由 server/src/workflow-skill.ts 自动生成';
 
@@ -90,6 +158,11 @@ export function generatePluginSkill(spec: WorkflowSpec): string {
     '---',
     `name: ${spec.id}`,
     `description: ${description.slice(0, 100)}`,
+    'response:',
+    '  thinking: collapsed',
+    '  prompt: visible',
+    '  route: visible',
+    '  result: outside-bubble',
     '---',
     '',
     `# ${spec.name || spec.id}`,
@@ -113,6 +186,12 @@ export function generatePluginSkill(spec: WorkflowSpec): string {
     '## 输出',
     '',
     outputs.length > 0 ? outputLines : '无。',
+    '',
+    '## 回复协议',
+    '',
+    '- 生成过程遵循本插件的使用规则；不要额外输出无意义的生成状态句。',
+    '- 用户可在回复协议编辑器中配置思维链、widget 值、提示词、路由和结果摘要的显示方式；不要自行重复结构化展示内容。',
+    '- 回复协议支持普通文本、可折叠容器、Markdown 和代码块组合；生成的图像、视频或其他产物始终在对话气泡外展示。',
     '',
     '## 使用规则',
     '',
@@ -165,6 +244,14 @@ export function deletePluginSkill(id: string, root: string = PLUGIN_SKILLS_DIR):
 export function readPluginSkill(id: string, root: string = PLUGIN_SKILLS_DIR): string | null {
   const file = pluginSkillPath(id, root);
   return existsSync(file) ? readFileSync(file, 'utf8') : null;
+}
+
+export function readPluginResponsePolicy(id: string, root: string = PLUGIN_SKILLS_DIR): PluginResponsePolicy {
+  try {
+    return parsePluginResponsePolicy(readPluginSkill(id, root));
+  } catch {
+    return { ...DEFAULT_PLUGIN_RESPONSE_POLICY };
+  }
 }
 
 /** 启动幂等补齐：只写缺失的 skill 文件，不覆盖已有内容。 */

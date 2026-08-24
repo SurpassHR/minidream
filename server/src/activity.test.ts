@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ActivityRegistry } from './activity.js';
 import { TaskQueue } from './tasks/queue.js';
+import type { TaskItem } from './tasks/types.js';
+import { DEFAULT_PLUGIN_RESPONSE_POLICY } from './workflow-skill.js';
 
 let dir: string;
 let file: string;
@@ -34,6 +36,21 @@ describe('ActivityRegistry', () => {
       taskIds: [task.id],
     });
     expect(snapshot.tasks.map(t => t.id)).toContain(task.id);
+  });
+
+  it('prompt 隐藏策略会在全局活动快照和事件中隐藏任务提示词', () => {
+    const queue = new TaskQueue({ dataFile: file, autoStart: false });
+    const registry = new ActivityRegistry(queue);
+    const controller = new AbortController();
+    registry.startSession('session-1', '隐藏 prompt', controller);
+    registry.setSessionResponsePolicy('session-1', { ...DEFAULT_PLUGIN_RESPONSE_POLICY, prompt: 'hidden' });
+    const received: TaskItem[] = [];
+    registry.subscribe(event => {
+      if (event.type === 'task:updated') received.push(event.task);
+    });
+    const task = queue.submit({ workflowId: 'image_krea2_turbo_t2i', prompt: 'secret prompt', sessionId: 'session-1' });
+    expect(registry.snapshot().tasks.find(item => item.id === task.id)?.prompt).toBe('');
+    expect(received.at(-1)?.prompt).toBe('');
   });
 
   it('终止会话时 abort Agent 并取消关联任务', () => {

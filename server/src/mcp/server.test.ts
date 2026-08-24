@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, unlinkSync, rmSync, mkdtempSync } from 'node:fs';
 import { createMcpServer, type McpServerInstance } from './server.js';
 import { TaskQueue } from '../tasks/queue.js';
+import { writeCustomSkill } from '../workflow-skill.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -118,6 +120,23 @@ describe('Director MCP Server', () => {
     expect(text).toMatch(/可控制参数/);
     expect(text).toMatch(/text-551/);
     expect(text).toMatch(/text-555/);
+  });
+
+  it('workflow.skill 优先返回自定义插件 Skill', async () => {
+    const skillsDir = mkdtempSync(path.join(os.tmpdir(), 'mcp-skills-'));
+    try {
+      writeCustomSkill('image_krea2_turbo_t2i', `---\nname: image_krea2_turbo_t2i\nresponse:\n  prompt: hidden\n---\n\n# 自定义 Skill\n\n## 回复协议\n\n隐藏提示词\n`, skillsDir);
+      const customServer = createMcpServer({ taskQueue, port: 0, skillsDir });
+      const res = (await customServer.handleRpcMessage({
+        jsonrpc: '2.0', id: 601, method: 'tools/call',
+        params: { name: 'workflow.skill', arguments: { workflowId: 'image_krea2_turbo_t2i' } },
+      })) as any;
+      expect(res.result.content[0].text).toContain('# 自定义 Skill');
+      expect(res.result.content[0].text).toContain('prompt: hidden');
+      await customServer.close();
+    } finally {
+      rmSync(skillsDir, { recursive: true, force: true });
+    }
   });
 
   it('workflow.skill 拒绝未启用或未知的插件', async () => {

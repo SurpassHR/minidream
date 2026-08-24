@@ -15,6 +15,7 @@ import {
   parsePiModelList,
   toolCallFingerprint,
   runAgentStream,
+  runPluginSkillChat,
   runPluginSkillCreator,
   sanitizeTitle,
   type AgentStreamEvent,
@@ -329,6 +330,69 @@ describe('Agent Bridge', () => {
     expect(result.exitCode).toBe(143);
   });
 
+  it('runPluginSkillChat 将 widget 参数和当前 Skill 传入 Agent，并返回说明与新 Skill', async () => {
+    const child = createFakeChild();
+    spawnMock.mockReturnValue(child);
+    const spec = {
+      id: 'test_plugin',
+      name: '测试插件',
+      description: '测试',
+      inputs: [{ id: 'prompt-1', kind: 'text' as const, label: '提示词', nodeId: '1', field: 'text', classType: 'Text' }],
+      params: [{ id: 'steps-3', label: '步数', nodeId: '3', field: 'steps', type: 'INT' as const, default: 20, min: 1, max: 50, llm: true }],
+      outputs: [],
+    };
+    const currentSkill = `---
+name: test_plugin
+description: 测试
+response:
+  thinking: collapsed
+  prompt: visible
+  route: visible
+  result: outside-bubble
+---
+
+# 测试
+
+## 用途
+
+旧用途
+
+## 输入
+
+- 提示词
+
+## 可控制参数
+
+- 步数
+
+## 输出
+
+- 无
+
+## 回复协议
+
+- 旧协议
+
+## 使用规则
+
+- 旧规则
+`;
+    const promise = runPluginSkillChat(spec, currentSkill, [{ role: 'user', content: '隐藏 prompt 预览' }], '请把 prompt 预览隐藏');
+    const input = child.stdin.read()?.toString() ?? '';
+    expect(input).toContain('steps-3');
+    expect(input).toContain('旧用途');
+    expect(input).toContain('隐藏 prompt 预览');
+
+    child.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: JSON.stringify({ reply: '已隐藏 prompt 预览。', skill: currentSkill.replace('prompt: visible', 'prompt: hidden') }) } }) + String.fromCharCode(10));
+    child.stdout.write(JSON.stringify({ type: 'agent_end' }) + String.fromCharCode(10));
+    child.stdin.end();
+
+    await expect(promise).resolves.toEqual({
+      reply: '已隐藏 prompt 预览。',
+      skill: expect.stringContaining('prompt: hidden'),
+    });
+  });
+
   it('runPluginSkillCreator 加载 plugin-skill-creator skill 并解析围栏输出', async () => {
     const child = createFakeChild();
     spawnMock.mockReturnValue(child);
@@ -354,14 +418,18 @@ describe('Agent Bridge', () => {
     const input = child.stdin.read()?.toString() ?? '';
     expect(input).toContain('test_plugin');
     expect(input).toContain('steps-3');
+    expect(input).toContain('responseProtocol');
+    expect(input).toContain('outside-bubble');
 
-    child.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '```markdown\n---\nname: test_plugin\ndescription: 测试\n---\n\n# 测试插件\n\n## 用途\n\n测试用途\n\n## 输入\n\n无\n\n## 可控制参数\n\n- **步数**（id `steps-3`；类型 整数；默认 20）\n\n## 输出\n\n无\n\n## 使用规则\n\n按提示词直接生成即可\n```' } }) + '\n');
+    child.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '```markdown\n---\nname: test_plugin\ndescription: 测试\nresponse:\n  thinking: collapsed\n  prompt: visible\n  route: visible\n  result: outside-bubble\n---\n\n# 测试插件\n\n## 用途\n\n测试用途\n\n## 输入\n\n无\n\n## 可控制参数\n\n- **步数**（id `steps-3`；类型 整数；默认 20）\n\n## 输出\n\n无\n\n## 回复协议\n\n- 思维链可折叠，prompt 和路由由工作台结构化展示，产物在气泡外展示。\n\n## 使用规则\n\n- 按提示词直接生成即可，无额外素材要求。\n```' } }) + '\n');
     child.stdout.write(JSON.stringify({ type: 'agent_end' }) + '\n');
     child.stdin.end();
 
     const result = await resultPromise;
     expect(result).toContain('name: test_plugin');
     expect(result).toContain('## 可控制参数');
+    expect(result).toContain('response:');
+    expect(result).toContain('## 回复协议');
     expect(result).toContain('steps-3');
   });
 
@@ -371,7 +439,7 @@ describe('Agent Bridge', () => {
     const spec = { id: 'p', name: 'P', inputs: [], params: [], outputs: [] };
 
     const resultPromise = runPluginSkillCreator(spec, { timeoutMs: 2000 });
-    child.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '---\nname: p\ndescription: P\n---\n\n# P\n\n## 用途\n\n测试\n\n## 输入\n\n无\n\n## 可控制参数\n\n无\n\n## 输出\n\n无\n\n## 使用规则\n\n无\n' } }) + '\n');
+    child.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '---\nname: p\ndescription: P\nresponse:\n  thinking: collapsed\n  prompt: visible\n  route: visible\n  result: outside-bubble\n---\n\n# P\n\n## 用途\n\n测试\n\n## 输入\n\n无\n\n## 可控制参数\n\n无\n\n## 输出\n\n无\n\n## 回复协议\n\n- 思维链可折叠，prompt 和路由由工作台结构化展示，产物在气泡外展示。\n\n## 使用规则\n\n- 无额外素材要求。\n' } }) + '\n');
     child.stdout.write(JSON.stringify({ type: 'agent_end' }) + '\n');
     child.stdin.end();
 
@@ -392,13 +460,14 @@ describe('Agent Bridge', () => {
     child1.stdin.end();
     // 等待第一次完成，然后触发第二次
     await new Promise(r => setTimeout(r, 100));
-    child2.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '---\nname: p\ndescription: P\n---\n\n# P\n\n## 用途\n\n测试\n\n## 输入\n\n无\n\n## 可控制参数\n\n无\n\n## 输出\n\n无\n\n## 使用规则\n\n无\n' } }) + '\n');
+    child2.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '---\nname: p\ndescription: P\nresponse:\n  thinking: collapsed\n  prompt: visible\n  route: visible\n  result: outside-bubble\n---\n\n# P\n\n## 用途\n\n测试\n\n## 输入\n\n无\n\n## 可控制参数\n\n无\n\n## 输出\n\n无\n\n## 回复协议\n\n- 思维链可折叠，prompt 和路由由工作台结构化展示，产物在气泡外展示。\n\n## 使用规则\n\n- 无额外素材要求。\n' } }) + '\n');
     child2.stdout.write(JSON.stringify({ type: 'agent_end' }) + '\n');
     child2.stdin.end();
 
     const result = await resultPromise;
     expect(result).toContain('name: p');
     expect(result).toContain('## 可控制参数');
+    expect(result).toContain('## 回复协议');
   });
 
   it('显式模型配置会透传给 Pi', async () => {
@@ -413,7 +482,7 @@ describe('Agent Bridge', () => {
     const spawnArgs = spawnMock.mock.calls[0]?.[1] as string[];
     expect(spawnArgs).toEqual(expect.arrayContaining(['--model', 'openai/gpt-4o', '--thinking', 'off']));
 
-    child.stdout.write(JSON.stringify({ type: 'agent_end' }) + '\\n');
+    child.stdout.write(JSON.stringify({ type: 'agent_end' }) + String.fromCharCode(10));
     await resultPromise;
   });
 

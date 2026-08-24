@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "thinking": {
+    "enabled": true,
+    "container": "collapsible",
+    "format": "plain",
+    "defaultOpen": false
+  },
+  "blocks": [
+    {
+      "id": "generation-route",
+      "type": "field",
+      "container": "text",
+      "format": "plain",
+      "timing": "submit",
+      "source": "route.finalWorkflow",
+      "label": "工作流路由"
+    },
+    {
+      "id": "generation-prompt",
+      "type": "field",
+      "container": "text",
+      "format": "code",
+      "timing": "submit",
+      "source": "generation.prompt",
+      "label": "最终正面提示词",
+      "language": "text"
+    },
+    {
+      "id": "block-1787534646379",
+      "type": "field",
+      "source": "generation.negativePrompt",
+      "label": "最终反面提示词",
+      "container": "text",
+      "format": "code",
+      "language": "text",
+      "timing": "submit"
+    }
+  ],
+  "result": {
+    "display": "outside-bubble"
+  }
+}

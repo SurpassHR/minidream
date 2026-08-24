@@ -30,6 +30,7 @@ import {
   type ActivitySnapshot,
   type ActivityStreamEvent,
   type StreamChatEvent,
+  type ResponseBlock,
 } from './api';
 import Rail from './components/Rail';
 import Sidebar, { type Conversation } from './components/Sidebar';
@@ -134,6 +135,9 @@ function newAssistantMessage(): ChatMessage {
     actionCards: [],
     routes: [],
     generationPrompts: [],
+    responseBlocks: [],
+    responseProtocolActive: false,
+    responsePolicy: undefined,
     stages: [],
   };
 }
@@ -162,6 +166,9 @@ function mergeStreamEvent(
     actionCards: target.actionCards ? [...target.actionCards] : [],
     routes: target.routes ? [...target.routes] : [],
     generationPrompts: target.generationPrompts ? [...target.generationPrompts] : [],
+    responseBlocks: target.responseBlocks ? [...target.responseBlocks] : [],
+    responseProtocolActive: target.responseProtocolActive,
+    responsePolicy: target.responsePolicy,
     stages: target.stages ? [...target.stages] : [],
     jobId: target.jobId,
     taskId: target.taskId,
@@ -170,12 +177,26 @@ function mergeStreamEvent(
   if (event.type === 'agent:thinking') {
     current.status = undefined;
     current.thinking = (current.thinking || '') + event.delta;
+  } else if (event.type === 'agent:response_policy') {
+    current.status = undefined;
+    current.responsePolicy = event.policy;
+  } else if (event.type === 'agent:response_protocol') {
+    current.status = undefined;
+    current.responseProtocolActive = event.active;
   } else if (event.type === 'agent:text') {
     current.status = undefined;
     current.content = (current.content || '') + event.delta;
   } else if (event.type === 'agent:prompt') {
     current.status = undefined;
     current.generationPrompts = [...(current.generationPrompts || []), event.prompt];
+  } else if (event.type === 'agent:response_block') {
+    current.status = undefined;
+    const blocks = [...(current.responseBlocks || [])];
+    const index = blocks.findIndex(block => block.id === event.block.id);
+    if (index >= 0) blocks[index] = event.block;
+    else blocks.push(event.block);
+    blocks.sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER));
+    current.responseBlocks = blocks;
   } else if (event.type === 'agent:route') {
     current.status = undefined;
     const routes = [...(current.routes || [])];
@@ -428,9 +449,12 @@ export default function App() {
           }
           if (
             event.type === 'agent:thinking' ||
+            event.type === 'agent:response_policy' ||
+            event.type === 'agent:response_protocol' ||
             event.type === 'agent:text' ||
             event.type === 'agent:prompt' ||
             event.type === 'agent:route' ||
+            event.type === 'agent:response_block' ||
             event.type === 'agent:action_card' ||
             event.type === 'tool:call' ||
             event.type === 'tool:result' ||
@@ -486,11 +510,14 @@ export default function App() {
               content: target.content || '',
               thinking: target.thinking,
               thinkingDurationMs: target.thinkingDurationMs,
+              responsePolicy: target.responsePolicy,
               toolCalls: target.toolCalls ? [...target.toolCalls] : [],
               tasks: target.tasks ? [...target.tasks] : [],
               actionCards: target.actionCards ? [...target.actionCards] : [],
               routes: target.routes ? [...target.routes] : [],
               generationPrompts: target.generationPrompts ? [...target.generationPrompts] : [],
+              responseBlocks: target.responseBlocks ? [...target.responseBlocks] : [],
+              responseProtocolActive: target.responseProtocolActive,
               stages: target.stages ? [...target.stages] : [],
               jobId: target.jobId,
               taskId: target.taskId,
@@ -499,6 +526,12 @@ export default function App() {
             if (event.type === 'agent:thinking') {
               current.status = undefined;
               current.thinking = (current.thinking || '') + event.delta;
+            } else if (event.type === 'agent:response_policy') {
+              current.status = undefined;
+              current.responsePolicy = event.policy;
+            } else if (event.type === 'agent:response_protocol') {
+              current.status = undefined;
+              current.responseProtocolActive = event.active;
             } else if (event.type === 'agent:text') {
               current.status = undefined;
               current.content = (current.content || '') + event.delta;
@@ -507,6 +540,14 @@ export default function App() {
               if (!(current.generationPrompts || []).some(item => item === event.prompt)) {
                 current.generationPrompts = [...(current.generationPrompts || []), event.prompt];
               }
+            } else if (event.type === 'agent:response_block') {
+              current.status = undefined;
+              const blocks = [...(current.responseBlocks || [])];
+              const blockIndex = blocks.findIndex(block => block.id === event.block.id);
+              if (blockIndex >= 0) blocks[blockIndex] = event.block;
+              else blocks.push(event.block);
+              blocks.sort((a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER));
+              current.responseBlocks = blocks;
             } else if (event.type === 'agent:route') {
               current.status = undefined;
               const routes = [...(current.routes || [])];

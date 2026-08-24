@@ -310,6 +310,130 @@ describe('workflow plugin API', () => {
     });
   });
 
+  it('POST /api/plugins/:id/skill/chat 传入 widget、当前 Skill 和历史，但只返回预览不落盘', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    const chatSkill = vi.fn(async (spec: WorkflowSpec, currentSkill: string, history: Array<{ role: 'user' | 'assistant'; content: string }>, message: string) => ({
+      reply: `已调整 ${spec.id}：${message}`,
+      skill: `${currentSkill}\n## 对话调整\n\n- ${history.length} 条历史`,
+    }));
+    const app = makeApp({ ...options, chatSkill });
+    await withServer(app, async baseUrl => {
+      await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      const before = readPluginSkill('demo', options.skillsDir!);
+      const response = await fetch(`${baseUrl}/api/plugins/demo/skill/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          message: '隐藏 prompt 预览',
+          currentSkill: `${before}\n\n未保存的手工调整`,
+          history: [
+            { role: 'user', content: '先讨论回复格式' },
+            { role: 'assistant', content: '当前 prompt 可见' },
+          ],
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        ok: true,
+        reply: '已调整 demo：隐藏 prompt 预览',
+        skill: expect.stringContaining('2 条历史'),
+      });
+      expect(chatSkill).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'demo', params: [] }),
+        `${before}\n\n未保存的手工调整`,
+        [
+          { role: 'user', content: '先讨论回复格式' },
+          { role: 'assistant', content: '当前 prompt 可见' },
+        ],
+        '隐藏 prompt 预览',
+      );
+      expect(readPluginSkill('demo', options.skillsDir!)).toBe(before);
+    });
+  });
+
+  it('GET/PUT /api/plugins/:id/response 读取兼容协议并保存自定义协议', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    await withServer(makeApp(options), async baseUrl => {
+      await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      const initial = await fetch(`${baseUrl}/api/plugins/demo/response`);
+      expect(initial.status).toBe(200);
+      const initialBody = await initial.json() as { protocol: { version: number; result: { display: string } } };
+      expect(initialBody.protocol.version).toBe(1);
+      expect(initialBody.protocol.result.display).toBe('outside-bubble');
+
+      const custom = {
+        version: 1,
+        thinking: { enabled: true, container: 'collapsible', format: 'plain', defaultOpen: false },
+        blocks: [{ id: 'prompt', type: 'field', source: 'generation.prompt', label: '提示词', container: 'collapsible', format: 'code', language: 'text', timing: 'submit' }],
+        result: { display: 'outside-bubble' },
+      };
+      const saved = await fetch(`${baseUrl}/api/plugins/demo/response`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ protocol: custom }),
+      });
+      expect(saved.status).toBe(200);
+      expect((await (await fetch(`${baseUrl}/api/plugins/demo/response`)).json() as { protocol: typeof custom }).protocol).toEqual(custom);
+
+      const invalid = await fetch(`${baseUrl}/api/plugins/demo/response`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ protocol: { ...custom, blocks: [{ ...custom.blocks[0], source: 'param.missing' }] } }),
+      });
+      expect(invalid.status).toBe(400);
+    });
+  });
+
+  it('回复协议保存后再保存 manifest 仍保持自定义内容', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    await withServer(makeApp(options), async baseUrl => {
+      await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      const current = (await (await fetch(`${baseUrl}/api/plugins`)).json() as WorkflowSpec[]).find(p => p.id === 'demo')!;
+      const selected = {
+        ...current,
+        params: [{ id: 'steps-4', label: 'Steps', nodeId: '4', field: 'steps', type: 'INT', default: 20, llm: true }],
+      };
+      expect((await fetch(`${baseUrl}/api/plugins/demo`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(selected) })).status).toBe(200);
+      const protocol = {
+        version: 1,
+        thinking: { enabled: true, container: 'collapsible', format: 'plain', defaultOpen: false },
+        blocks: [
+          { id: 'steps', type: 'field', source: 'param.steps-4', label: 'Steps', container: 'collapsible', format: 'code', language: 'text', timing: 'submit' },
+          { id: 'template', type: 'template', template: '尺寸：{{param.steps-4}}', container: 'text', format: 'plain', timing: 'always' },
+        ],
+        result: { display: 'outside-bubble' },
+      };
+      expect((await fetch(`${baseUrl}/api/plugins/demo/response`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ protocol }) })).status).toBe(200);
+      expect((await fetch(`${baseUrl}/api/plugins/demo`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...selected, description: 'changed' }) })).status).toBe(200);
+      expect((await (await fetch(`${baseUrl}/api/plugins/demo/response`)).json() as { protocol: typeof protocol }).protocol).toEqual(protocol);
+    });
+  });
+
+  it('POST /api/plugins/:id/skill/chat 缺少消息时返回 400', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    const chatSkill = vi.fn();
+    await withServer(makeApp({ ...options, chatSkill }), async baseUrl => {
+      await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      const response = await fetch(`${baseUrl}/api/plugins/demo/skill/chat`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: '  ' }),
+      });
+      expect(response.status).toBe(400);
+      expect(chatSkill).not.toHaveBeenCalled();
+    });
+  });
+
   it('重识别返回合并结果但不自动写入 manifest', async () => {
     const root = makeRoot();
     const options = makeOptions(root);

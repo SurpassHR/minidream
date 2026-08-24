@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  chatPluginSkill,
   fetchPluginSkill,
   fetchWorkflowGraph,
   generatePluginSkillLlm,
   savePluginSkill,
+  fetchPluginResponse,
+  savePluginResponse,
+  regeneratePluginResponse,
+  type PluginResponseProtocol,
   type WorkflowGraph,
   type WorkflowGraphField,
   type WorkflowManifest,
+  type PluginSkillChatMessage,
   type WorkflowParam,
 } from '../api';
 import WorkflowNodeGraph from './WorkflowNodeGraph';
@@ -22,6 +28,10 @@ interface Props {
   onClose: () => void;
 }
 
+type ResponseProtocolBlock = PluginResponseProtocol['blocks'][number];
+
+type ResponseSourceOption = { source: string; label: string; group: string };
+
 function copyManifest(manifest: WorkflowManifest): WorkflowManifest {
   const copy = JSON.parse(JSON.stringify(manifest)) as WorkflowManifest;
   // 未保存的自动识别结果只作为节点图候选，参数必须由用户在节点视图中显式勾选。
@@ -31,7 +41,7 @@ function copyManifest(manifest: WorkflowManifest): WorkflowManifest {
 
 export default function WorkflowMappingModal({ manifest, saving, error, onSave, onRedetect, onClose }: Props) {
   const [draft, setDraft] = useState(() => copyManifest(manifest));
-  const [view, setView] = useState<'node' | 'form' | 'skill'>('node');
+  const [view, setView] = useState<'node' | 'form' | 'skill' | 'response'>('node');
   const [fullscreen, setFullscreen] = useState(false);
   const [graph, setGraph] = useState<WorkflowGraph | null>(null);
   const [graphLoading, setGraphLoading] = useState(true);
@@ -44,6 +54,13 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   const [skillLoaded, setSkillLoaded] = useState(false);
   const [skillSaving, setSkillSaving] = useState(false);
   const [skillGenerating, setSkillGenerating] = useState(false);
+  const [skillChatMessages, setSkillChatMessages] = useState<PluginSkillChatMessage[]>([]);
+  const [skillChatInput, setSkillChatInput] = useState('');
+  const [skillChatSending, setSkillChatSending] = useState(false);
+  const [responseProtocol, setResponseProtocol] = useState<PluginResponseProtocol | null>(null);
+  const [responseLoading, setResponseLoading] = useState(false);
+  const [responseSaving, setResponseSaving] = useState(false);
+  const [responseError, setResponseError] = useState<string | null>(null);
 
   const loadGraph = async (id: string) => {
     setGraphLoading(true);
@@ -73,9 +90,24 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     }
   };
 
-  const selectView = (next: 'node' | 'form' | 'skill') => {
+  const loadResponse = async (id: string) => {
+    setResponseLoading(true);
+    setResponseError(null);
+    try {
+      const result = await fetchPluginResponse(id);
+      setResponseProtocol(JSON.parse(JSON.stringify(result.protocol)) as PluginResponseProtocol);
+    } catch (e) {
+      setResponseProtocol(null);
+      setResponseError((e as Error).message);
+    } finally {
+      setResponseLoading(false);
+    }
+  };
+
+  const selectView = (next: 'node' | 'form' | 'skill' | 'response') => {
     setView(next);
     if (next === 'skill' && !skillLoaded) void loadSkill(draft.id);
+    if (next === 'response' && responseProtocol === null) void loadResponse(draft.id);
   };
 
   const generateSkill = async (id: string) => {
@@ -89,6 +121,27 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
       setSkillError((e as Error).message);
     } finally {
       setSkillGenerating(false);
+    }
+  };
+
+  const sendSkillChat = async (id: string) => {
+    const message = skillChatInput.trim();
+    if (!message || skillChatSending) return;
+    const userTurn: PluginSkillChatMessage = { role: 'user', content: message };
+    const history = [...skillChatMessages, userTurn];
+    setSkillChatMessages(history);
+    setSkillChatInput('');
+    setSkillChatSending(true);
+    setSkillError(null);
+    try {
+      const result = await chatPluginSkill(id, message, skillChatMessages, skillContent ?? '');
+      setSkillContent(result.skill);
+      setSkillLoaded(true);
+      setSkillChatMessages(current => [...current, { role: 'assistant', content: result.reply }]);
+    } catch (e) {
+      setSkillError((e as Error).message);
+    } finally {
+      setSkillChatSending(false);
     }
   };
 
@@ -111,6 +164,11 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     setSkillLoaded(false);
     setSkillContent(null);
     setSkillError(null);
+    setSkillChatMessages([]);
+    setSkillChatInput('');
+    setSkillChatSending(false);
+    setResponseProtocol(null);
+    setResponseError(null);
     void loadGraph(manifest.id);
   }, [manifest]);
 
@@ -174,6 +232,83 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   };
 
   const exposedParams = useMemo(() => draft.params.filter(item => item.llm !== false), [draft.params]);
+  const responseSources = useMemo<ResponseSourceOption[]>(() => [
+    { source: 'generation.prompt', label: '最终正面提示词', group: '生成内容' },
+    ...(draft.params.some(item => !item.hidden && item.llm !== false && /负面|反面|negative/i.test(`${item.label} ${item.description ?? ''}`)) ? [{ source: 'generation.negativePrompt', label: '最终反面提示词', group: '生成内容' }] : []),
+    { source: 'generation.workflowName', label: '工作流名称', group: '生成内容' },
+    { source: 'generation.intent', label: '生成意图', group: '生成内容' },
+    { source: 'route.requestedWorkflow', label: '请求工作流', group: '路由' },
+    { source: 'route.finalWorkflow', label: '最终工作流', group: '路由' },
+    { source: 'route.reason', label: '路由原因', group: '路由' },
+    { source: 'result.count', label: '结果数量', group: '结果' },
+    { source: 'result.types', label: '结果类型', group: '结果' },
+    { source: 'result.status', label: '任务状态', group: '结果' },
+    { source: 'assistant.reply', label: 'Agent 正文', group: '助手' },
+    ...draft.inputs.filter(item => !item.hidden).map(item => ({ source: `input.${item.id}`, label: item.label, group: 'Widget 输入' })),
+    ...exposedParams.map(item => ({ source: `param.${item.id}`, label: `${item.label}（${item.id}）`, group: 'Widget 参数' })),
+  ], [draft.inputs, exposedParams]);
+
+  const updateResponse = (patch: Partial<PluginResponseProtocol>) => {
+    setResponseProtocol(current => current ? { ...current, ...patch } : current);
+  };
+  const updateResponseBlock = (index: number, patch: Partial<ResponseProtocolBlock>) => {
+    setResponseProtocol(current => current ? {
+      ...current,
+      blocks: current.blocks.map((block, i) => i === index ? { ...block, ...patch } : block),
+    } : current);
+  };
+  const addResponseBlock = (type: ResponseProtocolBlock['type']) => {
+    const source = type === 'assistant-reply' ? 'assistant.reply' : type === 'field' ? 'generation.prompt' : undefined;
+    const block: ResponseProtocolBlock = {
+      id: `block-${Date.now()}`,
+      type,
+      ...(source ? { source } : { template: '标题：{{generation.workflowName}}' }),
+      label: type === 'assistant-reply' ? '' : type === 'field' ? '生成提示词' : '自定义回复',
+      container: 'text',
+      format: type === 'assistant-reply' ? 'markdown' : type === 'template' ? 'plain' : 'code',
+      ...(type === 'field' ? { language: 'text' } : {}),
+      timing: type === 'template' ? 'always' : 'submit',
+    };
+    setResponseProtocol(current => current ? { ...current, blocks: [...current.blocks, block] } : current);
+  };
+  const removeResponseBlock = (index: number) => {
+    setResponseProtocol(current => current ? { ...current, blocks: current.blocks.filter((_, i) => i !== index) } : current);
+  };
+  const moveResponseBlock = (index: number, direction: -1 | 1) => {
+    setResponseProtocol(current => {
+      if (!current) return current;
+      const target = index + direction;
+      if (target < 0 || target >= current.blocks.length) return current;
+      const blocks = [...current.blocks];
+      [blocks[index], blocks[target]] = [blocks[target]!, blocks[index]!];
+      return { ...current, blocks };
+    });
+  };
+  const saveResponse = async (id: string) => {
+    if (!responseProtocol || responseSaving) return;
+    setResponseSaving(true);
+    setResponseError(null);
+    try {
+      const result = await savePluginResponse(id, responseProtocol);
+      setResponseProtocol(result.protocol);
+    } catch (e) {
+      setResponseError((e as Error).message);
+    } finally {
+      setResponseSaving(false);
+    }
+  };
+  const regenerateResponse = async (id: string) => {
+    setResponseLoading(true);
+    setResponseError(null);
+    try {
+      const result = await regeneratePluginResponse(id);
+      setResponseProtocol(result.protocol);
+    } catch (e) {
+      setResponseError((e as Error).message);
+    } finally {
+      setResponseLoading(false);
+    }
+  };
 
   const validate = (): string | null => {
     if (!draft.name.trim()) return '工作流名称不能为空';
@@ -191,13 +326,25 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     return null;
   };
 
-  const save = () => {
+  const save = async () => {
     const validation = validate();
     if (validation) {
       setLocalError(validation);
       return;
     }
     setLocalError(null);
+    setResponseError(null);
+    if (responseProtocol) {
+      setResponseSaving(true);
+      try {
+        await savePluginResponse(draft.id, responseProtocol);
+      } catch (e) {
+        setResponseError((e as Error).message);
+        setResponseSaving(false);
+        return;
+      }
+      setResponseSaving(false);
+    }
     onSave(draft);
   };
 
@@ -219,6 +366,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
           <button className={view === 'node' ? 'active' : ''} role="tab" aria-selected={view === 'node'} onClick={() => setView('node')}>节点视图</button>
           <button className={view === 'form' ? 'active' : ''} role="tab" aria-selected={view === 'form'} onClick={() => setView('form')}>表单视图</button>
           <button className={view === 'skill' ? 'active' : ''} role="tab" aria-selected={view === 'skill'} onClick={() => selectView('skill')}>Skill</button>
+          <button className={view === 'response' ? 'active' : ''} role="tab" aria-selected={view === 'response'} onClick={() => selectView('response')}>回复协议</button>
         </div>
         <div className="workflow-mapping-body">
           {view === 'node' ? (
@@ -239,13 +387,120 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
               {skillLoading && <p className="workflow-skill-hint">加载中…</p>}
               {skillError && <p className="workflow-mapping-error">{skillError}</p>}
               {!skillLoading && skillContent !== null && (
-                <textarea
-                  className="workflow-skill-editor"
-                  value={skillContent}
-                  onChange={event => setSkillContent(event.target.value)}
-                  spellCheck={false}
-                  aria-label="插件 Skill 内容"
-                />
+                <>
+                  <textarea
+                    className="workflow-skill-editor"
+                    value={skillContent}
+                    onChange={event => setSkillContent(event.target.value)}
+                    spellCheck={false}
+                    aria-label="插件 Skill 内容"
+                  />
+                  <div className="workflow-skill-chat" aria-label="Skill 调整对话">
+                    <div className="workflow-skill-chat-head">
+                      <div>
+                        <strong>对话调整 Skill</strong>
+                        <span>上下文包含当前 widget 参数和 Skill；调整结果只更新上方预览。</span>
+                      </div>
+                      {skillChatMessages.length > 0 && <button className="settings-btn" onClick={() => setSkillChatMessages([])}>清空对话</button>}
+                    </div>
+                    {skillChatMessages.length > 0 && (
+                      <div className="workflow-skill-chat-messages">
+                        {skillChatMessages.map((item, index) => (
+                          <div className={`workflow-skill-chat-message ${item.role}`} key={`${item.role}-${index}`}>
+                            <span className="workflow-skill-chat-role">{item.role === 'user' ? '你' : 'Skill 助手'}</span>
+                            <p>{item.content}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <form className="workflow-skill-chat-form" onSubmit={event => { event.preventDefault(); void sendSkillChat(draft.id); }}>
+                      <textarea
+                        value={skillChatInput}
+                        onChange={event => setSkillChatInput(event.target.value)}
+                        placeholder="例如：隐藏 prompt 预览，并把完成后的回复压缩成一句话"
+                        aria-label="调整 Skill 的消息"
+                        rows={2}
+                        disabled={skillChatSending}
+                      />
+                      <button className="settings-btn primary" type="submit" disabled={skillChatSending || !skillChatInput.trim()}>{skillChatSending ? '调整中…' : '发送'}</button>
+                    </form>
+                  </div>
+                </>
+              )}
+            </section>
+          ) : view === 'response' ? (
+            <section className="workflow-mapping-section workflow-response-view">
+              <div className="workflow-mapping-section-head">
+                <div>
+                  <h3>回复协议</h3>
+                  <p>选择 widget 值或生成上下文作为占位符，并分别设置容器、格式和显示时机。协议只在点击保存后生效。</p>
+                </div>
+                <div className="workflow-skill-actions">
+                  <button className="settings-btn" disabled={responseLoading} onClick={() => void regenerateResponse(draft.id)}>恢复默认</button>
+                  <button className="settings-btn primary" disabled={responseLoading || responseSaving || responseProtocol === null} onClick={() => void saveResponse(draft.id)}>{responseSaving ? '保存中…' : '保存协议'}</button>
+                </div>
+              </div>
+              {responseLoading && <p className="workflow-skill-hint">加载中…</p>}
+              {responseError && <p className="workflow-mapping-error">{responseError}</p>}
+              {responseProtocol && !responseLoading && (
+                <div className="workflow-response-editor">
+                  <div className="workflow-response-thinking">
+                    <div className="workflow-response-row-head"><strong>思维链</strong><span>Agent 的 thinking 事件</span></div>
+                    <label className="workflow-response-control"><input type="checkbox" checked={responseProtocol.thinking.enabled} onChange={event => updateResponse({ thinking: { ...responseProtocol.thinking, enabled: event.target.checked } })} /> 显示</label>
+                    <label className="workflow-response-control">容器
+                      <select value={responseProtocol.thinking.container} onChange={event => updateResponse({ thinking: { ...responseProtocol.thinking, container: event.target.value as 'text' | 'collapsible' } })}>
+                        <option value="text">普通文本</option><option value="collapsible">可折叠</option>
+                      </select>
+                    </label>
+                    <label className="workflow-response-control">格式
+                      <select value={responseProtocol.thinking.format} onChange={event => updateResponse({ thinking: { ...responseProtocol.thinking, format: event.target.value as 'plain' | 'markdown' | 'code' } })}>
+                        <option value="plain">纯文本</option><option value="markdown">Markdown</option><option value="code">代码块</option>
+                      </select>
+                    </label>
+                    {responseProtocol.thinking.container === 'collapsible' && <label className="workflow-response-control"><input type="checkbox" checked={responseProtocol.thinking.defaultOpen ?? false} onChange={event => updateResponse({ thinking: { ...responseProtocol.thinking, defaultOpen: event.target.checked } })} /> 默认展开</label>}
+                  </div>
+                  <div className="workflow-response-toolbar">
+                    <strong>回复内容块</strong>
+                    <div>
+                      <button className="settings-btn" onClick={() => addResponseBlock('field')}>+ 字段</button>
+                      <button className="settings-btn" onClick={() => addResponseBlock('template')}>+ 模板</button>
+                      <button className="settings-btn" onClick={() => addResponseBlock('assistant-reply')}>+ Agent 正文</button>
+                    </div>
+                  </div>
+                  {responseProtocol.blocks.map((block, index) => {
+                    const groups = [...new Set(responseSources.map(option => option.group))];
+                    return (
+                      <div className="workflow-response-block" key={block.id}>
+                        <div className="workflow-response-block-head">
+                          <input className="workflow-response-block-id" value={block.label ?? ''} onChange={event => updateResponseBlock(index, { label: event.target.value })} placeholder="显示标题" />
+                          <span>#{index + 1}</span>
+                          <button className="settings-btn" disabled={index === 0} onClick={() => moveResponseBlock(index, -1)}>上移</button>
+                          <button className="settings-btn" disabled={index === responseProtocol.blocks.length - 1} onClick={() => moveResponseBlock(index, 1)}>下移</button>
+                          <button className="settings-btn" onClick={() => removeResponseBlock(index)}>删除</button>
+                        </div>
+                        {block.type === 'template' ? (
+                          <textarea className="workflow-response-template" value={block.template ?? ''} onChange={event => updateResponseBlock(index, { template: event.target.value })} placeholder="输入文本，可使用 {{param.id}} 占位符" rows={3} />
+                        ) : (
+                          <label className="workflow-response-field">数据来源
+                            <select value={block.source ?? ''} onChange={event => updateResponseBlock(index, { source: event.target.value })}>
+                              {groups.map(group => <optgroup key={group} label={group}>{responseSources.filter(option => option.group === group).map(option => <option key={option.source} value={option.source}>{option.label} · {option.source}</option>)}</optgroup>)}
+                            </select>
+                          </label>
+                        )}
+                        {block.type === 'template' && <label className="workflow-response-field">插入占位符
+                          <select value="" onChange={event => { const source = event.target.value; if (!source) return; updateResponseBlock(index, { template: `${block.template ?? ''}{{${source}}}` }); }}><option value="">选择字段…</option>{[...new Set(responseSources.map(option => option.group))].map(group => <optgroup key={group} label={group}>{responseSources.filter(option => option.group === group).map(option => <option key={option.source} value={option.source}>{option.label}</option>)}</optgroup>)}</select>
+                        </label>}
+                        <div className="workflow-response-controls">
+                          <label>容器<select value={block.container} onChange={event => updateResponseBlock(index, { container: event.target.value as 'text' | 'collapsible' })}><option value="text">普通文本</option><option value="collapsible">可折叠</option></select></label>
+                          <label>格式<select value={block.format} onChange={event => updateResponseBlock(index, { format: event.target.value as 'plain' | 'markdown' | 'code' })}><option value="plain">纯文本</option><option value="markdown">Markdown</option><option value="code">代码块</option></select></label>
+                          <label>时机<select value={block.timing} onChange={event => updateResponseBlock(index, { timing: event.target.value as 'submit' | 'complete' | 'always' })}><option value="submit">提交时</option><option value="complete">完成时</option><option value="always">始终</option></select></label>
+                          {block.container === 'collapsible' && <label><input type="checkbox" checked={block.defaultOpen ?? false} onChange={event => updateResponseBlock(index, { defaultOpen: event.target.checked })} /> 默认展开</label>}
+                          {block.format === 'code' && <label>语言<input value={block.language ?? 'text'} onChange={event => updateResponseBlock(index, { language: event.target.value })} /></label>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </section>
           ) : (
@@ -276,7 +531,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
           <button className="settings-btn" onClick={() => { setRedetectNotice(true); onRedetect(); }}>重新识别</button>
           <span />
           <button className="settings-btn" onClick={onClose}>取消</button>
-          <button className="settings-btn primary" disabled={saving} onClick={save}>{saving ? '保存中…' : '保存映射'}</button>
+          <button className="settings-btn primary" disabled={saving || responseSaving} onClick={() => void save()}>{saving || responseSaving ? '保存中…' : '保存映射'}</button>
         </footer>
       </div>
     </div>

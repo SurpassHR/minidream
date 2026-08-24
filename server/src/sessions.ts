@@ -19,6 +19,14 @@ export interface StoredMessage {
   stages?: unknown[];
   routes?: unknown[];
   generationPrompts?: string[];
+  responseBlocks?: unknown[];
+  responseProtocolActive?: boolean;
+  responsePolicy?: {
+    thinking: 'hidden' | 'collapsed' | 'visible';
+    prompt: 'hidden' | 'visible';
+    route: 'hidden' | 'visible';
+    result: 'outside-bubble';
+  };
   jobId?: string;
 }
 

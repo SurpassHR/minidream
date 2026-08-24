@@ -127,6 +127,52 @@ export interface WorkflowRoute {
   sessionId?: string;
 }
 
+export interface PluginResponsePolicy {
+  thinking: 'hidden' | 'collapsed' | 'visible';
+  prompt: 'hidden' | 'visible';
+  route: 'hidden' | 'visible';
+  result: 'outside-bubble';
+}
+
+export interface ResponseBlock {
+  id: string;
+  order?: number;
+  type: 'field' | 'template' | 'assistant-reply' | 'thinking';
+  source?: string;
+  label?: string;
+  content: string;
+  container: 'text' | 'collapsible';
+  format: 'plain' | 'markdown' | 'code';
+  defaultOpen?: boolean;
+  language?: string;
+  timing: 'submit' | 'complete' | 'always';
+}
+
+export interface PluginResponseProtocol {
+  version: 1;
+  thinking: {
+    enabled: boolean;
+    container: 'text' | 'collapsible';
+    format: 'plain' | 'markdown' | 'code';
+    defaultOpen?: boolean;
+    language?: string;
+  };
+  blocks: Array<{
+    id: string;
+    type: 'field' | 'template' | 'assistant-reply';
+    source?: string;
+    template?: string;
+    label?: string;
+    container: 'text' | 'collapsible';
+    format: 'plain' | 'markdown' | 'code';
+    defaultOpen?: boolean;
+    language?: string;
+    timing: 'submit' | 'complete' | 'always';
+    visibleWhen?: { source: string; operator: 'exists' | 'not-empty' };
+  }>;
+  result: { display: 'outside-bubble' };
+}
+
 export interface ToolCallData {
   callId?: string;
   name: string;
@@ -140,9 +186,12 @@ export type StreamChatEvent =
   | { type: 'agent:reply_done' }
   | { type: 'agent:status'; status: string }
   | { type: 'agent:thinking'; delta: string }
+  | { type: 'agent:response_policy'; policy: PluginResponsePolicy }
+  | { type: 'agent:response_protocol'; active: boolean }
   | { type: 'agent:text'; delta: string }
   | { type: 'agent:prompt'; prompt: string }
   | { type: 'agent:route'; route: WorkflowRoute }
+  | { type: 'agent:response_block'; block: ResponseBlock }
   | { type: 'agent:action_card'; card: ActionCardData }
   | { type: 'tool:call'; callId?: string; name: string; args?: Record<string, unknown> }
   | { type: 'tool:result'; callId?: string; name: string; result?: unknown }
@@ -182,6 +231,9 @@ export interface ChatMessage {
   actionCards?: ActionCardData[];
   routes?: WorkflowRoute[];
   generationPrompts?: string[];
+  responseBlocks?: ResponseBlock[];
+  responseProtocolActive?: boolean;
+  responsePolicy?: PluginResponsePolicy;
   stages?: ChatStage[];
   jobId?: string;
   taskId?: string;
@@ -461,6 +513,43 @@ export async function generatePluginSkillLlm(id: string): Promise<{ ok: boolean;
   return http(`/api/plugins/${encodeURIComponent(id)}/skill/generate`, { method: 'POST' });
 }
 
+/** 获取插件机器可读回复协议；服务端会自动兼容旧版 Skill response 字段 */
+export async function fetchPluginResponse(id: string): Promise<{ ok: boolean; protocol: PluginResponseProtocol }> {
+  return http(`/api/plugins/${encodeURIComponent(id)}/response`);
+}
+
+/** 保存插件机器可读回复协议 */
+export async function savePluginResponse(id: string, protocol: PluginResponseProtocol): Promise<{ ok: boolean; protocol: PluginResponseProtocol }> {
+  return http(`/api/plugins/${encodeURIComponent(id)}/response`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ protocol }),
+  });
+}
+
+/** 按当前插件重新生成默认兼容回复协议 */
+export async function regeneratePluginResponse(id: string): Promise<{ ok: boolean; protocol: PluginResponseProtocol }> {
+  return http(`/api/plugins/${encodeURIComponent(id)}/response/regenerate`, { method: 'POST' });
+}
+
+export interface PluginSkillChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export async function chatPluginSkill(
+  id: string,
+  message: string,
+  history: PluginSkillChatMessage[],
+  currentSkill: string,
+): Promise<{ ok: boolean; reply: string; skill: string }> {
+  return http(`/api/plugins/${encodeURIComponent(id)}/skill/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, history, currentSkill }),
+  });
+}
+
 export async function deleteWorkflowPlugin(id: string): Promise<{ ok: boolean }> {
   return http(`/api/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
@@ -701,12 +790,18 @@ export async function sendChatStream(
           onEvent({ type: 'agent:status', status: parsed.status });
         } else if (eventType === 'agent:thinking') {
           onEvent({ type: 'agent:thinking', delta: parsed.delta });
+        } else if (eventType === 'agent:response_policy') {
+          onEvent({ type: 'agent:response_policy', policy: parsed.policy });
+        } else if (eventType === 'agent:response_protocol') {
+          onEvent({ type: 'agent:response_protocol', active: parsed.active === true });
         } else if (eventType === 'agent:text') {
           onEvent({ type: 'agent:text', delta: parsed.delta as string });
         } else if (eventType === 'agent:prompt') {
           onEvent({ type: 'agent:prompt', prompt: parsed.prompt as string });
         } else if (eventType === 'agent:route') {
           onEvent({ type: 'agent:route', route: parsed.route });
+        } else if (eventType === 'agent:response_block') {
+          onEvent({ type: 'agent:response_block', block: parsed.block });
         } else if (eventType === 'agent:action_card') {
           onEvent({ type: 'agent:action_card', card: parsed.card });
         } else if (eventType === 'tool:call') {

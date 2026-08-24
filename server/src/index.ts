@@ -36,8 +36,9 @@ import { createDirectorMCPServer, type McpServerInstance, type WorkflowRoute } f
 import { createWorkflowPluginRouter } from './workflow-plugin-api.js';
 import { migrateLegacyPluginConfig } from './workflow-plugin-migration.js';
 import { IMPORTED_WORKFLOWS_DIR, MANIFESTS_DIR, WORKFLOW_PLUGIN_DATA_DIR } from './workflow-plugin-store.js';
-import { ensurePluginSkills } from './workflow-skill.js';
-import { listAgentModels, runAgentStream, buildAgentInput, generateConversationTitle, toolCallFingerprint, runPluginSkillCreator, type AgentStreamEvent } from './agent/bridge.js';
+import { ensurePluginSkills, DEFAULT_PLUGIN_RESPONSE_POLICY, filterPluginGenerationArgs, pluginResponseAllows, readPluginResponsePolicy, PLUGIN_SKILLS_DIR, type PluginResponsePolicy } from './workflow-skill.js';
+import { readPluginResponseProtocol, renderResponseBlocks, responseProtocolAllowsPrompt, syncPluginResponseProtocol, validatePluginResponseProtocol, type PluginResponseContext, type PluginResponseProtocol, type RenderedResponseBlock, type ResponseTiming } from './workflow-response.js';
+import { listAgentModels, runAgentStream, buildAgentInput, generateConversationTitle, toolCallFingerprint, runPluginSkillChat, runPluginSkillCreator, type AgentStreamEvent } from './agent/bridge.js';
 import {
   SessionError,
   appendMessage,
@@ -84,7 +85,15 @@ await migrateLegacyPluginConfig(SETTINGS_FILE, {
 
 // 为每个工作流插件（内置+导入）幂等补齐自动生成的 SKILL.md；
 // 缺失才写入，不影响已有文件；失败不阻断启动。
-await ensurePluginSkills(await buildSpecsCached());
+const startupWorkflowSpecs = await buildSpecsCached();
+await ensurePluginSkills(startupWorkflowSpecs);
+for (const startupSpec of startupWorkflowSpecs) {
+  try {
+    syncPluginResponseProtocol(startupSpec, PLUGIN_SKILLS_DIR);
+  } catch (error) {
+    console.error(`[workflow-response] 生成 ${startupSpec.id} 失败:`, error);
+  }
+}
 
 export const draftStore = new DraftStore({
   indexFile: DRAFTS_INDEX_FILE,
@@ -106,6 +115,18 @@ function filterEnabledWorkflows(specs: WorkflowSpec[]): WorkflowSpec[] {
   return specs.filter(s => isWorkflowEnabled(s.id));
 }
 
+/** 按插件回复协议隐藏任务对象中的 prompt，避免从活动面板或产物元数据旁路泄漏。 */
+function taskForResponse(task: TaskItem, policy: PluginResponsePolicy): TaskItem {
+  if (pluginResponseAllows(policy, 'prompt')) return task;
+  return {
+    ...task,
+    prompt: '',
+    outputs: task.outputs?.map(output => output.generation
+      ? { ...output, generation: { ...output.generation, prompt: '' } }
+      : output),
+  };
+}
+
 // 工作流插件导入、映射清单与节点候选 API
 app.use(createWorkflowPluginRouter({
   catalog: {
@@ -122,6 +143,7 @@ app.use(createWorkflowPluginRouter({
   isWorkflowEnabled,
   invalidate: invalidateComfyCaches,
   generateSkill: runPluginSkillCreator,
+  chatSkill: runPluginSkillChat,
 }));
 
 export const activityRegistry = new ActivityRegistry(taskQueue);
@@ -309,6 +331,8 @@ app.post('/api/sessions/:id/messages/last', (req, res) => {
       stages: Array.isArray(body.stages) ? body.stages : undefined,
       routes: Array.isArray(body.routes) ? body.routes : undefined,
       generationPrompts: Array.isArray(body.generationPrompts) ? body.generationPrompts : undefined,
+      responseBlocks: Array.isArray(body.responseBlocks) ? body.responseBlocks : undefined,
+      responseProtocolActive: body.responseProtocolActive === true ? true : undefined,
       jobId: typeof body.jobId === 'string' ? body.jobId : undefined,
     };
     updateLastMessage(SESSIONS_FILE, req.params.id, msg);
@@ -870,11 +894,20 @@ app.post('/api/chat', async (req, res) => {
   if (isStream) {
 
     let fullThinking = '';
+    let pendingThinking = '';
     let fullText = '';
     const fullToolCalls: Array<Record<string, unknown>> = [];
+    let responsePolicy: PluginResponsePolicy = { ...DEFAULT_PLUGIN_RESPONSE_POLICY };
+    let responsePolicyActive = false;
+    let responseProtocol: PluginResponseProtocol | null = null;
+    let responseSpec: WorkflowSpec | undefined;
+    let responseArgs: Record<string, unknown> | undefined;
+    let responseRoute: WorkflowRoute | undefined;
+    let pendingGeneration: { tool: NonNullable<AgentStreamEvent['tool']>; record: Record<string, unknown> } | null = null;
     const seenToolCalls = new Set<string>();
     const fullRoutes: WorkflowRoute[] = [];
     const generationPrompts: string[] = [];
+    const responseBlocks = new Map<string, RenderedResponseBlock>();
     const sessionTasks = new Map<string, TaskItem>();
     const taskUnsubscribes: Array<() => void> = [];
     const agentController = new AbortController();
@@ -884,6 +917,7 @@ app.post('/api/chat', async (req, res) => {
     let responseConnected = true;
     let runFinalized = false;
     let unsubscribeResponse: () => void = () => undefined;
+    const workflowSpecs = await buildSpecsCached();
     activityRegistry.startSession(sid, message.trim(), agentController);
 
     const publishEvent = (type: string, data: Record<string, unknown> = {}) => {
@@ -891,6 +925,133 @@ app.post('/api/chat', async (req, res) => {
     };
     const sendEvent = (type: string, data: Record<string, unknown> = {}) => {
       publishEvent(type, data);
+    };
+    const flushThinking = () => {
+      if (!pendingThinking) return;
+      if (responseProtocol && !responseProtocol.thinking.enabled) {
+        pendingThinking = '';
+        return;
+      }
+      fullThinking += pendingThinking;
+      if (responseProtocol) {
+        if (responseProtocol.thinking.enabled) {
+          const block: RenderedResponseBlock = {
+            id: '__thinking__',
+            type: 'thinking',
+            content: fullThinking,
+            container: responseProtocol.thinking.container,
+            format: responseProtocol.thinking.format,
+            defaultOpen: responseProtocol.thinking.defaultOpen,
+            language: responseProtocol.thinking.language,
+            timing: 'always',
+          };
+          responseBlocks.set(block.id, block);
+          sendEvent('agent:response_block', { block });
+        }
+      } else if (pluginResponseAllows(responsePolicy, 'thinking')) {
+        sendEvent('agent:thinking', { delta: pendingThinking });
+      }
+      pendingThinking = '';
+    };
+    const contextFor = (
+      spec: WorkflowSpec,
+      args: Record<string, unknown>,
+      route?: WorkflowRoute,
+      task?: TaskItem,
+      status?: string,
+    ): PluginResponseContext => {
+      const rawParams = args.params && typeof args.params === 'object' ? args.params as Record<string, unknown> : {};
+      const manifestDefaults = Object.fromEntries(
+        spec.params.filter(item => !item.hidden && item.llm !== false).map(item => [item.id, item.default]),
+      );
+      const effectiveParams = task?.generationParams && typeof task.generationParams === 'object'
+        ? { ...manifestDefaults, ...rawParams, ...task.generationParams }
+        : { ...manifestDefaults, ...rawParams };
+      const input: Record<string, unknown> = {};
+      const primary = spec.inputs.find(item => !item.hidden && item.kind === 'text' && item.primary)
+        ?? spec.inputs.find(item => !item.hidden && item.kind === 'text');
+      if (primary && typeof args.prompt === 'string') input[primary.id] = args.prompt;
+      const param: Record<string, unknown> = {};
+      for (const item of spec.params) {
+        if (item.hidden || item.llm === false) continue;
+        const value = effectiveParams[item.id] !== undefined ? effectiveParams[item.id] : effectiveParams[item.field];
+        if (value !== undefined) param[item.id] = value;
+      }
+      const negative = spec.params.find(item => !item.hidden && item.llm !== false && /负面|反面|negative/i.test(`${item.label} ${item.description ?? ''}`));
+      return {
+        plugin: { name: spec.name, description: spec.description },
+        input,
+        param,
+        generation: {
+          prompt: args.prompt,
+          negativePrompt: negative ? param[negative.id] : undefined,
+          workflowName: spec.name,
+          intent: route?.intent,
+        },
+        route: {
+          requestedWorkflow: route?.requestedWorkflowId,
+          finalWorkflow: route?.finalWorkflowId,
+          reason: route?.reason,
+        },
+        result: {
+          count: task?.outputs?.length,
+          types: task?.outputs?.map(output => output.kind).join(', '),
+          status: status ?? task?.status,
+        },
+        assistant: { reply: fullText },
+      };
+    };
+    const emitResponseBlocks = (timing: ResponseTiming, context: PluginResponseContext) => {
+      if (!responseProtocol) return;
+      for (const block of renderResponseBlocks(responseProtocol, context, timing)) {
+        responseBlocks.set(block.id, block);
+        sendEvent('agent:response_block', { block });
+      }
+    };
+    const presentGenerationCall = (route?: WorkflowRoute, requestedWorkflowId?: string) => {
+      const generation = pendingGeneration;
+      if (!generation) return;
+      const finalWorkflowId = route?.finalWorkflowId || requestedWorkflowId;
+      responsePolicy = finalWorkflowId ? readPluginResponsePolicy(finalWorkflowId) : { ...DEFAULT_PLUGIN_RESPONSE_POLICY };
+      responsePolicyActive = true;
+      const selectedSpec = finalWorkflowId ? workflowSpecs.find(spec => spec.id === finalWorkflowId) : undefined;
+      const savedProtocol = finalWorkflowId ? readPluginResponseProtocol(finalWorkflowId, PLUGIN_SKILLS_DIR) : null;
+      responseProtocol = selectedSpec && savedProtocol && validatePluginResponseProtocol(savedProtocol, selectedSpec).length === 0
+        ? savedProtocol
+        : null;
+      responseSpec = selectedSpec;
+      responseArgs = generation.tool.args;
+      responseRoute = route;
+      if (responseProtocol && selectedSpec && !responseProtocolAllowsPrompt(responseProtocol, selectedSpec)) {
+        responsePolicy = { ...responsePolicy, prompt: 'hidden' };
+      }
+      activityRegistry.setSessionResponsePolicy(sid, responsePolicy);
+      if (responseProtocol) sendEvent('agent:response_protocol', { active: true });
+      else sendEvent('agent:response_policy', { policy: responsePolicy });
+      flushThinking();
+      const args = responseProtocol
+        ? filterPluginGenerationArgs(generation.tool.args, { ...responsePolicy, prompt: 'hidden' })
+        : filterPluginGenerationArgs(generation.tool.args, responsePolicy);
+      generation.record.args = args;
+      sendEvent('tool:call', {
+        callId: generation.tool.id,
+        name: generation.tool.name,
+        args,
+      });
+      const prompt = typeof generation.tool.args.prompt === 'string' ? generation.tool.args.prompt.trim() : '';
+      if (responseProtocol && selectedSpec) {
+        emitResponseBlocks('submit', contextFor(selectedSpec, generation.tool.args, route));
+      } else {
+        if (prompt && pluginResponseAllows(responsePolicy, 'prompt')) {
+          if (!generationPrompts.includes(prompt)) generationPrompts.push(prompt);
+          sendEvent('agent:prompt', { prompt });
+        }
+        if (route && pluginResponseAllows(responsePolicy, 'route') && !fullRoutes.some(item => item.taskId === route.taskId)) {
+          fullRoutes.push(route);
+          sendEvent('agent:route', { route });
+        }
+      }
+      pendingGeneration = null;
     };
     unsubscribeResponse = activityRegistry.subscribeSession(sid, ({ event }) => {
       if (!responseConnected || responseEnded) return;
@@ -911,6 +1072,9 @@ app.post('/api/chat', async (req, res) => {
         tasks: sessionTasks.size ? [...sessionTasks.values()] : undefined,
         routes: fullRoutes.length ? fullRoutes : undefined,
         generationPrompts: generationPrompts.length ? generationPrompts : undefined,
+        responseBlocks: responseBlocks.size ? [...responseBlocks.values()] : undefined,
+        responseProtocolActive: responseProtocol ? true : undefined,
+        responsePolicy: responsePolicyActive ? responsePolicy : undefined,
         stages,
       });
       publishEvent('agent:end', { sessionId: sid, canceled });
@@ -944,20 +1108,15 @@ app.post('/api/chat', async (req, res) => {
     const agentSystemPrompt = [
       '你运行在「导演工作台」中。生成结果（图片/视频）会自动展示在用户界面中，',
       '不要向用户报告内部文件名、存储路径、接口地址或任务 ID 等实现细节，',
-      '任务完成后简短确认即可，保持输出简洁。',
       '工作流选择与参数回答规则见 director-copilot skill：询问可用工作流或可调参数时必须先调用 workflow.list，',
-      '选定工作流后如需了解该插件的详细可调参数与输入要求，调用 workflow.skill 获取；只介绍真实存在的参数。',
+      '选定工作流后必须调用 workflow.skill 获取该插件的完整使用规则，并把该插件 Skill 的回复协议作为当前请求的唯一用户可见格式来源；不要套用通用的 prompt/路由/状态输出顺序。',
+      '插件 Skill 负责 MCP 调用和正文语义；如果存在 response.json，回复协议编辑器控制结构化展示，不改变 MCP 工具安全边界、任务队列或气泡外产物规则。',
       '只介绍清单中真实存在的参数及其 description，不得凭通用知识补充未配置的参数。',
-      '不要在正文中输出“正在适配工作流”“正在提交任务”等工具执行状态；工具调用由界面结构化处理。',
+      '不要在正文中输出“正在适配工作流”“正在提交任务”“生成中”等无意义状态句；工具调用和任务进度由界面结构化处理。',
       '每次用户请求最多调用一次 generation.submit；提交成功后不要重复提交相同任务。',
       '如果生成进度由界面事件流自动展示，不要调用 generation.status 轮询。',
-      '在调用 generation.submit 之前，先用 Markdown fenced code block（```）展示将要提交的最终 prompt；',
-      '代码块中只放实际生成提示词，不要放 workflowId、文件名、任务 ID 或其他 JSON。',
-      '若用户指令中以 @图像N 提及参考图片（【参考图片】中 [图像N] 即对应文件），',
-      '图生图/图生视频时必须在 generation.submit 的 images 参数中按序传入对应文件名。',
-      '图像放大/超分/高清化（如「放大、放大图片、upscale、变清晰、高清化」）必须使用',
-      '「SeedVR2 图像放大」工作流（image_seedvr2_upscale），并在 images 中传入被放大的参考图文件名，',
-      '禁止使用文生图工作流重新生成一张新图。选择工作流前先调用 workflow.list 查看用途。',
+      '若用户指令中以 @图像N 提及参考图片（【参考图片】中 [图像N] 即对应文件），图生图/图生视频时必须按序传入对应文件名。',
+      '图像放大/超分/高清化必须使用带参考图的 SeedVR2 图像放大工作流；后端会对参考图与放大意图执行确定性路由。',
     ].join('\n');
 
     try {
@@ -977,8 +1136,7 @@ app.post('/api/chat', async (req, res) => {
           if (evt.type === 'status') {
             sendEvent('agent:status', { status: evt.status });
           } else if (evt.type === 'thinking') {
-            fullThinking += evt.delta || '';
-            sendEvent('agent:thinking', { delta: evt.delta });
+            pendingThinking += evt.delta || '';
           } else if (evt.type === 'text') {
             fullText += evt.delta || '';
             sendEvent('agent:text', { delta: evt.delta });
@@ -988,51 +1146,47 @@ app.post('/api/chat', async (req, res) => {
             const callFingerprint = toolCallFingerprint(tool);
             if (seenToolCalls.has(callFingerprint)) return;
             seenToolCalls.add(callFingerprint);
-            fullToolCalls.push({
+            const record: Record<string, unknown> = {
               callId: tool.id,
               name: tool.name,
-              args: tool.args,
-            });
+              args: { ...tool.args },
+            };
+            fullToolCalls.push(record);
             const isGenerationSubmit = tool.name === 'generation.submit' || tool.name.endsWith('.generation.submit');
-            if (isGenerationSubmit && typeof tool.args.prompt === 'string' && tool.args.prompt.trim()) {
-              const prompt = tool.args.prompt;
-              if (!generationPrompts.includes(prompt)) generationPrompts.push(prompt);
-              sendEvent('agent:prompt', { prompt });
+            if (isGenerationSubmit) {
+              pendingGeneration = { tool, record };
+              const requestedWorkflowId = tool.args.workflowId;
+              if (typeof requestedWorkflowId === 'string') {
+                responsePolicy = readPluginResponsePolicy(requestedWorkflowId);
+                responsePolicyActive = true;
+                activityRegistry.setSessionResponsePolicy(sid, responsePolicy);
+              }
+            } else {
+              sendEvent('tool:call', {
+                callId: tool.id,
+                name: tool.name,
+                args: tool.args,
+              });
             }
-            sendEvent('tool:call', {
-              callId: tool.id,
-              name: tool.name,
-              args: tool.args,
-            });
           } else if (evt.type === 'tool_result') {
             const toolCall = fullToolCalls.find(call => call.callId === evt.result?.id);
             if (toolCall) toolCall.result = evt.result?.content;
-            sendEvent('tool:result', {
-              callId: evt.result?.id,
-              name: evt.result?.name,
-              result: evt.result?.content,
-            });
-
             // 如果提交了任务，自动订阅 TaskQueue 并转发进度
             let taskId: string | undefined;
+            let resolvedRoute: WorkflowRoute | undefined;
             const resObj = evt.result?.content as any;
             if (resObj && typeof resObj === 'object') {
               taskId = resObj.taskId;
               // 处理 MCP 标准 CallToolResult 格式: { content: [{ type: 'text', text: '{...}' }] }
               const route = resObj.route as WorkflowRoute | undefined;
-              if (route && typeof route.finalWorkflowId === 'string' && !fullRoutes.some(item => item.taskId === route.taskId)) {
-                fullRoutes.push(route);
-                sendEvent('agent:route', { route });
-              }
+              if (route && typeof route.finalWorkflowId === 'string') resolvedRoute = route;
               if (!taskId && Array.isArray(resObj.content)) {
                 for (const c of resObj.content) {
                   if (c?.type === 'text' && typeof c.text === 'string') {
                     try {
                       const parsed = JSON.parse(c.text);
-                      if (parsed?.route && typeof parsed.route.finalWorkflowId === 'string' && !fullRoutes.some(item => item.taskId === parsed.route.taskId)) {
-                        const route = parsed.route as WorkflowRoute;
-                        fullRoutes.push(route);
-                        sendEvent('agent:route', { route });
+                      if (parsed?.route && typeof parsed.route.finalWorkflowId === 'string') {
+                        resolvedRoute = parsed.route as WorkflowRoute;
                       }
                       if (parsed?.taskId) {
                         taskId = parsed.taskId;
@@ -1047,16 +1201,22 @@ app.post('/api/chat', async (req, res) => {
             } else if (typeof resObj === 'string') {
               try {
                 const parsed = JSON.parse(resObj);
-                if (parsed?.route && typeof parsed.route.finalWorkflowId === 'string' && !fullRoutes.some(item => item.taskId === parsed.route.taskId)) {
-                  const route = parsed.route as WorkflowRoute;
-                  fullRoutes.push(route);
-                  sendEvent('agent:route', { route });
+                if (parsed?.route && typeof parsed.route.finalWorkflowId === 'string') {
+                  resolvedRoute = parsed.route as WorkflowRoute;
                 }
                 if (parsed?.taskId) taskId = parsed.taskId;
               } catch {
                 // ignore
               }
             }
+
+            const generationRequestedId = pendingGeneration?.tool.args.workflowId;
+            presentGenerationCall(resolvedRoute, typeof generationRequestedId === 'string' ? generationRequestedId : undefined);
+            sendEvent('tool:result', {
+              callId: evt.result?.id,
+              name: evt.result?.name,
+              result: evt.result?.content,
+            });
 
             if (taskId && typeof taskId === 'string') {
               const task = taskQueue.getTask(taskId);
@@ -1067,27 +1227,33 @@ app.post('/api/chat', async (req, res) => {
                   taskQueue.setGenPrefs(task.id, reqRatio, reqSize);
                 }
                 activityRegistry.attachTask(sid, task.id);
-                sessionTasks.set(task.id, task);
+                const responseTask = taskForResponse(task, responsePolicy);
+                sessionTasks.set(task.id, responseTask);
                 activeTaskCount++;
-                sendEvent('task:queued', { taskId: task.id, position: 1, task });
+                sendEvent('task:queued', { taskId: task.id, position: 1, task: responseTask });
 
                 const unsub = taskQueue.subscribeTask(task.id, (tEvt, updatedTask) => {
                   if (tEvt === 'updated') {
                     const activeStage =
                       updatedTask.stages.find((s) => s.status === 'active') ||
                       updatedTask.stages[updatedTask.stages.length - 1];
-                    sessionTasks.set(updatedTask.id, updatedTask);
+                    const responseTask = taskForResponse(updatedTask, responsePolicy);
+                    sessionTasks.set(updatedTask.id, responseTask);
                     sendEvent('task:progress', {
                       taskId: updatedTask.id,
                       stage: activeStage?.name || 'Processing',
                       step: activeStage?.step ?? 0,
                       total: activeStage?.totalSteps ?? 0,
                       percent: activeStage?.progress ?? 0,
-                      task: updatedTask,
+                      task: responseTask,
                     });
                   } else if (tEvt === 'completed') {
-                    sessionTasks.set(updatedTask.id, updatedTask);
+                    const responseTask = taskForResponse(updatedTask, responsePolicy);
+                    sessionTasks.set(updatedTask.id, responseTask);
                     activeTaskCount--;
+                    if (responseProtocol && responseSpec && responseArgs) {
+                      emitResponseBlocks('complete', contextFor(responseSpec, responseArgs, responseRoute, updatedTask, 'completed'));
+                    }
                     if (updatedTask.outputs) {
                       for (const out of updatedTask.outputs) {
                         sendEvent('task:artifact', {
@@ -1098,15 +1264,19 @@ app.post('/api/chat', async (req, res) => {
                         });
                       }
                     }
-                    sendEvent('task:completed', { taskId: updatedTask.id, task: updatedTask });
+                    sendEvent('task:completed', { taskId: updatedTask.id, task: responseTask });
                     cleanupAndEnd();
                   } else if (tEvt === 'failed' || tEvt === 'canceled') {
-                    sessionTasks.set(updatedTask.id, updatedTask);
+                    const responseTask = taskForResponse(updatedTask, responsePolicy);
+                    sessionTasks.set(updatedTask.id, responseTask);
                     activeTaskCount--;
+                    if (responseProtocol && responseSpec && responseArgs) {
+                      emitResponseBlocks('complete', contextFor(responseSpec, responseArgs, responseRoute, updatedTask, tEvt === 'failed' ? 'failed' : 'canceled'));
+                    }
                     sendEvent(tEvt === 'failed' ? 'task:failed' : 'task:canceled', {
                       taskId: updatedTask.id,
                       error: updatedTask.error,
-                      task: updatedTask,
+                      task: responseTask,
                     });
                     cleanupAndEnd();
                   }
@@ -1125,9 +1295,16 @@ app.post('/api/chat', async (req, res) => {
         sendEvent('agent:error', { error: err.message || String(err) });
       }
     } finally {
+      const pending = pendingGeneration as { tool: NonNullable<AgentStreamEvent['tool']> } | null;
+      const pendingWorkflowId = pending?.tool.args.workflowId;
+      presentGenerationCall(undefined, typeof pendingWorkflowId === 'string' ? pendingWorkflowId : undefined);
+      flushThinking();
       agentDone = true;
       // Agent 正文回复已结束。生成任务可能仍在进行，SSE 流保持打开以推送任务进度；
       // 前端据此停止对话气泡内的打字光标（agent:end 要等所有任务完成才发出，太晚）。
+      if (responseProtocol && responseSpec && responseArgs) {
+        emitResponseBlocks('always', contextFor(responseSpec, responseArgs, responseRoute, undefined, 'submitted'));
+      }
       sendEvent('agent:reply_done', { sessionId: sid });
       cleanupAndEnd();
     }

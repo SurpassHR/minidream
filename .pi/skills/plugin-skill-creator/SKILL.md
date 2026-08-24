@@ -1,6 +1,6 @@
 ---
 name: plugin-skill-creator
-description: 为工作流插件生成 SKILL.md：根据插件 manifest 的输入、可控制参数（类型与 description）与输出，编写 LLM 可直接使用的插件使用说明。
+description: 为工作流插件生成 SKILL.md：根据插件 manifest 的输入、可控制参数（类型与 description）与输出，编写 LLM 可直接使用的插件使用说明；回复布局由独立 response.json 管理。
 ---
 
 # Plugin Skill Creator
@@ -10,7 +10,7 @@ description: 为工作流插件生成 SKILL.md：根据插件 manifest 的输入
 ## 严禁
 
 - **不要**生成 prompt 模板、场景描述、画面结构分析或其他创意内容。
-- **不要**生成 YAML/TOML/JSON 配置格式。
+- **不要**在正文生成 YAML/TOML/JSON 配置；唯一允许的 YAML 是输出模板要求的 frontmatter 及其中受限的 `response` 字段。
 - **不要**输出 Markdown 表格（`| col | col |` 格式）——所有列表项必须用 `- ` 开头的无序列表。
 - **不要**输出 Markdown 代码围栏（```）。
 - **不要**输出任何解释、分析、开场白、问候语或结尾语。
@@ -27,6 +27,12 @@ description: 为工作流插件生成 SKILL.md：根据插件 manifest 的输入
   "id": "image_krea2_turbo_t2i",        // 插件 ID，必须用作 frontmatter 的 name
   "name": "插件名称",
   "description": "插件用途描述",          // 用作 frontmatter 的 description
+  "responseProtocol": {                    // 兼容旧版 Skill frontmatter；新布局由 response.json 编辑器管理
+    "thinking": ["hidden", "collapsed", "visible"],
+    "prompt": ["hidden", "visible"],
+    "route": ["hidden", "visible"],
+    "result": "outside-bubble"
+  },
   "inputs": [                            // 工作流输入
     { "kind": "text|image|video", "label": "提示词", "primary": true, "required": true,
       "defaultValue": "可选，模板内置值", "description": "可选，用途说明" }
@@ -48,8 +54,12 @@ description: 为工作流插件生成 SKILL.md：根据插件 manifest 的输入
 ## 生成规则
 
 1. **过滤**：只保留 `!hidden && llm !== false` 的输入/参数/输出；`hidden` 或 `llm === false` 的项一律不出现。
-2. **frontmatter**：只有 `name` 和 `description` 两个字段，`name` 为插件 `id`，`description` 为插件用途（截断到 100 字符内）。**不要添加 `id`、`displayName` 等额外字段。**
-3. **正文结构**：`# 插件名` → 生成标记行 → `## 用途` → `## 输入` → `## 可控制参数` → `## 输出` → `## 使用规则`。章节顺序固定，不要调换。
+2. **frontmatter**：包含 `name`、`description` 和受限的 `response` 配置，`name` 为插件 `id`，`description` 为插件用途（截断到 100 字符内）。不要添加 `id`、`displayName` 等额外字段。`response` 必须逐字使用以下默认值，除非用户明确要求自定义插件回复展示：
+   - `thinking`: `hidden`、`collapsed` 或 `visible`
+   - `prompt`: `hidden` 或 `visible`
+   - `route`: `hidden` 或 `visible`
+   - `result`: 固定为 `outside-bubble`
+3. **正文结构**：`# 插件名` → 生成标记行 → `## 用途` → `## 输入` → `## 可控制参数` → `## 输出` → `## 回复协议` → `## 使用规则`。章节顺序固定，不要调换。
 4. **列表格式**：所有 `## 输入`、`## 可控制参数`、`## 输出`、`## 使用规则` 下的内容**必须用 `- ` 开头的无序列表**，严禁使用表格。
 5. **参数标注**：每个参数给出 `id`（反引号）、类型中文名（INT=整数、FLOAT=浮点数、BOOLEAN=布尔、SEED=随机种子、STRING=文本、combo=下拉选项）、默认值、范围（min ~ max 与步长）、combo 有限选项、多选/每项可调强度、applyTo 联动（"同时作用于节点 X、Y"）；**逐字保留用户填写的 `description`**。
 6. **使用规则推导**：只从 manifest 中的 inputs/params/output 推导，不要凭通用知识补充。
@@ -57,7 +67,8 @@ description: 为工作流插件生成 SKILL.md：根据插件 manifest 的输入
    - 有必传图像/视频输入 → "必须按顺序传入 N 张参考图（`generation.submit` 的 `images` 参数）" 等。
    - 无特殊要求 → "按提示词直接生成即可，无额外素材要求。"
 7. **忠实**：只描述输入数据中真实存在的参数，不得凭通用知识补充 steps/cfg/seed 等未配置的参数；不得虚构默认值、选项或联动。
-8. **输出格式**：只输出 markdown 本身，不要任何解释、开场白或结尾语。输出的第一行必须是 `---`（YAML frontmatter 起始），最后一行必须是 `## 使用规则` 下的具体规则内容。
+8. **回复协议说明**：`## 回复协议` 只说明 Agent 的正文语义和禁止的无意义状态句；不要把它当作前端机器配置，也不要生成 response.json。用户可编辑的回复块、占位符、容器、内容格式和显示时机由工作台独立保存到 `response.json`；生成产物必须由工作台放在气泡外展示。
+9. **输出格式**：只输出 markdown 本身，不要任何解释、开场白或结尾语。输出的第一行必须是 `---`（YAML frontmatter 起始），最后一行必须是 `## 使用规则` 下的具体规则内容。
 
 ## 输出模板
 
@@ -67,6 +78,11 @@ description: 为工作流插件生成 SKILL.md：根据插件 manifest 的输入
 ---
 name: [插件 id]
 description: [插件用途，≤100 字符]
+response:
+  thinking: [hidden|collapsed|visible]
+  prompt: [hidden|visible]
+  route: [hidden|visible]
+  result: outside-bubble
 ---
 
 # [插件名]
@@ -94,6 +110,11 @@ description: [插件用途，≤100 字符]
 - **[label]**（[图像/视频/文本]）
   - [description，无则省略此行]
 
+## 回复协议
+
+- [说明 Agent 正文规则和无意义状态句约束；不要虚构 response.json 字段]
+- 生成的图像、视频或其他产物始终在工作台气泡外展示。
+
 ## 使用规则
 
 - [按输入推导的规则]
@@ -109,6 +130,11 @@ description: [插件用途，≤100 字符]
 ---
 name: image_krea2_turbo_t2i
 description: 文生图工作流
+response:
+  thinking: collapsed
+  prompt: visible
+  route: visible
+  result: outside-bubble
 ---
 
 # 文生图工作流
@@ -140,6 +166,11 @@ description: 文生图工作流
 ## 输出
 
 - **Preview Image**（图像）
+
+## 回复协议
+
+- 思维链以可折叠区域展示，最终 prompt 和路由由工作台结构化展示；不要输出无意义状态句。
+- 生成的图像始终在工作台气泡外展示。
 
 ## 使用规则
 

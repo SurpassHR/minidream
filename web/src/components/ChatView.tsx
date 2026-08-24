@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import { openDraftLocation, type ChatMessage, type ChatStage, type GenerationOutput, type TaskItem, type ActionCardData, type WorkflowRoute } from '../api';
+import { openDraftLocation, type ChatMessage, type ChatStage, type GenerationOutput, type TaskItem, type ActionCardData, type WorkflowRoute, type ResponseBlock } from '../api';
 import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 
 /* ==================== 工具函数 ==================== */
@@ -39,14 +39,20 @@ function ThinkingChain({
   thinking,
   durationMs,
   live,
+  display = 'collapsed',
 }: {
   thinking: string;
   durationMs?: number;
   live: boolean;
+  display?: 'collapsed' | 'visible';
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(display === 'visible');
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef(Date.now());
+
+  useEffect(() => {
+    setExpanded(display === 'visible');
+  }, [display]);
 
   useEffect(() => {
     if (!live) return;
@@ -92,6 +98,39 @@ function ThinkingChain({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ResponseBlockView({ block }: { block: ResponseBlock }) {
+  const content = block.format === 'code' ? (
+    <pre className="response-block-code" data-language={block.language}><code>{block.content}</code></pre>
+  ) : block.format === 'markdown' ? (
+    <MarkdownContent content={block.content} />
+  ) : (
+    <div className="response-block-plain">{block.content}</div>
+  );
+
+  if (block.container === 'collapsible') {
+    return (
+      <details className="response-block response-block-collapsible" open={block.defaultOpen}>
+        <summary>{block.label || (block.type === 'thinking' ? '深度思考过程' : '回复内容')}</summary>
+        <div className="response-block-content">{content}</div>
+      </details>
+    );
+  }
+  return (
+    <div className="response-block response-block-text">
+      {block.label && <div className="response-block-label">{block.label}</div>}
+      {content}
+    </div>
+  );
+}
+
+function ResponseBlocksView({ blocks }: { blocks: ResponseBlock[] }) {
+  return (
+    <div className="response-blocks">
+      {blocks.map(block => <ResponseBlockView key={block.id} block={block} />)}
     </div>
   );
 }
@@ -450,6 +489,12 @@ function AssistantMessageBody({
 }) {
   // 1. 新流式架构属性
   const hasThinking = Boolean(message.thinking && message.thinking.length > 0);
+  const thinkingDisplay = message.responsePolicy?.thinking === 'visible' ? 'visible' : 'collapsed';
+  const responseBlocks = message.responseBlocks || [];
+  const hasResponseBlocks = responseBlocks.length > 0;
+  const customResponseActive = message.responseProtocolActive === true;
+  const hasResponseAssistantReply = responseBlocks.some(block => block.type === 'assistant-reply');
+  const hasResponseThinking = responseBlocks.some(block => block.type === 'thinking');
   const hasTasks = Boolean(message.tasks && message.tasks.length > 0);
   const hasRoutes = Boolean(message.routes && message.routes.length > 0);
   const generationPrompts = extractGenerationPrompts(message);
@@ -464,17 +509,20 @@ function AssistantMessageBody({
 
   return (
     <div className="assistant-stages">
+      {hasResponseBlocks && <ResponseBlocksView blocks={responseBlocks} />}
+
       {/* 思考链 (Thinking Chain) */}
-      {hasThinking && (
+      {!customResponseActive && !hasResponseBlocks && !hasResponseThinking && hasThinking && (
         <ThinkingChain
           thinking={message.thinking!}
           durationMs={message.thinkingDurationMs}
           live={live && !message.content && !hasTasks}
+          display={thinkingDisplay}
         />
       )}
 
       {/* 旧版 Thinking 兼容 */}
-      {!hasThinking && legacyThinkingLogs.length > 0 && (
+      {!customResponseActive && !hasResponseBlocks && !hasThinking && legacyThinkingLogs.length > 0 && (
         <div className="thinking-chain">
           <div className="thinking-logs">
             {legacyThinkingLogs.map((log, i) => (
@@ -488,10 +536,10 @@ function AssistantMessageBody({
       )}
 
       {/* 生成提示词预览：在工作流路由和任务状态之前展示 */}
-      {hasGenerationPrompts && <GenerationPromptView prompts={generationPrompts} />}
+      {!customResponseActive && !hasResponseBlocks && hasGenerationPrompts && <GenerationPromptView prompts={generationPrompts} />}
 
       {/* 工作流路由摘要 */}
-      {hasRoutes && <RouteSummaryView routes={message.routes!} />}
+      {!customResponseActive && !hasResponseBlocks && hasRoutes && <RouteSummaryView routes={message.routes!} />}
 
       {/* 动作建议卡片 (Action Cards) */}
       {hasActionCards && (
@@ -503,11 +551,11 @@ function AssistantMessageBody({
       )}
 
       {/* 正文内容 (Markdown 打字机) */}
-      {message.content ? (
+      {message.content && !hasResponseAssistantReply ? (
         <MarkdownContent content={message.content} animate={live} />
       ) : (
         /* 当既没有内容、没有思维链、也没有任务时，在气泡内显示平滑呼吸打字指示器 */
-        !hasThinking && !hasTasks && !legacyThinkingLogs.length && !legacyTaskStage && live && (
+        !customResponseActive && !hasResponseBlocks && !hasThinking && !hasTasks && !legacyThinkingLogs.length && !legacyTaskStage && live && (
           <div className="chat-typing-inline">
             <span className="chat-typing">
               <i />

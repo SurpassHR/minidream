@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { TaskQueue } from '../tasks/queue.js';
 import { buildSpecsCached } from '../workflow.js';
 import { summarizeWorkflowsForLlm } from '../workflow-plugin-api.js';
-import { generatePluginSkill } from '../workflow-skill.js';
+import { PLUGIN_SKILLS_DIR, generatePluginSkill, readPluginSkill } from '../workflow-skill.js';
 import type { JsonRpcRequest, JsonRpcResponse, McpCallToolResult, McpToolDescriptor } from './types.js';
 
 export type WorkflowRouteIntent = 'text_to_image' | 'image_to_image' | 'image_upscale' | 'text_to_video' | 'image_to_video' | 'unknown';
@@ -27,6 +27,8 @@ export interface McpServerOptions {
   isWorkflowEnabled?: (id: string) => boolean;
   /** Agent 是否可轮询生成状态：返回 false 时从工具列表移除 generation.status（进度改由 SSE 推送） */
   isStatusPollingEnabled?: () => boolean;
+  /** 插件 Skill 文件目录；用于读取自定义 Skill，默认仓库 .pi/skills */
+  skillsDir?: string;
 }
 
 export interface McpServerInstance {
@@ -138,6 +140,7 @@ export function createDirectorMCPServer(
 
 export function createMcpServer(options: McpServerOptions): McpServerInstance {
   const { taskQueue, onActivity, isWorkflowEnabled, isStatusPollingEnabled } = options;
+  const skillsDir = options.skillsDir ?? PLUGIN_SKILLS_DIR;
   const workflowEnabled = isWorkflowEnabled ?? (() => true);
   const statusPollingEnabled = isStatusPollingEnabled ?? (() => true);
   let server: http.Server | null = null;
@@ -180,7 +183,7 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
           };
         }
         return {
-          content: [{ type: 'text', text: generatePluginSkill(spec) }],
+          content: [{ type: 'text', text: readPluginSkill(spec.id, skillsDir) ?? generatePluginSkill(spec) }],
         };
       }
 

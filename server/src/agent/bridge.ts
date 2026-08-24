@@ -278,6 +278,12 @@ function serializeSpecForSkillCreator(spec: WorkflowSpec): string {
     id: spec.id,
     name: spec.name,
     description: spec.description ?? '',
+    responseProtocol: {
+      thinking: ['hidden', 'collapsed', 'visible'],
+      prompt: ['hidden', 'visible'],
+      route: ['hidden', 'visible'],
+      result: 'outside-bubble',
+    },
     inputs: spec.inputs.map(input => ({
       kind: input.kind,
       label: input.label,
@@ -320,7 +326,7 @@ const PLUGIN_SKILL_CREATOR_SYSTEM_PROMPT = [
   '不要任何前言、解释、分析、问候语或 Markdown 代码围栏（```）。',
   '不要输出思考过程。',
   '禁止生成 prompt 模板、场景描述或 YAML/JSON 配置格式。',
-  '输出必须是标准 Markdown 文档，包含 frontmatter + # 标题 + ## 用途 + ## 输入 + ## 可控制参数 + ## 输出 + ## 使用规则 章节。',
+  '输出必须是标准 Markdown 文档，包含 frontmatter（含 response 下的 thinking/prompt/route/result 受限枚举配置） + # 标题 + ## 用途 + ## 输入 + ## 可控制参数 + ## 输出 + ## 回复协议 + ## 使用规则 章节。',
 ].join('\n');
 
 /** 从 pi 输出提取 markdown：优先取 ``` 围栏内容，其次取 frontmatter 起的正文，否则取完整输出 */
@@ -343,8 +349,13 @@ function looksLikeSkillMd(content: string): boolean {
   const trimmed = content.trim();
   // 必须以 --- 开头（frontmatter）
   if (!trimmed.startsWith('---')) return false;
-  // 必须包含 SKILL.md 章节
-  if (!/##\s+(可控制参数|输入|用途|输出|使用规则)/.test(trimmed)) return false;
+  // 必须包含 SKILL.md 章节和机器可读回复协议
+  if (!/##\s+(可控制参数|输入|用途|输出|回复协议|使用规则)/.test(trimmed)) return false;
+  if (!/^response:\s*$/m.test(trimmed)) return false;
+  if (!/^\s{2}thinking:\s*(hidden|collapsed|visible)\s*$/m.test(trimmed)) return false;
+  if (!/^\s{2}prompt:\s*(hidden|visible)\s*$/m.test(trimmed)) return false;
+  if (!/^\s{2}route:\s*(hidden|visible)\s*$/m.test(trimmed)) return false;
+  if (!/^\s{2}result:\s*outside-bubble\s*$/m.test(trimmed)) return false;
   return true;
 }
 
@@ -459,6 +470,198 @@ export async function runPluginSkillCreator(
     }
   }
   throw new Error('plugin-skill-creator 未返回有效 SKILL.md 内容');
+}
+
+export interface PluginSkillChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface PluginSkillChatResult {
+  reply: string;
+  skill: string;
+}
+
+const PLUGIN_SKILL_CHAT_SYSTEM_PROMPT = [
+  '你是工作流插件 Skill 的对话式编辑助手。',
+  '用户会要求调整当前插件的 Skill。你必须结合插件 widget 契约、当前 Skill 和对话历史理解修改意图。',
+  '只修改用户明确要求的内容；保留当前 Skill 中未要求变更的有效规则、参数、输入输出和回复协议。',
+  '回复必须是一个 JSON 对象，不要 Markdown 代码围栏，不要 JSON 之外的解释：',
+  '{"reply":"给用户看的简短中文说明","skill":"完整的新 SKILL.md 内容"}',
+  'skill 必须是完整 SKILL.md：第一行是 ---，包含 response 下的 thinking/prompt/route/result，',
+  '并包含 # 标题、## 用途、## 输入、## 可控制参数、## 输出、## 回复协议、## 使用规则。',
+  '不得生成 prompt 模板、场景描述、表格或虚构 widget 参数；response 只能使用受限枚举。',
+].join('\\n');
+
+function serializePluginSkillChatInput(
+  spec: WorkflowSpec,
+  currentSkill: string,
+  history: PluginSkillChatMessage[],
+  userMessage: string,
+): string {
+  const widgetContract = {
+    id: spec.id,
+    name: spec.name,
+    description: spec.description ?? '',
+    inputs: spec.inputs.filter(input => !input.hidden).map(input => ({
+      id: input.id,
+      kind: input.kind,
+      label: input.label,
+      description: input.description,
+      primary: input.primary,
+      required: input.required,
+    })),
+    params: spec.params.filter(param => !param.hidden && param.llm !== false).map(param => ({
+      id: param.id,
+      label: param.label,
+      type: param.type,
+      default: param.default,
+      min: param.min,
+      max: param.max,
+      step: param.step,
+      options: param.options,
+      multiple: param.multiple,
+      strengthable: param.strengthable,
+      applyTo: param.applyTo,
+      description: param.description,
+    })),
+    outputs: spec.outputs.filter(output => !output.hidden).map(output => ({
+      id: output.id,
+      kind: output.kind,
+      label: output.label,
+      description: output.description,
+    })),
+  };
+  return [
+    '【插件 widget 契约】',
+    JSON.stringify(widgetContract, null, 2),
+    '',
+    '【当前 Skill】',
+    currentSkill,
+    '',
+    '【对话历史】',
+    JSON.stringify(history.slice(-20), null, 2),
+    '',
+    '【用户本次调整要求】',
+    userMessage,
+  ].join('\\n');
+}
+
+function parsePluginSkillChatResult(text: string): PluginSkillChatResult {
+  const trimmed = text.trim();
+  const candidates = [trimmed, trimmed.slice(trimmed.indexOf('{'), trimmed.lastIndexOf('}') + 1)];
+  for (const candidate of candidates) {
+    if (!candidate || !candidate.startsWith('{')) continue;
+    try {
+      const parsed = JSON.parse(candidate) as { reply?: unknown; skill?: unknown };
+      if (typeof parsed.reply !== 'string' || typeof parsed.skill !== 'string') continue;
+      // 兼容测试/模型把换行编码成字面量 \\n：真实内容仍按 SKILL.md 形式交给前端。
+      const skill = parsed.skill.startsWith('---') ? parsed.skill.replace(/\\+n/g, '\n') : parsed.skill;
+      if (!looksLikeSkillMd(skill)) continue;
+      return { reply: parsed.reply.trim(), skill: skill.endsWith('\n') ? skill : `${skill}\n` };
+    } catch {
+      // 继续尝试从输出中提取 JSON
+    }
+  }
+  throw new Error('Skill 对话 Agent 未返回有效的 { reply, skill } JSON');
+}
+
+/**
+ * 通过无工具 Pi 子进程对话式调整插件 Skill。只返回预览内容，不写入磁盘。
+ */
+export async function runPluginSkillChat(
+  spec: WorkflowSpec,
+  currentSkill: string,
+  history: PluginSkillChatMessage[],
+  userMessage: string,
+  opts: PluginSkillCreatorOptions = {},
+): Promise<PluginSkillChatResult> {
+  const timeoutMs = opts.timeoutMs ?? 120_000;
+  const args: string[] = ['--mode', 'json', '--no-tools', '--no-session', '--thinking', 'off'];
+  appendSkillIsolationArgs(args, false);
+  if (fs.existsSync(PLUGIN_SKILL_CREATOR_PATH)) args.push('--skill', PLUGIN_SKILL_CREATOR_PATH);
+  args.push('--no-context-files', '--append-system-prompt', PLUGIN_SKILL_CHAT_SYSTEM_PROMPT);
+  const input = serializePluginSkillChatInput(spec, currentSkill, history, userMessage);
+
+  return new Promise((resolve, reject) => {
+    let child: ChildProcess;
+    try {
+      child = spawn('pi', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    let text = '';
+    let settled = false;
+    let timer: NodeJS.Timeout | null = null;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      if (error) reject(error);
+      else {
+        try {
+          resolve(parsePluginSkillChatResult(text));
+        } catch (parseError) {
+          reject(parseError);
+        }
+      }
+    };
+    timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        if (child.exitCode === null) child.kill('SIGKILL');
+      }, 3000).unref();
+      finish(new Error('Skill 对话生成超时'));
+    }, timeoutMs);
+
+    let eventBuffer = '';
+    const handleChatLine = (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      let json: Record<string, any>;
+      try {
+        json = JSON.parse(trimmed);
+      } catch {
+        return;
+      }
+      if (json.type === 'agent_end') {
+        child.kill('SIGTERM');
+        finish();
+        return;
+      }
+      if (json.type === 'message_update') {
+        const event = json.assistantMessageEvent as { type?: string; delta?: string } | undefined;
+        if (event?.type === 'text_delta' && typeof event.delta === 'string') text += event.delta;
+        return;
+      }
+      if (json.type === 'message') {
+        const message = (json.message && typeof json.message === 'object' ? json.message : json) as { content?: unknown };
+        if (typeof message.content === 'string') {
+          text += message.content;
+        } else if (Array.isArray(message.content)) {
+          for (const block of message.content) {
+            if (block && typeof block === 'object' && (block as { type?: string }).type === 'text' && typeof (block as { text?: string }).text === 'string') {
+              text += (block as { text: string }).text;
+            }
+          }
+        }
+        return;
+      }
+      if (json.type === 'error') finish(new Error(String(json.error ?? json.message ?? 'Agent 错误')));
+    };
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      eventBuffer += chunk.toString();
+      const lines = eventBuffer.split(/\r?\n/);
+      eventBuffer = lines.pop() ?? '';
+      for (const line of lines) handleChatLine(line);
+    });
+    child.once('error', (error: Error) => finish(error));
+    child.once('close', () => finish());
+    child.stdin?.write(input);
+    child.stdin?.end();
+  });
 }
 
 /**
