@@ -16,7 +16,7 @@
   - MCP 工具增减或入参/返回值结构变化（`workflow.list`、`generation.submit` 等）
   - 工作流插件/映射契约变化（params/inputs/outputs、`llm` 字段、combo 配置归属等）
   - 路由规则变化（如参考图 + 放大意图确定性路由到 SeedVR2）
-  - 提示词注入/对话历史机制变化（虚构历史、参考图片命名等）
+  - 提示词注入/对话历史机制变化（虚构历史、会话素材 `@imageN`/`@videoN` 命名等）
   - 插件 Skill 回复协议变化（`response.thinking`、`response.prompt`、`response.route`、`response.result` 及其结构化事件过滤）
 - 系统提示词（`server/src/index.ts` 的 `agentSystemPrompt`）只保留无法归入 skill 的运行时行为，并引用 skill；不要在两侧重复堆叠同一规则
 

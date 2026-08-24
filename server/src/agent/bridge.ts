@@ -218,13 +218,13 @@ export function buildAgentInput(
         message: string;
         sessionId?: string;
         images?: Array<string | { name?: string; dataUrl?: string; filename?: string }>;
-        videos?: Array<string | { name?: string; dataUrl?: string }>;
+        videos?: Array<string | { name?: string; dataUrl?: string; filename?: string }>;
         context?: string;
       },
   options: {
     sessionId?: string;
     images?: Array<string | { name?: string; dataUrl?: string; filename?: string }>;
-    videos?: Array<string | { name?: string; dataUrl?: string }>;
+    videos?: Array<string | { name?: string; dataUrl?: string; filename?: string }>;
     context?: string;
   } = {}
 ): string {
@@ -245,8 +245,8 @@ export function buildAgentInput(
         .map((img, i) => {
           const obj = typeof img === 'string' ? null : img;
           const name = obj?.name || '';
-          // 前端以 @图像N 提及的图片自动命名为「图像N」，这里用同一标识，便于 Agent 将指令中的 @图像N 与文件对应
-          const label = name.startsWith('图像') ? name : `Image ${i + 1}`;
+          // 会话素材使用 imageN/videoN 名称，便于 Agent 将用户指令中的 @ 名称与文件对应。
+          const label = name || `image${i + 1}`;
           // 优先展示已上传到 ComfyUI 的真实文件名（Agent 提交时按序传入）
           const shown = typeof img === 'string' ? img : obj?.filename || name || `image${i + 1}`;
           return `[${label}]: ${shown}`;
@@ -258,7 +258,7 @@ export function buildAgentInput(
     parts.push(
       `【参考视频】\n${opts.videos
         .map((vid, i) =>
-          `[Video ${i + 1}]: ${typeof vid === 'string' ? vid : vid.name || 'video' + (i + 1)}`
+          `[${typeof vid === 'string' ? `video${i + 1}` : vid.name || `video${i + 1}`}]: ${typeof vid === 'string' ? vid : vid.filename || vid.name || `video${i + 1}`}`
         )
         .join('\n')}`
     );

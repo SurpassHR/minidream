@@ -154,19 +154,18 @@ export const mcpServer: McpServerInstance = createDirectorMCPServer(
 );
 
 /**
- * 把聊天请求携带的图片素材（data URL）预上传到 ComfyUI input 目录。
- * 返回 { name, filename } 列表：name 保留前端引用名（图像N，供 Agent 与用户指令中的 @图像N 对应），
- * filename 为上传到 ComfyUI 的文件名（供 generation.submit 使用）。
- * ComfyUI 未连接或上传失败时回退为原文件名（Agent 无法引用，但不中断对话）。
+ * 把聊天请求携带的图像/视频素材预上传到 ComfyUI input 目录。
+ * name 是会话素材栏使用的 imageN/videoN，filename 是 Agent 提交任务时使用的文件名。
  */
-async function uploadChatImages(
-  images: unknown,
+async function uploadChatMedia(
+  kind: 'image' | 'video',
+  items: unknown,
 ): Promise<Array<{ name: string; filename: string }>> {
-  if (!Array.isArray(images)) return [];
+  if (!Array.isArray(items)) return [];
   const result: Array<{ name: string; filename: string }> = [];
-  for (let i = 0; i < images.length; i++) {
-    const item = images[i] as { name?: string; dataUrl?: string } | string | undefined;
-    const fallback = `image${i + 1}`;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i] as { name?: string; dataUrl?: string } | string | undefined;
+    const fallback = `${kind}${i + 1}`;
     if (typeof item === 'string') {
       result.push({ name: item, filename: item });
       continue;
@@ -186,9 +185,11 @@ async function uploadChatImages(
       result.push({ name, filename: name });
       continue;
     }
-    const ext = name.includes('.') ? (name.split('.').pop() ?? 'png') : 'png';
+    const ext = name.includes('.')
+      ? (name.split('.').pop() ?? (kind === 'image' ? 'png' : 'mp4'))
+      : (kind === 'image' ? 'png' : 'mp4');
     try {
-      const upRes = await uploadFile('image', `chat-${Date.now()}-${i}.${ext}`, Buffer.from(parsed[2] ?? '', 'base64'));
+      const upRes = await uploadFile(kind, `chat-${Date.now()}-${i}.${ext}`, Buffer.from(parsed[2] ?? '', 'base64'));
       result.push({ name, filename: upRes.subfolder ? `${upRes.subfolder}/${upRes.name}` : upRes.name });
     } catch {
       result.push({ name, filename: name });
@@ -1098,12 +1099,13 @@ app.post('/api/chat', async (req, res) => {
       typeof req.body?.size === 'number' && Number.isFinite(req.body.size) && req.body.size > 0
         ? req.body.size
         : undefined;
-    // 预上传请求携带的图片到 ComfyUI，把「图像N 名 + 上传文件名」暴露给 Agent，使其能用于图生图/图像放大
-    const chatImages = await uploadChatImages(req.body?.images);
+    // 预上传用户 @ 提及的会话素材，把素材名与 ComfyUI 文件名暴露给 Agent。
+    const chatImages = await uploadChatMedia('image', req.body?.images);
+    const chatVideos = await uploadChatMedia('video', req.body?.videos);
     const agentInput = buildAgentInput({
       message: message.trim(),
       images: chatImages.length > 0 ? chatImages : undefined,
-      videos: Array.isArray(req.body?.videos) ? req.body.videos : undefined,
+      videos: chatVideos.length > 0 ? chatVideos : undefined,
     });
     const agentSystemPrompt = [
       '你运行在「导演工作台」中。生成结果（图片/视频）会自动展示在用户界面中，',
@@ -1115,7 +1117,7 @@ app.post('/api/chat', async (req, res) => {
       '不要在正文中输出“正在适配工作流”“正在提交任务”“生成中”等无意义状态句；工具调用和任务进度由界面结构化处理。',
       '每次用户请求最多调用一次 generation.submit；提交成功后不要重复提交相同任务。',
       '如果生成进度由界面事件流自动展示，不要调用 generation.status 轮询。',
-      '若用户指令中以 @图像N 提及参考图片（【参考图片】中 [图像N] 即对应文件），图生图/图生视频时必须按序传入对应文件名。',
+      '若用户指令中以 @imageN 或 @videoN 提及会话素材（【参考图片】/【参考视频】中对应名称），图生图/图生视频时必须按序传入对应文件名。',
       '图像放大/超分/高清化必须使用带参考图的 SeedVR2 图像放大工作流；后端会对参考图与放大意图执行确定性路由。',
     ].join('\n');
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchGenerateData,
   sendChatStream,
@@ -35,21 +35,13 @@ import {
 import Rail from './components/Rail';
 import Sidebar, { type Conversation } from './components/Sidebar';
 import SettingsModal from './components/SettingsModal';
-import Composer, { type ComposerSubmitOpts, type ComposerHandle } from './components/Composer';
+import Composer, { type ComposerSubmitOpts } from './components/Composer';
 import ChatView from './components/ChatView';
 import ActivityPanel from './components/ActivityPanel';
 import DraftsView from './components/DraftsView';
+import SessionAssetsPanel from './components/SessionAssetsPanel';
+import { extractSessionAssets } from './sessionAssets';
 import './App.css';
-
-/** Blob → data URL（引用会话内生成的图片时复用） */
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-}
 
 function mergeActivityEvent(snapshot: ActivitySnapshot, event: ActivityStreamEvent): ActivitySnapshot {
   if (event.type === 'snapshot') return event.snapshot;
@@ -279,6 +271,7 @@ export default function App() {
   const [workflows, setWorkflows] = useState<WorkflowSpec[]>([]);
   const [comfyStatus, setComfyStatus] = useState<ComfyStatus | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const sessionAssets = useMemo(() => extractSessionAssets(messages), [messages]);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme');
     const t: 'light' | 'dark' =
@@ -291,7 +284,6 @@ export default function App() {
     return t;
   });
   const chatRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<ComposerHandle>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const sessionEventUnsubscribeRef = useRef<(() => void) | null>(null);
   /** 当前展示的会话（ref 同步，供流式回调判断事件归属，避免闭包读到旧值） */
@@ -713,28 +705,6 @@ export default function App() {
     });
   };
 
-  /** 引用会话内已生成的图片到输入框：拉取原图 → dataUrl → 注入 Composer 附件 */
-  const handleCiteImage = useCallback(async ({ url, alt }: { url: string; alt: string }) => {
-    try {
-      let dataUrl = url;
-      if (!url.startsWith('data:')) {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        dataUrl = await blobToDataUrl(await res.blob());
-      }
-      composerRef.current?.addAttachment({
-        kind: 'image',
-        name: alt || '引用图片',
-        dataUrl,
-        url,
-        referenced: true,
-      });
-      composerRef.current?.focus();
-    } catch {
-      // 引用失败（图片已过期或不可达）时静默忽略，不打断用户
-    }
-  }, []);
-
   const handleNewChat = async () => {
     // 中止进行中的流，避免其事件写入新建的空会话
     streamAbortRef.current?.abort();
@@ -887,7 +857,6 @@ export default function App() {
                   onCancelJob={handleCancelJob}
                   onCancelTask={handleCancelTask}
                   onActionCard={handleActionCard}
-                  onCiteImage={handleCiteImage}
                 />
               </div>
             )
@@ -905,9 +874,9 @@ export default function App() {
           )}
           {activeNav === 'generate' && <div className="composer-wrap">
             <Composer
-              ref={composerRef}
               placeholder={data.composer.placeholder}
               composer={data.composer}
+              sessionAssets={sessionAssets}
               value={input}
               onChange={setInput}
               onSubmit={opts => handleSend(undefined, opts)}
@@ -915,6 +884,9 @@ export default function App() {
               disabled={sending}
             />
           </div>}
+          {activeNav === 'generate' && (
+            <SessionAssetsPanel assets={sessionAssets} />
+          )}
         </main>
       </div>
       <SettingsModal

@@ -69,8 +69,8 @@ describe('Agent Bridge', () => {
     });
 
     expect(input).toContain('【上下文信息】\n当前处于科幻故事第一幕');
-    expect(input).toContain('[Image 1]: /uploads/ref1.png');
-    expect(input).toContain('[Image 2]: https://example.com/ref2.jpg');
+    expect(input).toContain('[image1]: /uploads/ref1.png');
+    expect(input).toContain('[image2]: https://example.com/ref2.jpg');
     expect(input).toContain('【用户指令】\n生成一只发光的赛博朋克鹿');
   });
 
@@ -143,28 +143,28 @@ describe('Agent Bridge', () => {
     ]);
   });
 
-  it('buildAgentInput 参考图使用前端 @图像N 命名作为标签', () => {
+  it('buildAgentInput 保留会话素材 imageN 命名作为标签', () => {
     const input = buildAgentInput({
-      message: '用 @图像2 做图生图',
+      message: '用 @image2 做图生图',
       images: [
-        { name: '图像1', dataUrl: 'data:image/png;base64,AAA' },
-        { name: '图像2', dataUrl: 'data:image/png;base64,BBB' },
+        { name: 'image1', dataUrl: 'data:image/png;base64,AAA' },
+        { name: 'image2', dataUrl: 'data:image/png;base64,BBB' },
       ],
     });
 
-    expect(input).toContain('[图像1]: 图像1');
-    expect(input).toContain('[图像2]: 图像2');
-    expect(input).toContain('【用户指令】\n用 @图像2 做图生图');
+    expect(input).toContain('[image1]: image1');
+    expect(input).toContain('[image2]: image2');
+    expect(input).toContain('【用户指令】\n用 @image2 做图生图');
   });
 
-  it('buildAgentInput 展示已上传文件名并保留 @图像N 标签', () => {
+  it('buildAgentInput 展示已上传文件名并保留 @imageN 标签', () => {
     const input = buildAgentInput({
-      message: '放大 @图像1',
-      images: [{ name: '图像1', filename: 'chat-1750000000000-0.png' }],
+      message: '放大 @image1',
+      images: [{ name: 'image1', filename: 'chat-1750000000000-0.png' }],
     });
 
-    expect(input).toContain('[图像1]: chat-1750000000000-0.png');
-    expect(input).toContain('【用户指令】\n放大 @图像1');
+    expect(input).toContain('[image1]: chat-1750000000000-0.png');
+    expect(input).toContain('【用户指令】\n放大 @image1');
   });
 
   it('buildAgentInput 在无上下文和图片时直接输出指令', () => {
