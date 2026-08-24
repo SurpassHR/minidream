@@ -44,16 +44,16 @@ const baseSpec = (over: Partial<WorkflowSpec> = {}): WorkflowSpec => ({
 });
 
 describe('generatePluginSkill', () => {
-  it('包含 frontmatter、自动生成标记和默认回复协议', () => {
+  it('只生成插件上下文，不生成旧版回复协议内容', () => {
     const md = generatePluginSkill(baseSpec());
     expect(md).toMatch(/^---\nname: test_plugin/);
     expect(md).toContain('自动生成');
-    expect(md).toContain('response:');
-    expect(md).toContain('thinking: collapsed');
-    expect(md).toContain('prompt: visible');
-    expect(md).toContain('route: visible');
-    expect(md).toContain('result: outside-bubble');
-    expect(md).toContain('## 回复协议');
+    expect(md).not.toContain('response:');
+    expect(md).not.toContain('thinking: collapsed');
+    expect(md).not.toContain('prompt: visible');
+    expect(md).not.toContain('route: visible');
+    expect(md).not.toContain('result: outside-bubble');
+    expect(md).not.toContain('## 回复协议');
   });
 
   it('只暴露未隐藏且 llm !== false 的输入/参数/输出', () => {

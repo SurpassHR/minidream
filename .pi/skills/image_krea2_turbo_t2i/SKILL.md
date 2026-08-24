@@ -2,11 +2,6 @@
 name: image_krea2_turbo_t2i
 version: 1.0.0
 description: 文生图工作流
-response:
-  thinking: collapsed
-  prompt: visible
-  route: visible
-  result: outside-bubble
 ---
 
 # image_krea2_turbo_t2i
@@ -32,11 +27,6 @@ response:
 ## 输出
 
 - **Preview Image**（图像）：生成的图像预览。
-
-## 回复协议
-
-- 用户可在回复协议编辑器中配置思维链、widget 值、提示词、路由和结果摘要的显示方式；不要自行重复结构化展示内容。
-- 回复协议支持普通文本、可折叠容器、Markdown 和代码块组合；不输出无意义的生成状态句，生成的图像始终在对话气泡外展示。
 
 ## 使用规则
 

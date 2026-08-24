@@ -5,6 +5,7 @@ import remarkBreaks from 'remark-breaks';
 import { openDraftLocation, type ChatMessage, type ChatStage, type GenerationOutput, type TaskItem, type ActionCardData, type WorkflowRoute, type ResponseBlock } from '../api';
 import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 import { getTaskMediaAspectRatio, getTaskMediaLayoutClass } from '../taskMediaRatio';
+import { shouldRenderLegacyAssistantContent } from '../responseDisplay';
 
 /* ==================== 工具函数 ==================== */
 
@@ -512,7 +513,6 @@ function AssistantMessageBody({
   const responseBlocks = message.responseBlocks || [];
   const hasResponseBlocks = responseBlocks.length > 0;
   const customResponseActive = message.responseProtocolActive === true;
-  const hasResponseAssistantReply = responseBlocks.some(block => block.type === 'assistant-reply');
   const hasResponseThinking = responseBlocks.some(block => block.type === 'thinking');
   const hasTasks = Boolean(message.tasks && message.tasks.length > 0);
   const hasRoutes = Boolean(message.routes && message.routes.length > 0);
@@ -570,7 +570,7 @@ function AssistantMessageBody({
       )}
 
       {/* 正文内容 (Markdown 打字机) */}
-      {message.content && !hasResponseAssistantReply ? (
+      {shouldRenderLegacyAssistantContent(message.content, customResponseActive, hasResponseBlocks) ? (
         <MarkdownContent content={message.content} animate={live} />
       ) : (
         /* 当既没有内容、没有思维链、也没有任务时，在气泡内显示平滑呼吸打字指示器 */

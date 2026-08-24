@@ -278,12 +278,6 @@ function serializeSpecForSkillCreator(spec: WorkflowSpec): string {
     id: spec.id,
     name: spec.name,
     description: spec.description ?? '',
-    responseProtocol: {
-      thinking: ['hidden', 'collapsed', 'visible'],
-      prompt: ['hidden', 'visible'],
-      route: ['hidden', 'visible'],
-      result: 'outside-bubble',
-    },
     inputs: spec.inputs.map(input => ({
       kind: input.kind,
       label: input.label,
@@ -326,7 +320,7 @@ const PLUGIN_SKILL_CREATOR_SYSTEM_PROMPT = [
   '不要任何前言、解释、分析、问候语或 Markdown 代码围栏（```）。',
   '不要输出思考过程。',
   '禁止生成 prompt 模板、场景描述或 YAML/JSON 配置格式。',
-  '输出必须是标准 Markdown 文档，包含 frontmatter（含 response 下的 thinking/prompt/route/result 受限枚举配置） + # 标题 + ## 用途 + ## 输入 + ## 可控制参数 + ## 输出 + ## 回复协议 + ## 使用规则 章节。',
+  '输出必须是标准 Markdown 文档，包含只含 name/description 的 frontmatter + # 标题 + ## 用途 + ## 输入 + ## 可控制参数 + ## 输出 + ## 使用规则 章节。不要生成 response frontmatter 或 ## 回复协议 章节。',
 ].join('\n');
 
 /** 从 pi 输出提取 markdown：优先取 ``` 围栏内容，其次取 frontmatter 起的正文，否则取完整输出 */
@@ -349,13 +343,9 @@ function looksLikeSkillMd(content: string): boolean {
   const trimmed = content.trim();
   // 必须以 --- 开头（frontmatter）
   if (!trimmed.startsWith('---')) return false;
-  // 必须包含 SKILL.md 章节和机器可读回复协议
-  if (!/##\s+(可控制参数|输入|用途|输出|回复协议|使用规则)/.test(trimmed)) return false;
-  if (!/^response:\s*$/m.test(trimmed)) return false;
-  if (!/^\s{2}thinking:\s*(hidden|collapsed|visible)\s*$/m.test(trimmed)) return false;
-  if (!/^\s{2}prompt:\s*(hidden|visible)\s*$/m.test(trimmed)) return false;
-  if (!/^\s{2}route:\s*(hidden|visible)\s*$/m.test(trimmed)) return false;
-  if (!/^\s{2}result:\s*outside-bubble\s*$/m.test(trimmed)) return false;
+  // 必须包含 Skill 章节，回复协议由独立 response.json 管理
+  if (!/##\s+(可控制参数|输入|用途|输出|使用规则)/.test(trimmed)) return false;
+  if (/^response:\s*$/m.test(trimmed) || /^##\s+回复协议\s*$/m.test(trimmed)) return false;
   return true;
 }
 
@@ -463,9 +453,7 @@ export async function runPluginSkillCreator(
   for (let attempt = 0; attempt < 2; attempt++) {
     const content = await runOnce();
     if (content && looksLikeSkillMd(content)) return content;
-    // 最后一次尝试时仍不符合格式，用错误提示包裹后返回（让调用方决定是否回退自动版）
     if (attempt === 1) {
-      if (content) return content; // 有内容但格式不对，仍然返回让调用方判断
       throw new Error('plugin-skill-creator 未返回有效 SKILL.md 内容');
     }
   }
@@ -488,9 +476,9 @@ const PLUGIN_SKILL_CHAT_SYSTEM_PROMPT = [
   '只修改用户明确要求的内容；保留当前 Skill 中未要求变更的有效规则、参数、输入输出和回复协议。',
   '回复必须是一个 JSON 对象，不要 Markdown 代码围栏，不要 JSON 之外的解释：',
   '{"reply":"给用户看的简短中文说明","skill":"完整的新 SKILL.md 内容"}',
-  'skill 必须是完整 SKILL.md：第一行是 ---，包含 response 下的 thinking/prompt/route/result，',
-  '并包含 # 标题、## 用途、## 输入、## 可控制参数、## 输出、## 回复协议、## 使用规则。',
-  '不得生成 prompt 模板、场景描述、表格或虚构 widget 参数；response 只能使用受限枚举。',
+  'skill 必须是完整 SKILL.md：第一行是 ---，frontmatter 只含 name/description，',
+  '并包含 # 标题、## 用途、## 输入、## 可控制参数、## 输出、## 使用规则。',
+  '不得生成 prompt 模板、场景描述、表格、response frontmatter、## 回复协议 或虚构 widget 参数。',
 ].join('\\n');
 
 function serializePluginSkillChatInput(
