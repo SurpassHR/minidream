@@ -1468,6 +1468,8 @@ export async function buildPrompt(
 
   // 文字输入注入
   const textInputs = spec.inputs.filter(i => i.kind === 'text' && !i.hidden);
+  // 已由提示词注入写入的节点字段：参数循环不得再用默认值覆盖（如 Text Multiline 的 text）
+  const promptInjectedKeys = new Set<string>();
   if (textInputs.length > 0) {
     const text = values.prompt?.trim();
     if (!text) throw new ComfyUIError('请输入提示词后再生成');
@@ -1493,14 +1495,37 @@ export async function buildPrompt(
       const target = scored[0]?.input;
       if (target) prompt[target.nodeId].inputs[target.field] = text;
     }
+  } else {
+    // 无文字输入时兜底：提示词承载节点可能被历史 manifest 误存为 STRING 参数
+    // （如 Text Multiline 的 text 字段），把提示词写入正向承载参数，负向/其它字段不动。
+    // 负向提示词等仍走参数注入（保留模板默认），不会被当作承载目标。
+    const text = values.prompt?.trim();
+    if (text) {
+      const carriers = spec.params.filter(p =>
+        p.bypass !== true &&
+        p.type === 'STRING' &&
+        /^(text|prompt)$/i.test(p.field) &&
+        !/negative|负面|负向|反向|neg/i.test(`${p.label} ${p.description ?? ''}`) &&
+        prompt[p.nodeId]?.inputs,
+      );
+      const target = carriers.find(p => /^prompt$/i.test(p.field)) ?? carriers[0];
+      if (target) {
+        prompt[target.nodeId].inputs[target.field] = text;
+        promptInjectedKeys.add(`${target.nodeId}:${target.field}`);
+      }
+    }
   }
 
   // 上传素材注入
+  const injectedFieldKeys = new Set<string>();
   for (const input of spec.inputs) {
     if (input.kind === 'text') continue;
     const filename = values.uploaded?.[input.id];
     // 被屏蔽的输入节点已从图中移除，直接跳过
-    if (filename && prompt[input.nodeId]?.inputs) prompt[input.nodeId].inputs[input.field] = filename;
+    if (filename && prompt[input.nodeId]?.inputs) {
+      prompt[input.nodeId].inputs[input.field] = filename;
+      injectedFieldKeys.add(`${input.nodeId}:${input.field}`);
+    }
     // 未上传且非必传 → 保留模板默认文件名；必传但未上传 → 前端已拦截
   }
 
@@ -1512,6 +1537,9 @@ export async function buildPrompt(
   const s = values.settings;
   for (const p of spec.params) {
     if (p.bypass) continue; // 节点屏蔽参数不注入节点字段，已在图构建阶段应用
+    // 上传素材或提示词已注入的字段：参数默认值不再覆盖
+    // （如图像 combo 参数不得覆盖用户上传的首帧，Text Multiline 参数不得覆盖注入的提示词）
+    if (injectedFieldKeys.has(`${p.nodeId}:${p.field}`) || promptInjectedKeys.has(`${p.nodeId}:${p.field}`)) continue;
     let v = values.params?.[p.id];
 
     if (v === undefined && s) {

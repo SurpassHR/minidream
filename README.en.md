@@ -2,11 +2,13 @@
 
 <div align="center">
 
-# 🎬 Director Workbench · 导演工作台
+# 🎨 Minidream
 
-**Let AI direct your creations — drive ComfyUI workflows with natural language**
+**A conversational generation Agent — open-sourced on the shoulders of Minimax**
 
-A local-first, all-in-one AI creation platform: a built-in Agent understands your creative intent, automatically selects, orchestrates, and submits ComfyUI workflows (text-to-image / image-to-image / image upscaling / text-to-video / image-to-video), streams real-time generation progress, and archives every artifact into session assets and drafts.
+The name **Minidream** pairs *Mini* with *Dream*: *Mini* comes from **MiniMax** — we build on the shoulders of this open-source giant, with its model ecosystem (MiniMax H3 and friends) as our generation backbone; *Dream* honors the **Seedream** vision of "conversation as generation" — turning ideas naturally into an image or a video, just by chatting.
+
+Minidream is a local-first, free & open-source, all-in-one AI creation platform that packages generation into an Agent that **actually converses**: no need to learn ComfyUI or wire up node graphs — just say what you have in mind like you're talking to a friend, or `@` a reference image. The Agent understands your intent, automatically selects, orchestrates, and submits the right generation workflow (text-to-image / image-to-image / upscaling / text-to-video / image-to-video), streams real-time progress, and turns every artifact into session assets and drafts — so inspiration flows back and forth, conversation after conversation.
 
 </div>
 

@@ -1383,4 +1383,55 @@ describe('workflow 引擎（通用自动适配）', () => {
     const ok = await workflow.buildPrompt(fragileSpec, fragileJson, { params: { 'bypass-1': false } });
     expect(ok['4']).toBeDefined();
   });
+
+  it('buildPrompt：上传素材不被图像 combo 参数默认值覆盖，提示词注入 STRING 承载参数', async () => {
+    // LoadImage(1) + Text Multiline(2) → H3(3) → SaveVideo(4)：镜像 video-minimax-h3-i2v 的真实结构
+    const json = {
+      '1': { class_type: 'LoadImage', inputs: { image: 'first.png' }, _meta: { title: 'First Frame' } },
+      '2': { class_type: 'Text Multiline', inputs: { text: '默认提示词' }, _meta: { title: 'Text Multiline' } },
+      '3': { class_type: 'MiniMaxH3ImageToVideo', inputs: { prompt: ['2', 0], first_frame: ['1', 0], width: 640, height: 640, length: 24 } },
+      '4': { class_type: 'SaveVideo', inputs: { filename_prefix: 'video', video: ['3', 0] } },
+    };
+    const spec: WorkflowSpec = {
+      id: 'i2v',
+      name: 'i2v',
+      inputs: [{ id: 'image-1', kind: 'image', label: '参考图', nodeId: '1', field: 'image', classType: 'LoadImage' }],
+      // image-1 同时是图像输入与 combo 参数；text-2 是误存为参数的提示词承载节点（无 text 输入时兜底注入）
+      params: [
+        { id: 'image-1', label: 'image', nodeId: '1', field: 'image', type: 'combo', default: 'first.png', options: ['first.png'] },
+        { id: 'text-2', label: 'text', nodeId: '2', field: 'text', type: 'STRING', default: '' },
+      ],
+      outputs: [{ id: 'videos-4', kind: 'video', label: '视频', nodeId: '4', classType: 'SaveVideo' }],
+    };
+    const result = await workflow.buildPrompt(spec, json, {
+      prompt: '一个宇航员在太空中拿着黄色橡皮鸭',
+      uploaded: { 'image-1': 'upload-123.png' },
+      // 模拟 queue 的 defaultParams：含图像默认值与空字符串提示词默认
+      params: { 'image-1': 'first.png', 'text-2': '' },
+    });
+    expect(result['1'].inputs.image).toBe('upload-123.png'); // 上传首帧保留
+    expect(result['2'].inputs.text).toBe('一个宇航员在太空中拿着黄色橡皮鸭'); // 提示词注入而非被空串覆盖
+    expect(result['3'].inputs.prompt).toEqual(['2', 0]); // 链接关系保持
+  });
+
+  it('buildPrompt：负向 STRING 参数不被当作提示词载体，保留参数默认', async () => {
+    const json = {
+      '1': { class_type: 'Text Multiline', inputs: { text: '(anime:-1), (cartoon:-1)' }, _meta: { title: '负面提示词' } },
+      '2': { class_type: 'CLIPTextEncode', inputs: { text: ['1', 0], clip: 'clip' } },
+      '3': { class_type: 'SaveImage', inputs: { images: ['2', 0], filename_prefix: 'out' } },
+    };
+    const spec: WorkflowSpec = {
+      id: 'neg',
+      name: 'neg',
+      inputs: [],
+      params: [{ id: 'text-1', label: '负面提示词', nodeId: '1', field: 'text', type: 'STRING', default: '(anime:-1), (cartoon:-1)' }],
+      outputs: [{ id: 'images-3', kind: 'image', label: '图', nodeId: '3', classType: 'SaveImage' }],
+    };
+    const result = await workflow.buildPrompt(spec, json, {
+      prompt: '一只猫',
+      params: { 'text-1': '(anime:-1), (cartoon:-1)' },
+    });
+    // 负向节点不被提示词注入覆盖，参数默认值照常写入
+    expect(result['1'].inputs.text).toBe('(anime:-1), (cartoon:-1)');
+  });
 });

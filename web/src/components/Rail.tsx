@@ -8,44 +8,56 @@ function RailIcon({ id }: { id: string }) {
     height: 20,
     viewBox: '0 0 20 20',
     fill: 'none',
-  };
+  } as const;
+  const stroke = {
+    stroke: 'currentColor',
+    strokeWidth: 1.5,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+  } as const;
   switch (id) {
     case 'inspiration':
+      // 灵感：灯泡
       return (
-        <svg {...common}>
-          <path d="M10 2.5v1.8M10 15.7v1.8M4.2 5.4 5.5 6.7M14.5 13.3l1.3 1.3M2.5 10h1.8M15.7 10h1.8M4.2 14.6l1.3-1.3M14.5 6.7l1.3-1.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-          <circle cx="10" cy="10" r="3.2" stroke="currentColor" strokeWidth="1.4" />
+        <svg {...common} {...stroke}>
+          <path d="M7 7.5a5 5 0 0 1 10 0c0 1.6-.8 2.8-1.5 3.8-.5.7-.8 1.2-.9 2h-5.2c-.1-.8-.4-1.3-.9-2-.7-1-1.5-2.2-1.5-3.8Z" />
+          <path d="M8.8 15.2h4.4" />
+          <path d="M9.9 17.7h2.2" />
         </svg>
       );
     case 'generate':
+      // 生成：魔法棒 + 星芒
       return (
         <svg {...common}>
-          <path d="m13 3 .9 2.1L16 6l-2.1.9L13 9l-.9-2.1L10 6l2.1-.9L13 3Z" fill="currentColor" />
-          <path d="m7 11 .7 1.6 1.6.7-1.6.7L7 15.6l-.7-1.6-1.6-.7 1.6-.7L7 11Z" fill="currentColor" />
-          <path d="M15.5 12.5v2.5M15.5 15v2.5M14.2 13.8h2.6M14.2 16.3h2.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          <path d="M11.5 2.2l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8.8-2.1Z" fill="currentColor" />
+          <path d="M14.6 8.4 6.4 16.6" {...stroke} />
         </svg>
       );
     case 'drafts':
+      // 草稿：文档（与资产文件夹区分）
       return (
-        <svg {...common}>
-          <path d="M3.5 5.5A1.5 1.5 0 0 1 5 4h3l1.4 1.6h5.1A1.5 1.5 0 0 1 16 7.1v6.4a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 13.5v-8Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-          <path d="M5.5 10h5M5.5 12.5h3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        <svg {...common} {...stroke}>
+          <path d="M13 2.5H6.5A1.5 1.5 0 0 0 5 4v12a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 15 16V5.5L13 2.5Z" />
+          <path d="M13 2.5v3h3" />
+          <path d="M7.5 10.5h5M7.5 13h5M7.5 15.5h3" />
         </svg>
       );
     case 'assets':
+      // 资产：文件夹 + 播放（图像/视频素材库）
       return (
         <svg {...common}>
-          <path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h3l1.6 1.8h5.4A1.5 1.5 0 0 1 16 7.3v7.2a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 3 14.5v-9Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-          <path d="M3 8h13" stroke="currentColor" strokeWidth="1.4" />
+          <path d="M2.8 6.6c0-.8.6-1.4 1.4-1.4h3l1.6 1.7h6.8c.8 0 1.4.6 1.4 1.4v6.7c0 .8-.6 1.4-1.4 1.4H4.2c-.8 0-1.4-.6-1.4-1.4V6.6Z" {...stroke} />
+          <path d="M8.6 10.4v3.2l2.8-1.6-2.8-1.6Z" fill="currentColor" />
         </svg>
       );
     case 'canvas':
+      // 画布：四宫格
       return (
-        <svg {...common}>
-          <rect x="3" y="3" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-          <rect x="11" y="3" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-          <rect x="3" y="11" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-          <rect x="11" y="11" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+        <svg {...common} {...stroke}>
+          <rect x="3.2" y="3.2" width="5.6" height="5.6" rx="1.4" />
+          <rect x="11.2" y="3.2" width="5.6" height="5.6" rx="1.4" />
+          <rect x="3.2" y="11.2" width="5.6" height="5.6" rx="1.4" />
+          <rect x="11.2" y="11.2" width="5.6" height="5.6" rx="1.4" />
         </svg>
       );
     default:

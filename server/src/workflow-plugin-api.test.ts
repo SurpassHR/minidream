@@ -483,7 +483,10 @@ describe('workflow plugin API', () => {
     };
     expect(validateParamMappings(manifest, graph as any)).toBeNull();
     // 普通参数仍校验字段存在（节点不存在同样报字段错误）
-    const broken = { ...manifest, params: [{ id: 'bad-1', label: 'x', nodeId: '9999', field: 'nope', type: 'INT', default: 1 }] };
+    const broken: WorkflowSpec = {
+      ...manifest,
+      params: [{ id: 'bad-1', label: 'x', nodeId: '9999', field: 'nope', type: 'INT', default: 1, bypass: false }],
+    };
     expect(validateParamMappings(broken, graph as any)).toMatch(/指向不存在字段：9999\.nope/);
   });
 });

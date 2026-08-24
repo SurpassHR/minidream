@@ -8,16 +8,6 @@
   },
   "blocks": [
     {
-      "id": "generation-prompt",
-      "type": "field",
-      "container": "text",
-      "format": "code",
-      "timing": "submit",
-      "source": "generation.prompt",
-      "label": "生成提示词",
-      "language": "text"
-    },
-    {
       "id": "generation-route",
       "type": "field",
       "container": "text",
@@ -27,12 +17,14 @@
       "label": "工作流路由"
     },
     {
-      "id": "assistant-reply",
-      "type": "assistant-reply",
+      "id": "generation-prompt",
+      "type": "field",
       "container": "text",
-      "format": "markdown",
-      "timing": "always",
-      "source": "assistant.reply"
+      "format": "code",
+      "timing": "submit",
+      "source": "generation.prompt",
+      "label": "生成提示词",
+      "language": "text"
     }
   ],
   "result": {

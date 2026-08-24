@@ -338,6 +338,10 @@
   font-weight: 500;
 }
 
+.rail-item.active svg {
+  filter: drop-shadow(0 1px 4px rgba(0, 202, 224, 0.5));
+}
+
 .rail-settings,
 .rail-theme,
 .rail-lang {
