@@ -239,16 +239,18 @@ export default function SettingsModal({
     setMappingTarget(plugin as WorkflowManifest);
   };
 
-  const handleMappingSave = async (manifest: WorkflowManifest) => {
+  /** 保存映射：成功返回 true 并保持弹窗打开（由弹窗闪现“已保存”反馈），失败返回 false */
+  const handleMappingSave = async (manifest: WorkflowManifest): Promise<boolean> => {
     setMappingSaving(true);
     setMappingError(null);
     try {
       const result = await saveWorkflowManifest(manifest.id, manifest);
-      setMappingTarget(null);
       setPluginRecords(records => records.map(record => record.id === result.plugin.id ? result.plugin : record));
       onRefreshWorkflows?.();
+      return true;
     } catch (e) {
       setMappingError((e as Error).message);
+      return false;
     } finally {
       setMappingSaving(false);
     }

@@ -212,6 +212,11 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
           UPSCALE_INTENT.test(promptText) &&
           workflowId !== 'image_seedvr2_upscale';
         if (routed) workflowId = 'image_seedvr2_upscale';
+        console.log(
+          `[generation.submit] workflowId=${requestedWorkflowId}${routed ? ` -> ${workflowId}` : ''} ` +
+            `intent=${intent} images=${hasImages ? args.images.length : 0} videos=${hasVideos ? args.videos.length : 0} ` +
+            `prompt=${promptText.slice(0, 300)}`,
+        );
         const route: WorkflowRoute = {
           requestedWorkflowId,
           finalWorkflowId: workflowId,
@@ -239,6 +244,7 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
           params: args.params && typeof args.params === 'object' ? args.params : undefined,
           sessionId: args.sessionId ? String(args.sessionId) : undefined,
         });
+        console.log(`[generation.submit] 已入队 taskId=${task.id} status=${task.status}`);
 
         const routedResult = { ...route, taskId: task.id };
 

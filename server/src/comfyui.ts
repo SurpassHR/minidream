@@ -120,6 +120,10 @@ export async function submitPrompt(prompt: Record<string, unknown>, clientId: st
     });
   } catch (e) {
     // ComfyUI 400 常见错误转成可读中文（如自定义节点未安装）
+    if (e instanceof ComfyUIError && e.status === 400) {
+      console.error(`[comfyui] POST /prompt 被拒绝 (400)，完整响应:`);
+      console.error(JSON.stringify(e.body, null, 2));
+    }
     if (e instanceof ComfyUIError && e.status === 400 && e.body && typeof e.body === 'object') {
       const err = (e.body as any)?.error;
       if (err?.type === 'missing_node_type') {
@@ -219,7 +223,7 @@ export function viewUrl(filename: string, subfolder = '', type = 'output'): stri
 
 export interface WsMessage {
   type: string;
-  data: any;
+  data?: any;
 }
 
 /**
@@ -241,7 +245,12 @@ export function watchComfyUI(
   ws.addEventListener('open', () => onOpen?.());
   ws.addEventListener('message', (e: MessageEvent) => {
     const raw = typeof e.data === 'string' ? e.data : null;
-    if (!raw || raw === 'ping' || raw === 'pong') return;
+    if (!raw) return;
+    // 服务端对心跳 ping 的回应，作为连接存活的信号透传给调用方
+    if (raw === 'ping' || raw === 'pong') {
+      onMessage({ type: 'heartbeat' });
+      return;
+    }
     try {
       const m = JSON.parse(raw);
       if (m?.type) onMessage(m);

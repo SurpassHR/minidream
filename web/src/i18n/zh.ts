@@ -26,6 +26,8 @@ const zh = {
     kindImage: '图片',
     kindVideo: '视频',
     kindText: '文本',
+    enabled: '启用',
+    disabled: '停用',
   },
   nav: {
     inspiration: '灵感',
@@ -387,6 +389,7 @@ const zh = {
       comboOptions: 'combo 选项',
       comboOptionsPlaceholder: '节点视图中配置 combo 选项',
       hidden: '隐藏',
+      bypass: '节点屏蔽',
     },
   },
   nodeGraph: {

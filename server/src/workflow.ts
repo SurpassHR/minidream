@@ -140,6 +140,8 @@ export interface WorkflowParam {
   hidden?: boolean;
   /** 是否加入 LLM 上下文：false 表示仅在节点视图固定值（仍参与运行时注入），不暴露给 LLM */
   llm?: boolean;
+  /** 节点屏蔽（bypass）：布尔参数，true 时跳过 nodeId 节点的执行（对应 ComfyUI bypass），field 留空 */
+  bypass?: boolean;
 }
 
 export interface WorkflowOutput {
@@ -731,6 +733,83 @@ export function pruneDeadNodes(api: Record<string, any>, explicitOutputNodeIds: 
   return out;
 }
 
+/* ---------- 节点屏蔽（bypass） ---------- */
+
+/** 节点的必填输入是否缺失（按 object_info 的 required 判断）；oi 缺失时不级联 */
+function hasMissingRequiredInput(node: any, oi?: Record<string, any>): boolean {
+  if (!oi) return false;
+  const cls = String(node?.class_type ?? '');
+  const required = oi[cls]?.input?.required;
+  if (!required || typeof required !== 'object') return false;
+  const inputs = (node?.inputs ?? {}) as Record<string, unknown>;
+  for (const field of Object.keys(required)) {
+    if (field in inputs) continue;
+    // ComfyMathExpression 等惰性/映射输入：API JSON 里以 values.a 子键形式提供，父键 values 不出现
+    if (Object.keys(inputs).some(key => key.startsWith(`${field}.`))) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 应用节点屏蔽（等价于 ComfyUI 前端把节点设为 Bypass 后导出的 API 图）：
+ * - 从 prompt 图中移除指定节点（bypassed 节点在 API 格式里不存在）；
+ * - 消费方对已移除节点的输入引用被删除；
+ * - 因引用被删而缺少「必填输入」（按 object_info）的节点一并移除（级联），
+ *   模拟无输入源的源节点（如 LoadImage）被 bypass 后其下游整条分支失效的行为；
+ * - 移除后不可达的节点不参与执行，由调用方 pruneDeadNodes 兜底裁剪。
+ */
+/** 节点的输入里是否还有指向存活节点的链接（widget 值不算） */
+function hasLiveLinkInput(node: any): boolean {
+  const inputs = (node?.inputs ?? {}) as Record<string, unknown>;
+  return Object.values(inputs).some(value => Array.isArray(value) && typeof value[0] === 'string');
+}
+
+export function applyNodeBypass(
+  prompt: Record<string, any>,
+  bypassNodeIds: string[],
+  oi?: Record<string, any>,
+): Record<string, any> {
+  if (!bypassNodeIds.length) return prompt;
+  // 深拷贝：不修改调用方传入的 prompt（节点 input 引用会被删除）
+  const copy = JSON.parse(JSON.stringify(prompt)) as Record<string, any>;
+  const removed = new Set<string>(bypassNodeIds);
+  const result: Record<string, any> = {};
+  for (const [id, node] of Object.entries(copy)) {
+    if (!removed.has(id)) result[id] = node;
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const lostRef = new Set<string>(); // 本轮丢失了输入引用的节点
+    // 1. 删除指向已移除节点的输入引用
+    for (const [id, node] of Object.entries(result)) {
+      const inputs = node?.inputs;
+      if (!inputs || typeof inputs !== 'object') continue;
+      for (const [field, value] of Object.entries(inputs as Record<string, unknown>)) {
+        if (Array.isArray(value) && typeof value[0] === 'string' && removed.has(value[0])) {
+          delete (inputs as Record<string, unknown>)[field];
+          lostRef.add(id);
+          changed = true;
+        }
+      }
+    }
+    // 2. 级联移除失效节点：
+    //    a) 缺少必填输入（ComfyMathExpression 的 values.a 等点号子键视为已提供）；
+    //    b) 本轮丢失引用后已无任何链接输入（纯可选输入分支，如末帧 resize 链——
+    //       保留它会以无图像模式运行并产出垃圾数据）
+    for (const [id, node] of Object.entries(result)) {
+      if (removed.has(id)) continue;
+      if (hasMissingRequiredInput(node, oi) || (lostRef.has(id) && !hasLiveLinkInput(node))) {
+        removed.add(id);
+        delete result[id];
+        changed = true;
+      }
+    }
+  }
+  return result;
+}
+
 /* ---------- introspection ---------- */
 
 export async function introspectWorkflow(json: Record<string, any>, objectInfoData?: Record<string, any>): Promise<WorkflowSpec> {
@@ -1006,12 +1085,17 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
     }
   }
 
-  // 同一字段出现在多个节点时，标签带上节点号便于区分（如多采样器工作流的“采样器 · 节点 478”）
+  // 同一字段出现在多个节点时，标签带上节点号便于区分（如多采样器工作流的“采样器 · 节点 478”）；
+  // bypass 参数没有真实字段，跳过该后缀
   const fieldCount = new Map<string, number>();
   for (const p of deduped) fieldCount.set(p.field, (fieldCount.get(p.field) ?? 0) + 1);
   for (const p of deduped) {
-    if (!p.multiple && (fieldCount.get(p.field) ?? 0) > 1) p.label = `${p.label} · 节点 ${p.nodeId}`;
+    if (!p.bypass && !p.multiple && (fieldCount.get(p.field) ?? 0) > 1) p.label = `${p.label} · 节点 ${p.nodeId}`;
   }
+
+  // 节点屏蔽（bypass）不再在此自动识别：它是所有节点通用的能力，
+  // 由前端在节点视图勾选任意 widget 时为其节点补充 bypass 参数（见 addBypassParam），
+  // 运行时由 buildPrompt 的 applyNodeBypass 应用，LLM 可通过 params 的 `bypass-<nodeId>` 控制。
 
   return {
     id: '',
@@ -1356,7 +1440,7 @@ export async function buildPrompt(
   const oi = await objectInfo().catch(() => undefined);
   // UI 格式模板 → 先转成 API 格式（widget 默认值来自模板本身）
   const explicitOutputNodeIds = spec.outputs.filter(output => !output.hidden).map(output => output.nodeId);
-  const prompt = pruneDeadNodes(
+  let prompt = pruneDeadNodes(
     isUiFormat(json)
       ? convertUiToApi(json, oi ?? {})
       : (() => {
@@ -1366,6 +1450,21 @@ export async function buildPrompt(
         })(),
     explicitOutputNodeIds,
   );
+
+  // 节点屏蔽（bypass）：由 bypass=true 且值为 true 的参数驱动（如跳过 fl2v 的末帧 LoadImage）
+  const bypassNodeIds = spec.params
+    .filter(p => p.bypass === true && (values.params?.[p.id] === true || values.params?.[p.id] === 'true'))
+    .map(p => p.nodeId);
+  if (bypassNodeIds.length > 0) {
+    const bypassed = applyNodeBypass(prompt, bypassNodeIds, oi);
+    // 屏蔽不得移除输出节点（屏蔽了承载生成主链路的输入时提示用户）
+    for (const output of spec.outputs) {
+      if (!output.hidden && !(output.nodeId in bypassed)) {
+        throw new ComfyUIError(`屏蔽输入节点后工作流的输出「${output.label}」将无法生成，请取消屏蔽或检查节点配置`);
+      }
+    }
+    prompt = pruneDeadNodes(bypassed, explicitOutputNodeIds);
+  }
 
   // 文字输入注入
   const textInputs = spec.inputs.filter(i => i.kind === 'text' && !i.hidden);
@@ -1400,7 +1499,8 @@ export async function buildPrompt(
   for (const input of spec.inputs) {
     if (input.kind === 'text') continue;
     const filename = values.uploaded?.[input.id];
-    if (filename) prompt[input.nodeId].inputs[input.field] = filename;
+    // 被屏蔽的输入节点已从图中移除，直接跳过
+    if (filename && prompt[input.nodeId]?.inputs) prompt[input.nodeId].inputs[input.field] = filename;
     // 未上传且非必传 → 保留模板默认文件名；必传但未上传 → 前端已拦截
   }
 
@@ -1411,6 +1511,7 @@ export async function buildPrompt(
   // 全局 settings 仅注入 seed（随机/固定）与 width/height（生成尺寸）。
   const s = values.settings;
   for (const p of spec.params) {
+    if (p.bypass) continue; // 节点屏蔽参数不注入节点字段，已在图构建阶段应用
     let v = values.params?.[p.id];
 
     if (v === undefined && s) {

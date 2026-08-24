@@ -49,11 +49,23 @@ export interface TaskQueueOptions {
  */
 export function extractHistoryError(history: Record<string, any> | undefined): string | null {
   if (history?.status?.status_str !== 'error') return null;
-  const execError = (history.status.messages ?? [])
-    .filter((m: unknown[]) => m?.[0] === 'execution_error')
-    .map((m: unknown[]) => (m?.[1] as { message?: string } | undefined)?.message)
-    .find(Boolean);
-  return `ComfyUI 执行出错：${execError || '未知错误'}`;
+  const execErrorMsg = (history.status.messages ?? []).find((m: unknown[]) => m?.[0] === 'execution_error');
+  if (!execErrorMsg) return 'ComfyUI 执行出错：未知错误';
+  const data = execErrorMsg[1] as
+    | {
+        message?: string;
+        exception_message?: string;
+        exception_type?: string;
+        node_type?: string;
+        node_id?: number | string;
+      }
+    | undefined;
+  const exception = data?.exception_message || data?.message || '未知错误';
+  const node = data?.node_type
+    ? `（节点 ${data.node_type}${data.node_id !== undefined ? ` #${data.node_id}` : ''}）`
+    : '';
+  console.error('[comfyui] 执行错误详情:', JSON.stringify(data, null, 2));
+  return `ComfyUI 执行出错：${exception}${node}`;
 }
 
 export class TaskQueue extends EventEmitter {
@@ -307,6 +319,11 @@ export class TaskQueue extends EventEmitter {
       if (t.stages[0]) t.stages[0].status = 'completed';
       if (t.stages[1]) t.stages[1].status = 'active';
     });
+    console.log(
+      `[task:${nextTask.id}] 开始执行 workflowId=${nextTask.workflowId} type=${nextTask.type} ` +
+        `images=${nextTask.images?.length ?? 0} videos=${nextTask.videos?.length ?? 0} ` +
+        `prompt=${(nextTask.prompt || '').slice(0, 300)}`,
+    );
 
     try {
       if (this.customExecutor) {
@@ -335,6 +352,9 @@ export class TaskQueue extends EventEmitter {
       if (this.tasks.get(nextTask.id)?.status === 'canceled') {
         return;
       }
+      console.error(`[task:${nextTask.id}] 任务执行失败 workflowId=${nextTask.workflowId} type=${nextTask.type}`);
+      console.error(`[task:${nextTask.id}] 错误:`, err);
+      if (err?.stack) console.error(`[task:${nextTask.id}] 堆栈:`, err.stack);
       this.updateTask(nextTask.id, t => {
         t.status = 'failed';
         t.error = err?.message || String(err);
@@ -432,13 +452,16 @@ export class TaskQueue extends EventEmitter {
       if (!videoPath || !inputSpec || uploaded[inputSpec.id]) continue;
       uploaded[inputSpec.id] = videoPath;
     }
+    console.log(`[task:${task.id}] 素材映射:`, uploaded);
 
     // 3. 读取全局 Settings，并在队列内部构建唯一 prompt 图
     const settings = this.settingsFile ? readSettings(this.settingsFile).imageGen : undefined;
     // combo 与普通 widget 的默认值统一保存在工作流 manifest，由节点视图维护。
     // 生成比例+尺寸 → 目标宽高（视频工作流分辨率上限远小于图像）
-    const maxDimension = spec.outputs.some(o => o.kind === 'video') ? 1344 : 2048;
+    const isVideo = spec.outputs.some(o => o.kind === 'video');
+    const maxDimension = isVideo ? 1344 : 2048;
     const resolution = computeResolution(task.ratio, task.size, maxDimension);
+    console.log(`[task:${task.id}] 目标分辨率:`, resolution ?? '(沿用工作流默认)');
     // 文本输入由 prompt 注入驱动（primary/启发式写入对应 text 节点），
     // 这些节点即使被勾选为参数也不能用 default 兜底——否则参数循环会用模板默认提示词覆盖刚注入的 prompt。
     const textInputKeys = new Set(spec.inputs.filter(i => i.kind === 'text').map(i => `${i.nodeId}:${i.field}`));
@@ -454,6 +477,11 @@ export class TaskQueue extends EventEmitter {
       settings,
       resolution,
     });
+    console.log(`[task:${task.id}] 构建 prompt 图完成，共 ${Object.keys(prompt).length} 个节点:`);
+    for (const [nid, node] of Object.entries(prompt)) {
+      const n = node as any;
+      console.log(`  - ${nid}: ${n?.class_type}${n?._meta?.title ? ` (${n._meta.title})` : ''}`);
+    }
 
     const effectiveParams: Record<string, unknown> = {};
     for (const node of Object.values(prompt)) {
@@ -475,27 +503,52 @@ export class TaskQueue extends EventEmitter {
 
     if (signal.aborted) return;
 
-    // 4. 连接 WebSocket 监听采样进度
+    // 4. 连接 WebSocket 监听执行状态（进度 + 完成信号 + 心跳）
     const clientId = `task-client-${randomUUID().slice(0, 8)}`;
     let stopWatch: (() => void) | undefined;
+    let activePromptId: string | undefined;
+    let wsLive = false; // WebSocket 已连接且未断开
+    let wsFinished = false; // 已收到本 prompt 执行完成的信号（executing node=null）
+    let lastActivity = Date.now();
+    // ws 在线时以心跳判断任务是否存活，不再设固定超时；以下仅作异常兜底：
+    const WS_QUIET_TIMEOUT = 5 * 60 * 1000; // 心跳静默阈值（模型加载/VAE 解码等阶段可能长时间无事件）
+    const ABSOLUTE_CAP = 3 * 60 * 60 * 1000; // ws 在线时的绝对等待上限，防止任务永久占用队列
+    const FALLBACK_TIMEOUT = (isVideo ? 30 : 10) * 60 * 1000; // ws 不可用时的轮询超时
 
     try {
-      stopWatch = watchComfyUI(clientId, (msg: WsMessage) => {
-        if (msg.type === 'progress' && msg.data) {
-          const value = Number(msg.data.value);
-          const max = Number(msg.data.max);
-          if (max > 0) {
-            this.handleProgress(task.id, {
-              stage: '采样计算',
-              step: value,
-              totalSteps: max,
-              progress: Math.round((value / max) * 100),
-            });
+      stopWatch = watchComfyUI(
+        clientId,
+        (msg: WsMessage) => {
+          lastActivity = Date.now();
+          if (msg.type === 'progress' && msg.data) {
+            const value = Number(msg.data.value);
+            const max = Number(msg.data.max);
+            if (max > 0) {
+              this.handleProgress(task.id, {
+                stage: '采样计算',
+                step: value,
+                totalSteps: max,
+                progress: Math.round((value / max) * 100),
+              });
+            }
           }
-        }
-      });
+          if (msg.type === 'executing' && msg.data?.prompt_id === activePromptId) {
+            // node 为 null 表示该 prompt 的所有节点已执行完毕
+            if (msg.data.node === null || msg.data.node === undefined) {
+              wsFinished = true;
+            }
+          }
+        },
+        () => {
+          wsLive = false; // 连接断开
+        },
+        () => {
+          wsLive = true; // 连接建立
+        },
+      );
     } catch {
-      // 忽略 ws 连接失败
+      // 忽略 ws 连接失败（转轮询兜底）
+      wsLive = false;
     }
 
     // 5. 提交给 ComfyUI 执行
@@ -505,26 +558,68 @@ export class TaskQueue extends EventEmitter {
     });
 
     try {
+      console.log(`[task:${task.id}] 提交到 ComfyUI（${COMFYUI_BASE_URL}）...`);
       const subRes = await submitPrompt(prompt, clientId);
       this.currentComfyPromptId = subRes.prompt_id;
+      activePromptId = subRes.prompt_id;
+      console.log(`[task:${task.id}] 已提交，prompt_id=${subRes.prompt_id}`);
 
       if (signal.aborted) {
         await cancelPrompt(subRes.prompt_id).catch(() => {});
         return;
       }
 
-      // 6. 轮询历史记录获取最终产物
+      // 6. 等待执行完成：优先依赖 WebSocket（完成信号 + 心跳），history 轮询仅作兜底
       let history: Record<string, any> | undefined;
       const startTime = Date.now();
-      while (Date.now() - startTime < 300000) {
+      let lastHistoryCheck = 0;
+      while (true) {
         if (signal.aborted) {
           await cancelPrompt(subRes.prompt_id).catch(() => {});
           return;
         }
-        const histRes = await getHistory(subRes.prompt_id).catch(() => undefined);
-        if (histRes && histRes[subRes.prompt_id]) {
-          history = histRes[subRes.prompt_id];
-          break;
+
+        // 检查 history 的时机：ws 已通知完成 / ws 不可用 / 周期性兜底（30s）。
+        // 周期检查覆盖「完成信号丢失」或「ws 晚于任务结束才连上」的窗口。
+        const shouldCheckHistory = wsFinished || !wsLive || Date.now() - lastHistoryCheck >= 30000;
+        if (shouldCheckHistory) {
+          lastHistoryCheck = Date.now();
+          const histRes = await getHistory(subRes.prompt_id).catch((e: unknown) => {
+            console.warn(`[task:${task.id}] 轮询 history 失败:`, (e as Error)?.message ?? e);
+            return undefined;
+          });
+          if (histRes && histRes[subRes.prompt_id]) {
+            history = histRes[subRes.prompt_id];
+            break;
+          }
+          if (wsFinished) {
+            // 完成信号刚收到，history 可能尚未写入，稍候高频重试
+            await new Promise(r => setTimeout(r, 500));
+            continue;
+          }
+        }
+
+        if (!wsLive) {
+          // WebSocket 不可用（未连接/已断开/心跳失联）→ 轮询 history 兜底
+          if (Date.now() - startTime > FALLBACK_TIMEOUT) {
+            throw new Error(
+              isVideo
+                ? `等待生成超过 ${FALLBACK_TIMEOUT / 60000} 分钟仍未完成（WebSocket 不可用）`
+                : '等待生成超时或未获取到输出历史',
+            );
+          }
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+
+        // WebSocket 在线：心跳新鲜即认为任务仍在执行，不设总超时
+        if (Date.now() - lastActivity > WS_QUIET_TIMEOUT) {
+          console.warn(`[task:${task.id}] WebSocket 心跳静默超过 ${WS_QUIET_TIMEOUT / 60000} 分钟，转回轮询 history`);
+          wsLive = false;
+          continue;
+        }
+        if (Date.now() - startTime > ABSOLUTE_CAP) {
+          throw new Error(`等待生成超过 ${ABSOLUTE_CAP / 3600000} 小时仍未完成（WebSocket 在线但无完成信号）`);
         }
         await new Promise(r => setTimeout(r, 1000));
       }
@@ -538,6 +633,7 @@ export class TaskQueue extends EventEmitter {
       if (historyError) throw new Error(historyError);
 
       const outputs: TaskOutput[] = extractHistoryOutputs(history?.outputs || {}, spec.outputs);
+      console.log(`[task:${task.id}] ComfyUI 执行完成，产出:`, outputs.map(o => `${o.kind}:${o.filename}`));
 
       const localOutputs = await this.persistOutputs(task.id, outputs);
       this.updateTask(task.id, t => {

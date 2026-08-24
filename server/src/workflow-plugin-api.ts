@@ -147,6 +147,7 @@ export async function validateWorkflowManifest(
     const idError = addId('params', param.id);
     if (idError) return idError;
     if (!fields.has(param.nodeId)) return `params 映射 ${param.id} 指向不存在节点：${param.nodeId}`;
+    if (param.bypass === true) continue; // 节点屏蔽（bypass）参数没有真实字段，跳过字段校验
     if (!fields.get(param.nodeId)!.has(param.field)) return `params 映射 ${param.id} 指向不存在字段：${param.nodeId}.${param.field}`;
     for (const applyId of param.applyTo ?? []) {
       if (!fields.has(applyId)) return `params 映射 ${param.id} applyTo 指向不存在节点：${applyId}`;
@@ -180,6 +181,13 @@ export function validateParamMappings(manifest: WorkflowSpec, graph: WorkflowGra
     const key = `${param.nodeId}:${param.field}`;
     if (seen.has(key)) return `params 映射重复：${key}`;
     seen.add(key);
+    // 节点屏蔽（bypass）参数没有真实字段：仅要求节点存在于图中
+    if (param.bypass === true) {
+      if (!fields.some(candidate => candidate.nodeId === param.nodeId)) {
+        return `params 映射 ${param.id} 指向不存在节点：${param.nodeId}`;
+      }
+      continue;
+    }
     const field = fields.find(candidate => candidate.nodeId === param.nodeId && candidate.field === param.field);
     if (!field) return `params 映射 ${param.id} 指向不存在字段：${param.nodeId}.${param.field}`;
     if (!field.selectable || field.connected) return `params 映射 ${param.id} 只能指向未连接的 widget 字段`;

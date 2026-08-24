@@ -107,6 +107,7 @@ function paramLines(params: WorkflowSpec['params']): string {
   if (visible.length === 0) return '无（该工作流的 widget 由模板固定，不可由 LLM 调整）';
   return visible.map(p => {
     const bits: string[] = [`id \`${p.id}\``, `类型 ${TYPE_LABEL[p.type] ?? p.type}`];
+    if (p.bypass) bits.push('节点屏蔽：true 时跳过该节点（对应 ComfyUI 的 bypass），该节点及其失效分支不再参与生成');
     if (p.multiple) bits.push(p.strengthable ? '多选（每项可调强度）' : '多选');
     if (p.default !== undefined && p.default !== null && p.default !== '') bits.push(`默认 ${formatDefault(p.default)}`);
     if (p.min !== undefined) bits.push(`范围 ${p.min} ~ ${p.max ?? '∞'}${p.step ? `，步长 ${p.step}` : ''}`);

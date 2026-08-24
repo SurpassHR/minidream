@@ -316,6 +316,19 @@ const OBJECT_INFO: Record<string, any> = {
     },
     output: ['CONDITIONING', 'LATENT'],
   },
+  UnifiedResizeImageMask: {
+    input: {
+      required: {
+        image: ['IMAGE', {}],
+        scale_mode: ['COMBO', {}],
+        upscale_method: ['COMBO', {}],
+        crop: ['COMBO', {}],
+        divisible_by: ['INT', {}],
+        maintain_aspect: ['BOOLEAN', {}],
+      },
+    },
+    output: ['IMAGE'],
+  },
   MiniMaxH3ReferenceToVideo: {
     input: {
       required: {
@@ -1269,5 +1282,105 @@ describe('workflow 引擎（通用自动适配）', () => {
     await expect(workflow.buildPrompt(spec, krea2T2iJson, { prompt: '可爱的小猫' })).rejects.toThrowError(
       /KREA2\/pornmasterKrea2_v2TurboInt8\.safetensors.*models\/diffusion_models\//s,
     );
+  });
+
+  /* ---------- 节点屏蔽（bypass）：fl2v 跳过末帧等 ---------- */
+
+  /** 模拟 fl2v：首帧 + 末帧 LoadImage 各经 resize 后接入 H3 节点（首/末帧为可选输入） */
+  const fl2vApiJson = {
+    '1': { class_type: 'LoadImage', inputs: { image: 'first.png' }, _meta: { title: 'First Frame' } },
+    '2': { class_type: 'LoadImage', inputs: { image: 'last.png' }, _meta: { title: 'Last Frame' } },
+    '3': { class_type: 'UnifiedResizeImageMask', inputs: { image: ['1', 0], scale_mode: 'Longer Side', upscale_method: 'bicubic', crop: 'center', divisible_by: 32, maintain_aspect: true }, _meta: { title: 'First Ref' } },
+    '4': { class_type: 'UnifiedResizeImageMask', inputs: { image: ['2', 0], scale_mode: 'Longer Side', upscale_method: 'bicubic', crop: 'center', divisible_by: 32, maintain_aspect: true }, _meta: { title: 'Last Ref' } },
+    '5': {
+      class_type: 'MiniMaxH3ImageToVideo',
+      inputs: { prompt: 'p', clip: ['6', 0], width: 640, height: 640, length: 24, first_frame: ['3', 0], last_frame: ['4', 0] },
+      _meta: { title: 'H3' },
+    },
+    '6': { class_type: 'CLIPLoader', inputs: { clip_name: 'a.safetensors' } },
+    '7': { class_type: 'SaveVideo', inputs: { filename_prefix: 'video', video: ['5', 0] } },
+  };
+
+  it('applyNodeBypass：屏蔽末帧 LoadImage 后级联移除其 resize 分支并断开 last_frame', () => {
+    const result = workflow.applyNodeBypass(fl2vApiJson, ['2'], OBJECT_INFO);
+    expect(result['2']).toBeUndefined();
+    expect(result['4']).toBeUndefined(); // resize 节点因必填输入丢失被级联移除
+    expect(result['5'].inputs.last_frame).toBeUndefined();
+    expect(result['5'].inputs.first_frame).toEqual(['3', 0]); // 首帧链路不受影响
+    expect(result['1']).toBeDefined();
+    expect(result['3']).toBeDefined();
+    expect(result['7']).toBeDefined(); // 输出节点保留
+  });
+
+  it('applyNodeBypass：无 object_info 时仅结构性级联（零链接输入死分支），不做必填性判断', () => {
+    const result = workflow.applyNodeBypass(fl2vApiJson, ['2']);
+    expect(result['2']).toBeUndefined();
+    // 节点 4 丢失唯一链接输入后成为零链接输入死分支：结构性规则不依赖 oi，仍级联移除
+    expect(result['4']).toBeUndefined();
+    expect(result['5'].inputs.last_frame).toBeUndefined();
+    expect(result['5'].inputs.first_frame).toEqual(['3', 0]); // 首帧链路不受影响
+    // 5 的必填输入（width/height/length）为 widget 值，不受影响；输出节点保留
+    expect(result['5']).toBeDefined();
+    expect(result['7']).toBeDefined();
+  });
+
+  it('introspectWorkflow：不再自动生成 bypass 参数（通用能力由前端勾选时补充）', async () => {
+    const spec = await workflow.introspectWorkflow(fl2vApiJson, OBJECT_INFO);
+    expect(spec.params.filter(p => p.bypass === true)).toEqual([]);
+    // 普通参数与输入照常识别
+    expect(spec.inputs.filter(i => i.kind === 'image')).toHaveLength(2);
+    expect(spec.params.some(p => p.id === 'clip_name-6')).toBe(true);
+  });
+
+  it('buildPrompt：bypass 参数为 true 时移除节点并跳过其素材注入，false 时保留', async () => {
+    const introspected = await workflow.introspectWorkflow(fl2vApiJson, OBJECT_INFO);
+    // 前端在节点视图勾选 widget 时补充的 bypass 参数（见 addBypassParam），此处手工加入模拟
+    const spec = { ...introspected, params: [...introspected.params, { id: 'bypass-2', label: '跳过Last Frame', nodeId: '2', field: '', type: 'BOOLEAN' as const, default: false, bypass: true }] };
+    const bypassed = await workflow.buildPrompt(spec, fl2vApiJson, {
+      prompt: '测试',
+      params: { 'bypass-2': true },
+      // 即便传入已屏蔽节点的素材也不应崩溃（节点已不在图中）
+      uploaded: { 'image-1': 'first.png', 'image-2': 'last.png' },
+    });
+    expect(bypassed['2']).toBeUndefined();
+    expect(bypassed['4']).toBeUndefined();
+    expect(bypassed['5'].inputs.last_frame).toBeUndefined();
+    expect(bypassed['5'].inputs.first_frame).toEqual(['3', 0]);
+    expect(bypassed['1'].inputs.image).toBe('first.png');
+
+    const normal = await workflow.buildPrompt(spec, fl2vApiJson, {
+      prompt: '测试',
+      params: { 'bypass-2': false },
+      uploaded: { 'image-1': 'first.png', 'image-2': 'last.png' },
+    });
+    expect(normal['2']).toBeDefined();
+    expect(normal['5'].inputs.last_frame).toEqual(['4', 0]);
+    expect(normal['2'].inputs.image).toBe('last.png');
+  });
+
+  it('buildPrompt：屏蔽会破坏输出链时给出可读错误', async () => {
+    // LoadImage → resize → SaveImage 的必经链路：屏蔽节点 1 会级联移除输出 4
+    const fragileJson = {
+      '1': { class_type: 'LoadImage', inputs: { image: 'a.png' }, _meta: { title: 'A' } },
+      '2': { class_type: 'LoadImage', inputs: { image: 'b.png' }, _meta: { title: 'B' } },
+      '3': { class_type: 'UnifiedResizeImageMask', inputs: { image: ['1', 0], scale_mode: 'Longer Side', upscale_method: 'bicubic', crop: 'center', divisible_by: 32, maintain_aspect: true } },
+      '4': { class_type: 'SaveImage', inputs: { filename_prefix: 'out', images: ['3', 0] } },
+    };
+    const fragileSpec: WorkflowSpec = {
+      id: 'fragile',
+      name: 'Fragile',
+      inputs: [
+        { id: 'image-1', kind: 'image', label: '参考图', nodeId: '1', field: 'image', classType: 'LoadImage' },
+        { id: 'image-2', kind: 'image', label: '参考图', nodeId: '2', field: 'image', classType: 'LoadImage' },
+      ],
+      params: [{ id: 'bypass-1', label: '跳过A', nodeId: '1', field: '', type: 'BOOLEAN', default: false, bypass: true }],
+      outputs: [{ id: 'images-4', kind: 'image', label: '结果', nodeId: '4', classType: 'SaveImage' }],
+    };
+    await expect(
+      workflow.buildPrompt(fragileSpec, fragileJson, { params: { 'bypass-1': true } }),
+    ).rejects.toThrowError(/无法生成/);
+    // 不屏蔽时正常构建
+    const ok = await workflow.buildPrompt(fragileSpec, fragileJson, { params: { 'bypass-1': false } });
+    expect(ok['4']).toBeDefined();
   });
 });

@@ -77,15 +77,12 @@ export async function buildCatalogSpecs(options: WorkflowCatalogOptions): Promis
   const specs: WorkflowSpec[] = [];
   for (const source of listCatalogSources(options)) {
     const manifest = readManifest(options.manifestDir, source.id);
-    if (source.source.type === 'imported') {
-      if (manifest.status !== 'valid') continue;
-      specs.push(withCatalogMetadata(manifest.manifest, source, true));
-      continue;
-    }
     if (manifest.status === 'valid') {
+      // manifest 是用户契约（含节点视图勾选的参数与 bypass 开关），直接作为事实来源
       specs.push(withCatalogMetadata(manifest.manifest, source, true));
       continue;
     }
+    if (source.source.type === 'imported') continue; // 无有效 manifest 的导入工作流不可用
     const detected = await options.introspect(source.json);
     specs.push(withCatalogMetadata(detected, source, false, manifest.status === 'invalid' ? manifest.error : undefined));
   }

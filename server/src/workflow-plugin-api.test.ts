@@ -4,7 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createWorkflowPluginRouter, type WorkflowPluginApiOptions } from './workflow-plugin-api.js';
+import { createWorkflowPluginRouter, validateParamMappings, type WorkflowPluginApiOptions } from './workflow-plugin-api.js';
 import type { WorkflowSpec } from './workflow.js';
 import { readManifest, readWorkflowJson } from './workflow-plugin-store.js';
 import { readPluginSkill } from './workflow-skill.js';
@@ -461,5 +461,29 @@ describe('workflow plugin API', () => {
       expect((await result.json() as WorkflowSpec).inputs[0]).toMatchObject({ description: '手工描述', label: '自定义输入' });
       expect(readManifest(options.catalog.manifestDir, 'demo')).toEqual(before);
     });
+  });
+
+  it('validateParamMappings 放行节点屏蔽（bypass）参数（无真实字段）', () => {
+    const graph = {
+      nodes: [
+        { nodeId: '5404', title: 'First Frame', classType: 'LoadImage', x: 0, y: 0, fields: [
+          { nodeId: '5404', field: 'image', type: 'COMBO', selectable: true, connected: false, selected: true, options: ['a.png'], value: 'a.png' },
+        ] },
+      ],
+    };
+    const manifest: WorkflowSpec = {
+      id: 'demo',
+      name: 'Demo',
+      inputs: [],
+      params: [
+        { id: 'image-5404', label: 'image', nodeId: '5404', field: 'image', type: 'combo', default: 'a.png' },
+        { id: 'bypass-5404', label: '跳过First Frame', nodeId: '5404', field: '', type: 'BOOLEAN', default: false, bypass: true },
+      ],
+      outputs: [],
+    };
+    expect(validateParamMappings(manifest, graph as any)).toBeNull();
+    // 普通参数仍校验字段存在（节点不存在同样报字段错误）
+    const broken = { ...manifest, params: [{ id: 'bad-1', label: 'x', nodeId: '9999', field: 'nope', type: 'INT', default: 1 }] };
+    expect(validateParamMappings(broken, graph as any)).toMatch(/指向不存在字段：9999\.nope/);
   });
 });

@@ -33,6 +33,8 @@ const en: DeepStringify<typeof zh> = {
     kindImage: 'Image',
     kindVideo: 'Video',
     kindText: 'Text',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
   },
   nav: {
     inspiration: 'Inspiration',
@@ -394,6 +396,7 @@ const en: DeepStringify<typeof zh> = {
       comboOptions: 'Combo options',
       comboOptionsPlaceholder: 'Combo options configured in node view',
       hidden: 'Hidden',
+      bypass: 'Bypass node',
     },
   },
   nodeGraph: {
