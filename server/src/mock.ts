@@ -2,7 +2,7 @@ import type { ChatReply, GenerateData } from './data.js';
 
 /**
  * 页面内容基于即梦AI「生成」页抓取的结构复刻，
- * 品牌文案替换为「导演工作台」，技能卡内容围绕剧本/分镜/视频创作。
+ * 品牌文案替换为「Minidream」，技能卡内容围绕剧本/分镜/视频创作。
  */
 export const generateData: GenerateData = {
   rail: {

@@ -1,4 +1,4 @@
-# 导演工作台 v2 — 进行中任务
+# Minidream v2 — 进行中任务
 
 > 更新：2026-08-22
 > 背景：v2 复刻即梦「生成」页（https://jimeng.jianying.com/ai-tool/generate）为创作对话工作台。

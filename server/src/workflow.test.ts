@@ -755,7 +755,8 @@ describe('workflow 引擎（通用自动适配）', () => {
     const i2v = specs.find(s => s.id === 'video-minimax-h3-i2v');
     expect(i2v).toBeDefined();
     const images = i2v!.inputs.filter(i => i.kind === 'image');
-    expect(images).toHaveLength(1);
+    // 新 API 格式工作流：首帧（First Frame）与尾帧（Last Frame）两个 LoadImage 占位
+    expect(images).toHaveLength(2);
     for (const img of images) {
       expect(img.required).toBe(true);
       expect(String(img.defaultValue ?? '').trim()).toBe('');
@@ -836,15 +837,16 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(Object.values(api).some((n: any) => /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(n.class_type))).toBe(false);
   });
 
-  it('子图展开：i2v 参考图链接到 LoadImage，宽度来自 ResolutionSelector', () => {
-    const api = workflow.convertUiToApi(h3I2vJson, OBJECT_INFO);
-    const h3 = api['105_sg104'];
+  it('i2v 工作流（API 格式）：首尾帧 LoadImage 接入 H3 节点，输出 SaveVideo', () => {
+    // 本地 i2v 模板已是 API 格式（非子图模板），直接校验关键节点接线
+    const h3 = h3I2vJson['5479:5478'];
     expect(h3.class_type).toBe('MiniMaxH3ImageToVideo');
-    expect(h3.inputs.first_frame).toEqual(['114', 0]);
-    expect(h3.inputs.width).toEqual(['115', 0]);
-    expect(h3.inputs.height).toEqual(['115', 1]);
-    expect(api['114'].class_type).toBe('LoadImage');
-    expect(api['114'].inputs.image).toBe('transparent_rgb_gaming_mouse.png');
+    expect(h3.inputs.first_frame).toEqual(['5495', 0]);
+    expect(h3.inputs.last_frame).toEqual(['5483', 0]);
+    expect(h3I2vJson['5404'].class_type).toBe('LoadImage'); // First Frame
+    expect(h3I2vJson['5482'].class_type).toBe('LoadImage'); // Last Frame
+    expect(h3I2vJson['5480'].class_type).toBe('SaveVideo');
+    expect(h3I2vJson['5480'].inputs.video).toEqual(['5479:5475', 0]);
   });
 
   it('r2v（无子图）：参考图/提示词经链接接入 MiniMaxH3ReferenceToVideo', () => {
@@ -863,8 +865,11 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(t2v.outputs).toEqual([expect.objectContaining({ kind: 'video', classType: 'SaveVideo' })]);
 
     const i2v = await workflow.introspectWorkflow(h3I2vJson, OBJECT_INFO);
-    expect(i2v.inputs.filter(i => i.kind === 'image')).toHaveLength(1);
-    expect(i2v.inputs.filter(i => i.kind === 'text')).toHaveLength(1);
+    // API 格式：首帧 + 尾帧两个图像输入
+    expect(i2v.inputs.filter(i => i.kind === 'image')).toHaveLength(2);
+    // 提示词由 Text Multiline 节点承载：introspection 不识别为 text 输入（无 promptPlaceholder 标记），
+    // 实际生成经 manifest 的 text-5506 STRING 参数由 buildPrompt 兜底注入
+    expect(i2v.inputs.filter(i => i.kind === 'text')).toHaveLength(0);
 
     const r2v = await workflow.introspectWorkflow(h3R2vJson, OBJECT_INFO);
     expect(r2v.inputs.filter(i => i.kind === 'image')).toHaveLength(2);

@@ -92,7 +92,7 @@ server/src/index.ts         新路由：/api/workflows、/api/comfyui/status、
 server/workflows/txt2img.json       示例：文生图（文字输入 → 图片输出）
 server/workflows/img2img.json       示例：图生图（图像输入 → 图片输出）
 server/workflows/video-minimax-h3-t2v.json  本地：MiniMax H3 文生视频（t2v，子图模板）
-server/workflows/video-minimax-h3-i2v.json  本地：MiniMax H3 图生视频（i2v，子图模板）
+server/workflows/video-minimax-h3-i2v.json  本地：MiniMax H3 图生视频（i2v，API 格式，首尾帧）
 server/workflows/video-minimax-h3-r2v.json  本地：MiniMax H3 参考图生视频（r2v，非子图）
 server/workflows/image_seedvr2_upscale.json  本地：SeedVR2 图像放大（numz 官方节点 + TTP 分块）
 web/src/api.ts              类型与接口（WorkflowSpec / JobEvent / cancel / SSE）

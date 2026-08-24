@@ -109,7 +109,7 @@ Import any `workflow_api.json` (or an official LiteGraph UI template) through th
 
 ## 🤖 Agent & MCP
 
-During a conversation the backend spawns `pi` as a subprocess, injects the `director-copilot` Skill (`.pi/skills/director-copilot/SKILL.md`), and mounts the project MCP Server (`director-workbench-mcp`) via a temporary `--mcp-config` — strictly limited to MCP tools (host dev tools disabled).
+During a conversation the backend spawns `pi` as a subprocess, injects the `director-copilot` Skill (`.pi/skills/director-copilot/SKILL.md`), and mounts the project MCP Server (`minidream-mcp`) via a temporary `--mcp-config` — strictly limited to MCP tools (host dev tools disabled).
 
 | MCP tool | Purpose |
 |---|---|
@@ -259,7 +259,7 @@ Intent parsing happens in **two layers** that back each other up:
 │   │   ├── comfyui.ts         # Native ComfyUI client (REST + WS, zero deps)
 │   │   ├── workflow.ts        # Workflow introspection / format conversion / prompt building
 │   │   ├── workflow-plugin-*  # Plugin import, manifest contracts, Skills, reply protocols
-│   │   ├── mcp/               # Project MCP Server (director-workbench-mcp)
+│   │   ├── mcp/               # Project MCP Server (minidream-mcp)
 │   │   ├── agent/             # pi Agent bridge (spawn / event stream / skill injection)
 │   │   ├── tasks/             # Unified task queue (submit / cancel / event buffering)
 │   │   ├── sessions.ts        # Sessions (JSON persistence + SSE)

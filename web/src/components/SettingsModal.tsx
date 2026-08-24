@@ -772,7 +772,7 @@ export default function SettingsModal({
                     className="settings-input"
                     value={outputDir}
                     onChange={e => setOutputDir(e.target.value)}
-                    placeholder="/path/to/director-workbench/server/data/drafts"
+                    placeholder="/path/to/minidream/server/data/drafts"
                     spellCheck={false}
                   />
                 </label>

@@ -1206,7 +1206,7 @@ app.post('/api/chat', async (req, res) => {
       videos: chatVideos.length > 0 ? chatVideos : undefined,
     });
     const agentSystemPrompt = [
-      '你运行在「导演工作台」中。生成结果（图片/视频）会自动展示在用户界面中，',
+      '你运行在「Minidream」中。生成结果（图片/视频）会自动展示在用户界面中，',
       '不要向用户报告内部文件名、存储路径、接口地址或任务 ID 等实现细节，',
       '工作流选择与参数回答规则见 director-copilot skill：询问可用工作流或可调参数时必须先调用 workflow.list，',
       '选定工作流后必须调用 workflow.skill 获取该插件的完整使用规则，并把该插件 Skill 的回复协议作为当前请求的唯一用户可见格式来源；不要套用通用的 prompt/路由/状态输出顺序。',
@@ -1467,10 +1467,10 @@ app.post('/api/chat/mock', (req, res) => {
 });
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, name: 'director-workbench', version: '2.0.0', comfyui: COMFYUI_BASE_URL });
+  res.json({ ok: true, name: 'minidream', version: '2.0.0', comfyui: COMFYUI_BASE_URL });
 });
 
 app.listen(PORT, () => {
-  console.log(`[server] Director Workbench v2 API listening on http://127.0.0.1:${PORT}`);
+  console.log(`[server] Minidream v2 API listening on http://127.0.0.1:${PORT}`);
   console.log(`[server] ComfyUI base URL: ${COMFYUI_BASE_URL} (env COMFYUI_BASE_URL 可覆盖)`);
 });

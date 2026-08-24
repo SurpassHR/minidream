@@ -47,7 +47,7 @@ export function buildSeedMessages(history: SeedTurn[]): SeedMessage[] {
 
 /** 注入扩展文件的默认内容模板；`__SEED_JSON__` 由调用方替换为序列化种子消息 */
 const EXTENSION_TEMPLATE = `/**
- * 由 director-workbench 动态生成的 Pi 扩展：请求路径注入虚构对话历史。
+ * 由 Minidream 动态生成的 Pi 扩展：请求路径注入虚构对话历史。
  * 参考 custom-first-control-prompt 的注入机制：种子消息只在请求路径上
  * （零会话日志写入），每次 LLM 调用前前置注入，保持前缀缓存复用。
  */

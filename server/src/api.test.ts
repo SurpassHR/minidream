@@ -61,7 +61,7 @@ describe('Server API Routes', () => {
     });
     const initData = await initRes.json();
     expect(initRes.status).toBe(200);
-    expect(initData.result.serverInfo.name).toBe('director-workbench-mcp');
+    expect(initData.result.serverInfo.name).toBe('minidream-mcp');
 
     const toolsRes = await fetch(`${baseUrl}/api/mcp`, {
       method: 'POST',

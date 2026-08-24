@@ -1,4 +1,4 @@
-# Director Workbench Agent & Task Engine Integration Spec
+# Minidream Agent & Task Engine Integration Spec
 
 > **Date:** 2026-08-22  
 > **Status:** Approved / Ready for Implementation  

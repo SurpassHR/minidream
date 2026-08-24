@@ -37,7 +37,7 @@ const zh = {
     canvas: '画布',
     unknown: '该模块',
     aria: '主导航',
-    logoAria: '导演工作台',
+    logoAria: 'Minidream',
     lightMode: '切换到亮色模式',
     darkMode: '切换到暗色模式',
     switchToEn: '切换到英文',

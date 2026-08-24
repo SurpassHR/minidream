@@ -109,7 +109,7 @@ COMFYUI_BASE_URL=http://192.168.1.10:8188 pnpm dev
 
 ## 🤖 Agent 与 MCP
 
-对话时后端以子进程启动 `pi`，注入 `director-copilot` Skill（`.pi/skills/director-copilot/SKILL.md`），并通过临时 `--mcp-config` 挂载项目 MCP Server（`director-workbench-mcp`），严格限制为 MCP 工具（禁用宿主开发工具）。
+对话时后端以子进程启动 `pi`，注入 `director-copilot` Skill（`.pi/skills/director-copilot/SKILL.md`），并通过临时 `--mcp-config` 挂载项目 MCP Server（`minidream-mcp`），严格限制为 MCP 工具（禁用宿主开发工具）。
 
 | MCP 工具 | 作用 |
 |---|---|
@@ -259,7 +259,7 @@ sequenceDiagram
 │   │   ├── comfyui.ts         # ComfyUI 原生客户端（REST + WS，零依赖）
 │   │   ├── workflow.ts        # 工作流 introspection / 格式转换 / prompt 构建
 │   │   ├── workflow-plugin-*  # 插件导入、manifest 契约、Skill、回复协议
-│   │   ├── mcp/               # 项目 MCP Server（director-workbench-mcp）
+│   │   ├── mcp/               # 项目 MCP Server（minidream-mcp）
 │   │   ├── agent/             # pi Agent 桥接（spawn / 事件流 / skill 注入）
 │   │   ├── tasks/             # 统一任务队列（提交 / 取消 / 事件缓冲）
 │   │   ├── sessions.ts        # 会话（JSON 持久化 + SSE）

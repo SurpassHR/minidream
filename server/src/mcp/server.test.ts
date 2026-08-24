@@ -86,7 +86,7 @@ describe('Director MCP Server', () => {
     });
 
     expect(res.result).toBeDefined();
-    expect(res.result.serverInfo.name).toBe('director-workbench-mcp');
+    expect(res.result.serverInfo.name).toBe('minidream-mcp');
     expect(res.result.capabilities.tools).toBeDefined();
   });
 

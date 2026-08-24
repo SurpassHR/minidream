@@ -44,7 +44,7 @@ const en: DeepStringify<typeof zh> = {
     canvas: 'Canvas',
     unknown: 'This module',
     aria: 'Main navigation',
-    logoAria: 'Director Workbench',
+    logoAria: 'Minidream',
     lightMode: 'Switch to light mode',
     darkMode: 'Switch to dark mode',
     switchToEn: 'Switch to English',

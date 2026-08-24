@@ -115,7 +115,7 @@ export async function submitPrompt(prompt: Record<string, unknown>, clientId: st
       body: JSON.stringify({
         prompt,
         client_id: clientId,
-        extra_data: { comfy_usage_source: 'director-workbench' },
+        extra_data: { comfy_usage_source: 'minidream' },
       }),
     });
   } catch (e) {

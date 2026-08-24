@@ -377,7 +377,7 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
             },
           },
           serverInfo: {
-            name: 'director-workbench-mcp',
+            name: 'minidream-mcp',
             version: '1.0.0',
           },
         },
@@ -454,7 +454,7 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
 
           if (req.method === 'GET' && (req.url === '/' || req.url === '/health')) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ status: 'ok', server: 'director-workbench-mcp' }));
+            res.end(JSON.stringify({ status: 'ok', server: 'minidream-mcp' }));
             return;
           }
 
