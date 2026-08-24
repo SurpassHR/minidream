@@ -579,6 +579,7 @@ app.post('/api/settings/agent', (req, res) => {
       model: typeof req.body?.model === 'string' ? req.body.model : undefined,
       thinking: typeof req.body?.thinking === 'string' ? req.body.thinking as AgentSettings['thinking'] : undefined,
       pollTaskStatus: typeof req.body?.pollTaskStatus === 'boolean' ? req.body.pollTaskStatus : undefined,
+      fabricatedEnabled: typeof req.body?.fabricatedEnabled === 'boolean' ? req.body.fabricatedEnabled : undefined,
       fabricatedHistory: Array.isArray(req.body?.fabricatedHistory) ? req.body.fabricatedHistory : undefined,
     };
     const updated = updateAgentSettings(SETTINGS_FILE, partial);
@@ -640,13 +641,15 @@ app.get('/api/drafts', (_req, res) => {
 /** 读取草稿文件 */
 app.get('/api/drafts/:id/file', (req, res) => {
   const draft = draftStore.get(req.params.id);
-  if (!draft || !existsSync(draft.path)) {
+  // 按当前存储目录解析（迁移后索引里的旧绝对路径可能失效，文件位置以 outputDir + filename 为准）
+  const file = draft ? draftStore.filePath(draft.id) : undefined;
+  if (!file || !existsSync(file)) {
     res.status(404).json({ error: 'draft not found' });
     return;
   }
   res.setHeader('Content-Type', draftStore.contentType(draft.id) ?? 'application/octet-stream');
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-  createReadStream(draft.path).pipe(res);
+  createReadStream(file).pipe(res);
 });
 
 /** 删除草稿 */
@@ -661,12 +664,13 @@ app.delete('/api/drafts/:id', (req, res) => {
 /** 在系统文件管理器中打开草稿文件所在位置 */
 app.post('/api/drafts/:id/open-location', (req, res) => {
   const draft = draftStore.get(req.params.id);
-  if (!draft) {
+  const file = draft ? draftStore.filePath(draft.id) : undefined;
+  if (!file) {
     res.status(404).json({ error: 'draft not found' });
     return;
   }
   try {
-    openFileLocation(draft.path);
+    openFileLocation(file);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: (e as Error).message });
@@ -973,13 +977,14 @@ app.post('/api/chat', async (req, res) => {
     void autoTitleSession(sid, message.trim(), initialTitle);
   }
 
-  // 虚构对话历史：只要有配置就**每个请求**都注入（参考 custom-first-control-prompt 的
+  // 虚构对话历史：开关开启且有配置时**每个请求**都注入（参考 custom-first-control-prompt 的
   // “every request re-injects it”设计——种子消息只在请求路径上，不写入会话日志，
   // 因此必须每次请求都重新前置注入，否则后续轮次模型从 session 恢复的历史中
   // 看不到种子，准则/参考对话会“遗忘”；每次注入字节级一致，保持前缀缓存复用）。
   // 消息被删除后，切换到无持久化 Pi 会话，并把删除后的可见历史按请求注入，
   // 从根上避免被删除内容继续留在 Agent 的隐式上下文中。
-  const fabricatedHistory = readSettings(SETTINGS_FILE).agent.fabricatedHistory;
+  const agentCfg = readSettings(SETTINGS_FILE).agent;
+  const fabricatedHistory = agentCfg.fabricatedEnabled ? agentCfg.fabricatedHistory : [];
   const sessionAfterAppend = append.file.sessions.find(item => item.id === sid);
   const contextVersion = sessionAfterAppend?.contextVersion ?? 0;
   const contextHistory = contextVersion > 0

@@ -43,7 +43,9 @@ export interface AgentSettings {
   thinking: AgentThinking;
   /** Agent 是否轮询生成任务状态（关闭时移除 generation.status 工具，进度走 SSE 推送） */
   pollTaskStatus: boolean;
-  /** 虚构对话历史：只要有配置就每个请求注入（构建为真实交替 user/assistant 消息，经 Pi 扩展注入请求头部） */
+  /** 是否注入虚构对话历史（开关控制；关闭时不注入，即使有内容） */
+  fabricatedEnabled: boolean;
+  /** 虚构对话历史：开关开启且有内容时每个请求注入（构建为真实交替 user/assistant 消息，经 Pi 扩展注入请求头部） */
   fabricatedHistory: FabricatedHistoryMessage[];
 }
 
@@ -87,6 +89,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     model: '',
     thinking: 'minimal',
     pollTaskStatus: false,
+    fabricatedEnabled: false,
     fabricatedHistory: [],
   },
   imageGen: { ...DEFAULT_IMAGE_GEN_SETTINGS },
@@ -124,6 +127,7 @@ export function readSettings(file: string): AppSettings {
     const imageGen = data.imageGen && typeof data.imageGen === 'object' ? data.imageGen : {};
     const storage = data.storage && typeof data.storage === 'object' ? data.storage : {};
     const plugins = data.plugins && typeof data.plugins === 'object' ? data.plugins : {};
+    const fabricatedHistory = normalizeFabricatedHistory(agent.fabricatedHistory);
 
     return {
       comfyui: {
@@ -141,7 +145,12 @@ export function readSettings(file: string): AppSettings {
           typeof agent.pollTaskStatus === 'boolean'
             ? agent.pollTaskStatus
             : DEFAULT_SETTINGS.agent.pollTaskStatus,
-        fabricatedHistory: normalizeFabricatedHistory(agent.fabricatedHistory),
+        fabricatedEnabled:
+          typeof agent.fabricatedEnabled === 'boolean'
+            ? agent.fabricatedEnabled
+            : // 旧版配置迁移：字段缺失但已配置虚构历史内容时视为开启，避免升级后静默失效
+              fabricatedHistory.length > 0,
+        fabricatedHistory,
       },
       imageGen: {
         seedMode: imageGen.seedMode === 'fixed' ? 'fixed' : DEFAULT_IMAGE_GEN_SETTINGS.seedMode,
@@ -264,6 +273,10 @@ export function updateAgentSettings(file: string, partial: Partial<AgentSettings
         typeof partial.pollTaskStatus === 'boolean'
           ? partial.pollTaskStatus
           : current.agent.pollTaskStatus,
+      fabricatedEnabled:
+        typeof partial.fabricatedEnabled === 'boolean'
+          ? partial.fabricatedEnabled
+          : current.agent.fabricatedEnabled,
       fabricatedHistory: normalizeFabricatedHistory(
         partial.fabricatedHistory === undefined ? current.agent.fabricatedHistory : partial.fabricatedHistory,
       ),

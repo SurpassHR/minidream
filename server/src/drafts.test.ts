@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -55,6 +55,32 @@ describe('DraftStore', () => {
     const store = new DraftStore({ indexFile, outputDir: join(dir, 'drafts') });
 
     expect(store.list()[0]?.kind).toBe('video');
+  });
+
+  it('目录迁移后索引中的旧绝对路径仍按当前 outputDir 解析文件', () => {
+    const outputDir = join(dir, 'drafts');
+    const indexFile = join(dir, 'drafts.json');
+    const filename = 'draft-9fd3cae9-108.png';
+    // 模拟迁移后的索引：path 仍指向已不存在的旧项目目录，文件实际位于当前 outputDir
+    writeFileSync(indexFile, JSON.stringify([{
+      id: 'draft-9fd3cae9-108',
+      kind: 'image',
+      filename,
+      path: '/media/hr/Data/Codes/director-workbench/server/data/drafts/' + filename,
+      mime: 'image/png',
+      size: 4,
+      createdAt: 1,
+    }]));
+    mkdirSync(outputDir, { recursive: true });
+    writeFileSync(join(outputDir, filename), 'png');
+
+    const store = new DraftStore({ indexFile, outputDir });
+
+    expect(store.filePath('draft-9fd3cae9-108')).toBe(join(outputDir, filename));
+    expect(store.get('draft-9fd3cae9-108')?.path).not.toBe(join(outputDir, filename));
+    // 删除也按当前 outputDir 定位物理文件
+    expect(store.delete('draft-9fd3cae9-108')).toBe(true);
+    expect(existsSync(join(outputDir, filename))).toBe(false);
   });
 
   it('删除草稿时同时删除索引和物理文件', async () => {

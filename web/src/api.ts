@@ -602,7 +602,9 @@ export interface AgentSettings {
   thinking: AgentThinking;
   /** Agent 是否轮询生成任务状态（关闭时移除 generation.status 工具，进度走 SSE 推送） */
   pollTaskStatus: boolean;
-  /** 虚构对话历史：新会话首条消息注入 Agent 输入（内容与条数均可配置；空数组 = 关闭） */
+  /** 是否注入虚构对话历史（开关控制；关闭时不注入，即使有内容） */
+  fabricatedEnabled: boolean;
+  /** 虚构对话历史：开关开启且有内容时每个请求注入（内容与条数均可配置；空数组 = 无内容可注入） */
   fabricatedHistory: FabricatedHistoryMessage[];
 }
 

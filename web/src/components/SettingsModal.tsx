@@ -135,11 +135,13 @@ export default function SettingsModal({
   const [agentModelsLoading, setAgentModelsLoading] = useState(false);
   const [agentTip, setAgentTip] = useState<string | null>(null);
   const [agentError, setAgentError] = useState<string | null>(null);
+  const [agentFabricatedEnabled, setAgentFabricatedEnabled] = useState(false);
   const [agentFabricated, setAgentFabricated] = useState<FabricatedHistoryMessage[]>([]);
   const [agentSaved, setAgentSaved] = useState<{
     model: string;
     thinking: AgentThinking;
     pollTaskStatus: boolean;
+    fabricatedEnabled: boolean;
     fabricatedHistory: FabricatedHistoryMessage[];
   } | null>(null);
 
@@ -193,11 +195,13 @@ export default function SettingsModal({
           setAgentModel(s.agent.model);
           setAgentThinking(s.agent.thinking);
           setAgentPoll(s.agent.pollTaskStatus);
+          setAgentFabricatedEnabled(s.agent.fabricatedEnabled);
           setAgentFabricated(s.agent.fabricatedHistory ?? []);
           setAgentSaved({
             model: s.agent.model,
             thinking: s.agent.thinking,
             pollTaskStatus: s.agent.pollTaskStatus,
+            fabricatedEnabled: s.agent.fabricatedEnabled,
             fabricatedHistory: s.agent.fabricatedHistory ?? [],
           });
         }
@@ -340,6 +344,7 @@ export default function SettingsModal({
         (agentModel !== agentSaved.model ||
           agentThinking !== agentSaved.thinking ||
           agentPoll !== agentSaved.pollTaskStatus ||
+          agentFabricatedEnabled !== agentSaved.fabricatedEnabled ||
           !objEquals(agentFabricated, agentSaved.fabricatedHistory)),
       storage: settingsLoaded && outputDir.trim() !== outputDirSaved,
       plugins:
@@ -347,7 +352,7 @@ export default function SettingsModal({
         pluginsSaved !== null &&
         !setEquals(pluginDraft ?? new Set(), new Set(pluginsSaved)),
     }),
-    [settingsLoaded, baseUrl, baseUrlSaved, agentModel, agentThinking, agentPoll, agentFabricated, agentSaved, outputDir, outputDirSaved, pluginDraft, pluginsSaved],
+    [settingsLoaded, baseUrl, baseUrlSaved, agentModel, agentThinking, agentPoll, agentFabricatedEnabled, agentFabricated, agentSaved, outputDir, outputDirSaved, pluginDraft, pluginsSaved],
   );
   const isDirty = dirty.comfyui || dirty.agent || dirty.storage || dirty.plugins;
 
@@ -487,6 +492,7 @@ export default function SettingsModal({
         model: agentModel,
         thinking: agentThinking,
         pollTaskStatus: agentPoll,
+        fabricatedEnabled: agentFabricatedEnabled,
         fabricatedHistory: agentFabricated,
       });
       if (!result.ok) {
@@ -496,11 +502,13 @@ export default function SettingsModal({
       setAgentModel(result.agent.model);
       setAgentThinking(result.agent.thinking);
       setAgentPoll(result.agent.pollTaskStatus);
+      setAgentFabricatedEnabled(result.agent.fabricatedEnabled);
       setAgentFabricated(result.agent.fabricatedHistory ?? []);
       setAgentSaved({
         model: result.agent.model,
         thinking: result.agent.thinking,
         pollTaskStatus: result.agent.pollTaskStatus,
+        fabricatedEnabled: result.agent.fabricatedEnabled,
         fabricatedHistory: result.agent.fabricatedHistory ?? [],
       });
       setAgentTip(t('settings.agent.savedTip'));
@@ -713,7 +721,18 @@ export default function SettingsModal({
                   </span>
                 </label>
                 <div className="settings-field">
-                  <span className="settings-label">{t('settings.agent.fabricatedLabel')}</span>
+                  <span className="settings-switch-head">
+                    <span className="settings-label">{t('settings.agent.fabricatedLabel')}</span>
+                    <button
+                      className={`plugin-toggle${agentFabricatedEnabled ? ' on' : ''}`}
+                      onClick={() => setAgentFabricatedEnabled(v => !v)}
+                      role="switch"
+                      aria-checked={agentFabricatedEnabled}
+                      aria-label={t('settings.agent.fabricatedAria')}
+                    >
+                      <span className="plugin-toggle-knob" />
+                    </button>
+                  </span>
                   <span className="settings-field-hint">
                     {t('settings.agent.fabricatedHint')}
                   </span>

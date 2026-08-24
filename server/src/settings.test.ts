@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -31,6 +31,7 @@ describe('agent settings', () => {
       model: 'anthropic/claude-sonnet-4',
       thinking: 'off',
       pollTaskStatus: false,
+      fabricatedEnabled: false,
       fabricatedHistory: [],
     });
     expect(readSettings(file).comfyui).toEqual(DEFAULT_SETTINGS.comfyui);
@@ -96,6 +97,59 @@ describe('agent settings', () => {
     });
     const again = updateAgentSettings(file, { model: 'openai/gpt-4o' });
     expect(again.agent.fabricatedHistory).toEqual([{ role: 'system', content: '保持人设' }]);
+  });
+
+  it('虚构对话历史开关默认关闭', () => {
+    expect(readSettings(file).agent.fabricatedEnabled).toBe(false);
+  });
+
+  it('保存虚构对话历史开关并保留其他设置', () => {
+    const updated = updateAgentSettings(file, {
+      fabricatedEnabled: true,
+      fabricatedHistory: [{ role: 'system', content: '保持人设' }],
+    });
+    expect(updated.agent.fabricatedEnabled).toBe(true);
+    expect(readSettings(file).agent.fabricatedEnabled).toBe(true);
+    // 再次保存其他字段时保留开关
+    const again = updateAgentSettings(file, { model: 'openai/gpt-4o' });
+    expect(again.agent.fabricatedEnabled).toBe(true);
+  });
+
+  it('关闭开关后内容仍保留但不再注入（开关独立于内容）', () => {
+    updateAgentSettings(file, {
+      fabricatedEnabled: true,
+      fabricatedHistory: [{ role: 'user', content: '参考对话' }],
+    });
+    const updated = updateAgentSettings(file, { fabricatedEnabled: false });
+    expect(updated.agent.fabricatedEnabled).toBe(false);
+    expect(updated.agent.fabricatedHistory).toEqual([{ role: 'user', content: '参考对话' }]);
+  });
+
+  it('旧配置迁移：字段缺失但已有虚构历史内容时视为开启', () => {
+    // 模拟旧版设置文件：没有 fabricatedEnabled 字段，但配置了虚构历史
+    writeFileSync(file, JSON.stringify({
+      ...DEFAULT_SETTINGS,
+      agent: {
+        model: '',
+        thinking: 'minimal',
+        pollTaskStatus: false,
+        fabricatedHistory: [{ role: 'user', content: '旧内容' }],
+      },
+    }), 'utf8');
+    expect(readSettings(file).agent.fabricatedEnabled).toBe(true);
+  });
+
+  it('旧配置迁移：字段缺失且无内容时保持关闭', () => {
+    writeFileSync(file, JSON.stringify({
+      ...DEFAULT_SETTINGS,
+      agent: {
+        model: '',
+        thinking: 'minimal',
+        pollTaskStatus: false,
+        fabricatedHistory: [],
+      },
+    }), 'utf8');
+    expect(readSettings(file).agent.fabricatedEnabled).toBe(false);
   });
 });
 

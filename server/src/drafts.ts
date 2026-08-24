@@ -112,7 +112,11 @@ export class DraftStore {
   }
 
   public filePath(id: string): string | undefined {
-    return this.get(id)?.path;
+    const record = this.get(id);
+    if (!record) return undefined;
+    // 以当前 outputDir + filename 为准解析文件位置，而不是信任索引里存的绝对 path：
+    // 项目目录迁移/改名后旧记录的绝对路径会失效，但文件通常已随目录一起移动。
+    return join(this.outputDir, record.filename);
   }
 
   public contentType(id: string): string | undefined {
@@ -140,8 +144,10 @@ export class DraftStore {
     const index = this.records.findIndex(record => record.id === id);
     if (index < 0) return false;
     const [record] = this.records.splice(index, 1);
-    if (record && existsSync(record.path)) {
-      unlinkSync(record.path);
+    // 与 filePath 一致：按当前 outputDir + filename 定位物理文件
+    const file = record ? join(this.outputDir, record.filename) : undefined;
+    if (file && existsSync(file)) {
+      unlinkSync(file);
     }
     this.persist();
     return true;
