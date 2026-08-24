@@ -26,6 +26,37 @@ export interface SaveDraftInput {
   data: Buffer;
 }
 
+const MIME_BY_EXTENSION: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.ogv': 'video/ogg',
+  '.mpeg': 'video/mpeg',
+  '.mpg': 'video/mpeg',
+  '.avi': 'video/x-msvideo',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.txt': 'text/plain; charset=utf-8',
+};
+
+export function inferMimeType(filename: string, kind?: DraftRecord['kind']): string | undefined {
+  const extension = filename.slice(filename.lastIndexOf('.')).toLowerCase();
+  const byExtension = MIME_BY_EXTENSION[extension];
+  if (byExtension) return byExtension;
+  if (kind === 'video') return 'video/mp4';
+  if (kind === 'image') return 'image/png';
+  if (kind === 'text') return 'text/plain; charset=utf-8';
+  return undefined;
+}
+
+function inferredMime(record: DraftRecord): string | undefined {
+  return inferMimeType(record.filename, record.kind);
+}
+
 export class DraftStore {
   private readonly indexFile: string;
   private outputDir: string;
@@ -85,7 +116,12 @@ export class DraftStore {
   }
 
   public contentType(id: string): string | undefined {
-    return this.get(id)?.mime;
+    const record = this.get(id);
+    if (!record) return undefined;
+    // Some ComfyUI/custom executors omit the MIME or report octet-stream;
+    // browsers need the real media type to decode video reliably.
+    if (record.mime && !/^application\/octet-stream(?:;|$)/i.test(record.mime)) return record.mime;
+    return inferredMime(record) ?? record.mime;
   }
 
   public isWritable(): boolean {
@@ -115,7 +151,20 @@ export class DraftStore {
     if (!existsSync(this.indexFile)) return [];
     try {
       const data = JSON.parse(readFileSync(this.indexFile, 'utf8'));
-      return Array.isArray(data) ? data.filter(item => item && typeof item.id === 'string') : [];
+      return Array.isArray(data)
+        ? data
+          .filter(item => item && typeof item.id === 'string')
+          .map(item => {
+            const record = item as DraftRecord;
+            const inferred = inferMimeType(record.filename);
+            const kind = record.mime?.startsWith('video/') || inferred?.startsWith('video/')
+              ? 'video'
+              : record.mime?.startsWith('image/') || inferred?.startsWith('image/')
+                ? 'image'
+                : record.kind;
+            return { ...record, kind } as DraftRecord;
+          })
+        : [];
     } catch {
       return [];
     }

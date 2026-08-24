@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import { deleteDraft, fetchDrafts, type DraftRecord } from '../api';
+import { resolveMediaKind } from '../mediaKind';
 import ImageLightbox, { type LightboxImage } from './ImageLightbox';
+import { VideoPreview } from './VideoPreview';
 
 function formatDate(value: number): string {
   return new Intl.DateTimeFormat(i18n.language, {
@@ -58,11 +60,13 @@ export default function DraftsView() {
         </div>
       ) : (
         <div className="drafts-grid">
-          {drafts.map(draft => (
+          {drafts.map(draft => {
+            const kind = resolveMediaKind(draft.kind, draft.filename);
+            return (
             <article className="draft-card" key={draft.id}>
               <div className="draft-media">
-                {draft.kind === 'video' ? (
-                  <video src={`/api/drafts/${draft.id}/file`} controls preload="metadata" />
+                {kind === 'video' ? (
+                  <VideoPreview className="draft-video" src={`/api/drafts/${draft.id}/file`} />
                 ) : (
                   <img
                     src={`/api/drafts/${draft.id}/file`}
@@ -74,12 +78,13 @@ export default function DraftsView() {
                 <button className="draft-delete" onClick={() => void remove(draft.id)} title={t('drafts.delete')} aria-label={t('drafts.delete')}>×</button>
               </div>
               <div className="draft-meta">
-                <span className="draft-kind">{draft.kind === 'video' ? t('common.kindVideo') : t('common.kindImage')}</span>
+                <span className="draft-kind">{kind === 'video' ? t('common.kindVideo') : t('common.kindImage')}</span>
                 <span className="draft-date">{formatDate(draft.createdAt)}</span>
               </div>
               <div className="draft-name" title={draft.filename}>{draft.filename}</div>
             </article>
-          ))}
+            );
+          })}
         </div>
       )}
 

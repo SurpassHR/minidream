@@ -1,3 +1,4 @@
+import { useEffect, useState, type MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 
 export interface Conversation {
@@ -23,6 +24,7 @@ export default function Sidebar({
   onSelect,
   onRename,
   onDelete,
+  onDeleteMany,
 }: {
   conversations: Conversation[];
   activeId: string | null;
@@ -30,8 +32,58 @@ export default function Sidebar({
   onSelect: (id: string) => void;
   onRename: (id: string) => void;
   onDelete: (id: string) => void;
+  onDeleteMany?: (ids: string[]) => void;
 }) {
   const { t } = useTranslation();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    const known = new Set(conversations.map(conversation => conversation.id));
+    setSelectedIds(previous => {
+      const next = new Set([...previous].filter(id => known.has(id)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [conversations]);
+
+  const handleChatClick = (event: MouseEvent<HTMLButtonElement>, id: string, index: number) => {
+    const isRange = event.shiftKey && anchorIndex !== null;
+    const isToggle = event.ctrlKey || event.metaKey;
+
+    if (isRange) {
+      const start = Math.min(anchorIndex!, index);
+      const end = Math.max(anchorIndex!, index);
+      setSelectedIds(new Set(conversations.slice(start, end + 1).map(conversation => conversation.id)));
+      setAnchorIndex(index);
+      return;
+    }
+
+    if (isToggle) {
+      setSelectedIds(previous => {
+        const next = new Set(previous);
+        // 普通点击只记录锚点、不进入多选状态；随后 Ctrl/Cmd 点击另一项时，
+        // 将锚点也纳入选择，符合文件管理器的常见多选行为。
+        if (next.size === 0 && anchorIndex !== null && anchorIndex !== index) {
+          const anchorId = conversations[anchorIndex]?.id;
+          if (anchorId) next.add(anchorId);
+        }
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      setAnchorIndex(index);
+      return;
+    }
+
+    setSelectedIds(new Set());
+    setAnchorIndex(index);
+    onSelect(id);
+  };
+
+  const selectedConversationIds = conversations
+    .filter(conversation => selectedIds.has(conversation.id))
+    .map(conversation => conversation.id);
+
   return (
     <aside className="sidebar">
       <button className="sidebar-create" onClick={onNewChat}>
@@ -42,15 +94,37 @@ export default function Sidebar({
       </button>
       <div className="sidebar-section">
         <div className="sidebar-section-title">{t('sidebar.newChat')}</div>
+        {selectedConversationIds.length > 0 && (
+          <div className="sidebar-selection-toolbar">
+            <span>{t('sidebar.selectedCount', { count: selectedConversationIds.length })}</span>
+            <div className="sidebar-selection-actions">
+              <button
+                type="button"
+                className="sidebar-selection-clear"
+                onClick={() => setSelectedIds(new Set())}
+              >
+                {t('sidebar.clearSelection')}
+              </button>
+              <button
+                type="button"
+                className="sidebar-selection-delete"
+                onClick={() => onDeleteMany?.(selectedConversationIds)}
+                disabled={!onDeleteMany}
+              >
+                {t('sidebar.deleteSelected')}
+              </button>
+            </div>
+          </div>
+        )}
         <ul className="sidebar-chats">
           {conversations.length === 0 && (
             <li className="sidebar-chat-empty">{t('sidebar.empty')}</li>
           )}
-          {conversations.map(conv => (
+          {conversations.map((conv, index) => (
             <li key={conv.id}>
               <button
-                className={`sidebar-chat${activeId === conv.id ? ' active' : ''}`}
-                onClick={() => onSelect(conv.id)}
+                className={`sidebar-chat${activeId === conv.id ? ' active' : ''}${selectedIds.has(conv.id) ? ' selected' : ''}`}
+                onClick={event => handleChatClick(event, conv.id, index)}
               >
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                   <rect x="2" y="2.5" width="10" height="8" rx="2" stroke="currentColor" strokeWidth="1.2" />
@@ -79,6 +153,11 @@ export default function Sidebar({
                   title={t('common.delete')}
                   onClick={e => {
                     e.stopPropagation();
+                    setSelectedIds(previous => {
+                      const next = new Set(previous);
+                      next.delete(conv.id);
+                      return next;
+                    });
                     onDelete(conv.id);
                   }}
                 >

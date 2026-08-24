@@ -13,7 +13,9 @@ export function extractHistoryOutputs(
     if (Array.isArray(nodeOut.images)) {
       for (const image of nodeOut.images) {
         outputs.push({
-          kind: 'image',
+          // Some video nodes (including SaveVideo) expose MP4 files under `images`.
+          // The declared workflow output mapping is more authoritative than the key.
+          kind: mapping.kind === 'video' ? 'video' : 'image',
           filename: image.filename,
           subfolder: image.subfolder,
           type: image.type,

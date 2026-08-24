@@ -1,8 +1,12 @@
 import { forwardRef, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { GenerateData } from '../api';
 import { computeResolution } from '../resolution';
 import { findMentionedSessionAssets, type SessionAsset } from '../sessionAssets';
+import ImageLightbox from './ImageLightbox';
+import VideoLightbox from './VideoLightbox';
+import { MentionText } from '../mentionText';
 
 type PanelId = 'preference' | null;
 
@@ -44,7 +48,9 @@ const Composer = forwardRef<ComposerHandle, {
   const [size, setSize] = useState(sizeCfg.default);
   /** @ 提及弹窗：query 为 @ 后已输入的内容，index 为当前选中项 */
   const [mention, setMention] = useState<{ query: string; index: number } | null>(null);
+  const [previewAsset, setPreviewAsset] = useState<SessionAsset | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
 
   const canSend = value.trim().length > 0 && !disabled;
 
@@ -132,12 +138,15 @@ const Composer = forwardRef<ComposerHandle, {
     const partial = match[1] ?? '';
     const mentionText = item.name;
     const insertAt = pos - partial.length - 1; // '@' 所在位置
-    const next = text.slice(0, insertAt) + '@' + mentionText + text.slice(pos);
+    // 引用作为一个不可拆分的行内 token：后面补普通空格，让光标落在代码块外。
+    const suffix = text.slice(pos);
+    const separator = suffix.length === 0 || !/^\s/.test(suffix) ? ' ' : '';
+    const next = text.slice(0, insertAt) + '@' + mentionText + separator + suffix;
     onChange(next);
     setMention(null);
     requestAnimationFrame(() => {
       ta.focus();
-      const newPos = insertAt + 1 + mentionText.length;
+      const newPos = insertAt + 1 + mentionText.length + separator.length;
       ta.setSelectionRange(newPos, newPos);
     });
   };
@@ -168,19 +177,77 @@ const Composer = forwardRef<ComposerHandle, {
             ))}
           </div>
         )}
-        <textarea
-          ref={taRef}
-          className="composer-input"
+        <div className="composer-rich-input">
+          <div
+            ref={highlightRef}
+            className="composer-input-highlight"
+            aria-hidden="true"
+          >
+            <MentionText
+              value={value}
+              assets={sessionAssets}
+              onOpen={setPreviewAsset}
+              tokenClassName="composer-mention-token"
+            />
+          </div>
+          <textarea
+            ref={taRef}
+            className="composer-input composer-input-editor"
           rows={2}
           placeholder={t('composer.placeholder')}
           value={value}
           onChange={onInputChange}
+          onScroll={event => {
+            if (highlightRef.current) {
+              highlightRef.current.scrollTop = event.currentTarget.scrollTop;
+              highlightRef.current.scrollLeft = event.currentTarget.scrollLeft;
+            }
+          }}
           onFocus={() => setFocused(true)}
           onBlur={() => {
             setFocused(false);
             window.setTimeout(() => setMention(null), 120);
           }}
           onKeyDown={e => {
+            // 阻止光标进入已识别的 @素材 token，并让 Backspace/Delete 一次删除整个引用。
+            const caret = e.currentTarget.selectionStart ?? 0;
+            const selectionEnd = e.currentTarget.selectionEnd ?? caret;
+            if (caret === selectionEnd) {
+              const tokenPattern = /@(image\d+|video\d+)(?![\w])/gi;
+              let tokenMatch: RegExpExecArray | null;
+              while ((tokenMatch = tokenPattern.exec(value))) {
+                const start = tokenMatch.index;
+                const end = start + tokenMatch[0].length;
+                if (e.key === 'ArrowLeft' && caret > start && caret <= end) {
+                  e.preventDefault();
+                  e.currentTarget.setSelectionRange(start, start);
+                  return;
+                }
+                if (e.key === 'ArrowRight' && caret >= start && caret < end) {
+                  e.preventDefault();
+                  e.currentTarget.setSelectionRange(end, end);
+                  return;
+                }
+                if (e.key === 'Backspace' && caret === end) {
+                  e.preventDefault();
+                  onChange(value.slice(0, start) + value.slice(end));
+                  requestAnimationFrame(() => {
+                    taRef.current?.focus();
+                    taRef.current?.setSelectionRange(start, start);
+                  });
+                  return;
+                }
+                if (e.key === 'Delete' && caret === start) {
+                  e.preventDefault();
+                  onChange(value.slice(0, start) + value.slice(end));
+                  requestAnimationFrame(() => {
+                    taRef.current?.focus();
+                    taRef.current?.setSelectionRange(start, start);
+                  });
+                  return;
+                }
+              }
+            }
             if (mention) {
               const count = filteredAssets.length;
               if (e.key === 'ArrowDown') {
@@ -209,7 +276,8 @@ const Composer = forwardRef<ComposerHandle, {
               submit();
             }
           }}
-        />
+          />
+        </div>
       </div>
 
       <div className="composer-bottom">
@@ -332,6 +400,22 @@ const Composer = forwardRef<ComposerHandle, {
           )}
         </div>
       </div>
+      {previewAsset && createPortal(
+        previewAsset.kind === 'image' ? (
+          <ImageLightbox
+            image={{ url: previewAsset.url, alt: previewAsset.name, generation: previewAsset.generation }}
+            onClose={() => setPreviewAsset(null)}
+          />
+        ) : (
+          <VideoLightbox
+            src={previewAsset.url}
+            name={previewAsset.name}
+            generation={previewAsset.generation}
+            onClose={() => setPreviewAsset(null)}
+          />
+        ),
+        document.body,
+      )}
     </div>
   );
 });

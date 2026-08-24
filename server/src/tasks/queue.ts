@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { TaskItem, TaskOutput, TaskOutputCandidate, TaskStage, TaskStatus, TaskSubmitInput, TaskType } from './types.js';
-import type { DraftStore } from '../drafts.js';
+import { inferMimeType, type DraftStore } from '../drafts.js';
 import { buildPrompt, buildSpecsCached, getWorkflowJson } from '../workflow.js';
 import { extractHistoryOutputs } from './history-outputs.js';
 import { computeResolution } from '../resolution.js';
@@ -105,6 +105,14 @@ export class TaskQueue extends EventEmitter {
             const task: TaskItem = {
               ...item,
               status: item.status === 'running' ? 'interrupted' : item.status,
+              outputs: Array.isArray(item.outputs)
+                ? item.outputs.map((output: TaskOutput) => ({
+                  ...output,
+                  kind: output.kind === 'image' && inferMimeType(output.filename)?.startsWith('video/')
+                    ? 'video'
+                    : output.kind,
+                }))
+                : item.outputs,
             };
             this.tasks.set(task.id, task);
             this.lastTimestamp = Math.max(this.lastTimestamp, task.createdAt, task.updatedAt);

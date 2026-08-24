@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -37,6 +37,24 @@ describe('DraftStore', () => {
     expect(readFileSync(record.path, 'utf8')).toBe('png-data');
     expect(store.list()).toEqual([record]);
     expect(existsSync(`${indexFile}.tmp`)).toBe(false);
+  });
+
+  it('读取历史索引时按视频扩展名纠正错误的 image 类型', () => {
+    const indexFile = join(dir, 'drafts.json');
+    const filename = 'draft-88c40dee-6aa.mp4';
+    writeFileSync(indexFile, JSON.stringify([{
+      id: 'draft-88c40dee-6aa',
+      kind: 'image',
+      filename,
+      path: join(dir, filename),
+      mime: 'video/mp4',
+      size: 10,
+      createdAt: 1,
+    }]));
+
+    const store = new DraftStore({ indexFile, outputDir: join(dir, 'drafts') });
+
+    expect(store.list()[0]?.kind).toBe('video');
   });
 
   it('删除草稿时同时删除索引和物理文件', async () => {

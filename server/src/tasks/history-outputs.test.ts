@@ -12,4 +12,13 @@ describe('history output extraction', () => {
     );
     expect(outputs).toEqual([expect.objectContaining({ kind: 'text', text: '最终文本', filename: '9-1.txt' })]);
   });
+
+  it('按输出映射类型识别被 ComfyUI 放在 images 键中的视频文件', () => {
+    const outputs = extractHistoryOutputs(
+      { '4': { images: [{ filename: 'generated.mp4', subfolder: 'video', type: 'output' }] } },
+      [{ id: 'videos-4', kind: 'video', label: '视频', nodeId: '4', classType: 'SaveVideo' }],
+    );
+
+    expect(outputs).toEqual([expect.objectContaining({ kind: 'video', filename: 'generated.mp4' })]);
+  });
 });

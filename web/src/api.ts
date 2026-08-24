@@ -716,6 +716,8 @@ export interface SendChatOptions {
   ratio?: string;
   /** 生成尺寸（MP，如 1 / 1.5 / 8） */
   size?: number;
+  /** 编辑历史 user 消息时，从该索引开始截断旧分支，再发送当前 message。 */
+  replaceMessageIndex?: number;
 }
 
 export interface ChatReplyWithSession extends ChatReply {
@@ -1009,12 +1011,28 @@ export async function deleteSession(id: string): Promise<SessionsResponse> {
   return http(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
+export async function deleteSessions(ids: string[]): Promise<SessionsResponse> {
+  return http('/api/sessions', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+}
+
 export async function selectSession(id: string): Promise<{ ok: boolean; activeId: string | null }> {
   return http(`/api/sessions/${encodeURIComponent(id)}/select`, { method: 'POST' });
 }
 
 export async function fetchSessionMessages(id: string): Promise<ChatMessage[]> {
   return http(`/api/sessions/${encodeURIComponent(id)}/messages`);
+}
+
+/** 删除会话中的一条 user/assistant 消息；后端同时提升上下文版本。 */
+export async function deleteSessionMessage(
+  id: string,
+  index: number,
+): Promise<{ ok: boolean; messages: ChatMessage[] }> {
+  return http(`/api/sessions/${encodeURIComponent(id)}/messages/${index}`, { method: 'DELETE' });
 }
 
 /** SSE 终态落库：更新会话最后一条消息（done/error/cancelled 时调用） */

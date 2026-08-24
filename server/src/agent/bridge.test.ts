@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -454,6 +454,28 @@ description: 测试
     const result = await resultPromise;
     expect(result).toContain('name: p');
     expect(result).toContain('## 可控制参数');
+  });
+
+  it('重建上下文时禁用持久 Pi session，并只注入传入的可见历史', async () => {
+    const child = createFakeChild();
+    spawnMock.mockReturnValue(child);
+
+    const resultPromise = runAgentStream('新的用户消息', {
+      sessionId: 'session-old',
+      rebuildContext: true,
+      contextHistory: [{ role: 'user', content: '保留的历史' }],
+      idleTimeoutMs: 1000,
+    });
+    const spawnArgs = spawnMock.mock.calls[0]?.[1] as string[];
+    expect(spawnArgs).toContain('--no-session');
+    expect(spawnArgs).not.toContain('session-old');
+    const extensionPath = spawnArgs[spawnArgs.indexOf('--extension') + 1]!;
+    expect(readFileSync(extensionPath, 'utf8')).toContain('保留的历史');
+    expect(readFileSync(extensionPath, 'utf8')).not.toContain('已删除的历史');
+
+    child.stdout.write(JSON.stringify({ type: 'agent_end' }) + '\n');
+    await resultPromise;
+    expect(existsSync(extensionPath)).toBe(false);
   });
 
   it('显式模型配置会透传给 Pi', async () => {

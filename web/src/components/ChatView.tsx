@@ -1,13 +1,19 @@
 import { useEffect, useState, useRef, useCallback, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import { openDraftLocation, type ChatMessage, type ChatStage, type GenerationOutput, type TaskItem, type ActionCardData, type WorkflowRoute, type ResponseBlock } from '../api';
+import { resolveMediaKind } from '../mediaKind';
 import ImageLightbox, { type LightboxImage } from './ImageLightbox';
+import { VideoPreview } from './VideoPreview';
 import { getTaskMediaAspectRatio, getTaskMediaLayoutClass } from '../taskMediaRatio';
 import { shouldRenderLegacyAssistantContent } from '../responseDisplay';
+import { MentionText } from '../mentionText';
+import type { SessionAsset } from '../sessionAssets';
+import VideoLightbox from './VideoLightbox';
 
 /* ==================== 工具函数 ==================== */
 
@@ -342,7 +348,7 @@ function TaskMediaRegion({
       style={mediaAspectRatio ? { '--task-media-aspect-ratio': mediaAspectRatio } as CSSProperties : undefined}
     >
       {/* 底层：生成结果（完成后淡入） */}
-      {outputs.length > 0 && <GenerationOutputsView outputs={outputs} onOpenImage={onOpenImage} onImageRatio={(width, height) => setLoadedImageRatio(`${width} / ${height}`)} />}
+      {outputs.length > 0 && <GenerationOutputsView outputs={outputs} onOpenImage={onOpenImage} onMediaRatio={(width, height) => setLoadedImageRatio(`${width} / ${height}`)} />}
       {/* 上层：渐变动画覆盖（进行中显示，完成时淡出让位） */}
       {showLoading && (
         <TaskLoadingMedia queued={queued} percent={percent} onCancel={cancelFn} cancelLabel={cancelLabel} />
@@ -395,11 +401,11 @@ function draftIdOf(url?: string): string | null {
 function GenerationOutputsView({
   outputs,
   onOpenImage,
-  onImageRatio,
+  onMediaRatio,
 }: {
   outputs: GenerationOutput[];
   onOpenImage?: (img: LightboxImage) => void;
-  onImageRatio?: (width: number, height: number) => void;
+  onMediaRatio?: (width: number, height: number) => void;
 }) {
   if (!outputs?.length) return null;
   const images = outputs.filter(o => o.kind === 'image');
@@ -424,7 +430,7 @@ function GenerationOutputsView({
                     onLoad={event => {
                       const image = event.currentTarget;
                       if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-                        onImageRatio?.(image.naturalWidth, image.naturalHeight);
+                        onMediaRatio?.(image.naturalWidth, image.naturalHeight);
                       }
                     }}
                     onClick={() => {
@@ -458,7 +464,7 @@ function GenerationOutputsView({
         <div className="result-videos">
           {videos.map((v, i) => (
             <div key={`${v.url ?? i}`} className="result-video-wrap">
-              <video className="result-video" src={v.url} controls playsInline preload="metadata" />
+              {v.url && <VideoPreview className="result-video" src={v.url} onMediaRatio={onMediaRatio} />}
               {v.label && <div className="result-video-label">{v.label}</div>}
             </div>
           ))}
@@ -594,7 +600,7 @@ function extractOutputs(message: ChatMessage): GenerationOutput[] {
       if (t.outputs) {
         for (const out of t.outputs) {
           outputs.push({
-            kind: out.kind,
+            kind: resolveMediaKind(out.kind, out.filename, out.url),
             url: out.url,
             filename: out.filename,
             generation: out.generation,
@@ -611,6 +617,125 @@ function extractOutputs(message: ChatMessage): GenerationOutput[] {
   return outputs;
 }
 
+/* ==================== 消息删除 ==================== */
+
+function MessageDeleteButton({ onDelete, disabled }: { onDelete: () => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      className="chat-message-delete"
+      title={i18n.t('chat.deleteMessage')}
+      aria-label={i18n.t('chat.deleteMessage')}
+      disabled={disabled}
+      onClick={event => {
+        event.stopPropagation();
+        onDelete();
+      }}
+    >
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+        <path d="M3 4.5h8M6 2.5h2M4.5 4.5l.5 7h4l.5-7M6 6.5v3M8 6.5v3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+    </button>
+  );
+}
+
+function MessageEditButton({ onEdit, disabled }: { onEdit: () => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      className="chat-message-edit"
+      title={i18n.t('chat.editMessage')}
+      aria-label={i18n.t('chat.editMessage')}
+      disabled={disabled}
+      onClick={event => {
+        event.stopPropagation();
+        onEdit();
+      }}
+    >
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+        <path d="m8.8 2.3 2.9 2.9M9.6 1.5a1.4 1.4 0 0 1 2 2L4 11.1 1.5 12l.9-2.5 7.2-8Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
+function UserMessageBubble({
+  message,
+  index,
+  onEdit,
+  onDelete,
+  assets,
+  onOpenAsset,
+  disabled,
+}: {
+  message: ChatMessage;
+  index: number;
+  onEdit?: (index: number, content: string) => void;
+  onDelete?: (index: number) => void;
+  assets?: SessionAsset[];
+  onOpenAsset?: (asset: SessionAsset) => void;
+  disabled?: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.content);
+
+  useEffect(() => {
+    if (!editing) setDraft(message.content);
+  }, [editing, message.content]);
+
+  const save = () => {
+    const content = draft.trim();
+    if (!content) return;
+    setEditing(false);
+    if (content !== message.content.trim()) onEdit?.(index, content);
+  };
+
+  return (
+    <div className="chat-user-message-wrap">
+      <div className="chat-bubble user">
+      {editing ? (
+        <div className="chat-message-editor">
+          <textarea
+            className="chat-message-editor-input"
+            value={draft}
+            autoFocus
+            rows={Math.min(8, Math.max(2, draft.split('\n').length))}
+            onChange={event => setDraft(event.target.value)}
+            onKeyDown={event => {
+              if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') save();
+              if (event.key === 'Escape') setEditing(false);
+            }}
+          />
+          <div className="chat-message-editor-actions">
+            <button type="button" className="chat-message-editor-cancel" onClick={() => setEditing(false)}>
+              {i18n.t('chat.cancelEdit')}
+            </button>
+            <button type="button" className="chat-message-editor-save" disabled={!draft.trim()} onClick={save}>
+              {i18n.t('chat.saveMessage')}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="bubble-content">
+          <MentionText
+            value={message.content}
+            assets={assets ?? []}
+            onOpen={asset => onOpenAsset?.(asset)}
+            tokenClassName="chat-mention-token"
+          />
+        </div>
+      )}
+      </div>
+      {!editing && (
+        <div className="chat-message-actions">
+          {onEdit && <MessageEditButton onEdit={() => setEditing(true)} disabled={disabled} />}
+          {onDelete && <MessageDeleteButton onDelete={() => onDelete(index)} disabled={disabled} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ==================== 主组件 ==================== */
 
 export default function ChatView({
@@ -620,6 +745,11 @@ export default function ChatView({
   onCancelJob,
   onCancelTask,
   onActionCard,
+  onDeleteMessage,
+  onEditMessage,
+  sessionAssets = [],
+  deleteDisabled,
+  editDisabled,
 }: {
   messages: ChatMessage[];
   liveIndex?: number | null;
@@ -627,9 +757,15 @@ export default function ChatView({
   onCancelJob?: (jobId: string) => void;
   onCancelTask?: (taskId: string) => void;
   onActionCard?: (card: ActionCardData) => void;
+  onDeleteMessage?: (index: number) => void;
+  onEditMessage?: (index: number, content: string) => void;
+  sessionAssets?: SessionAsset[];
+  deleteDisabled?: boolean;
+  editDisabled?: boolean;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [lightbox, setLightbox] = useState<LightboxImage | null>(null);
+  const [mentionPreview, setMentionPreview] = useState<SessionAsset | null>(null);
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -654,9 +790,15 @@ export default function ChatView({
 
         return m.role === 'user' ? (
           <div key={i} className="chat-row user">
-            <div className="chat-bubble user">
-              <div className="bubble-content">{m.content}</div>
-            </div>
+            <UserMessageBubble
+              message={m}
+              index={i}
+              onEdit={onEditMessage}
+              onDelete={onDeleteMessage}
+              assets={sessionAssets}
+              onOpenAsset={setMentionPreview}
+              disabled={editDisabled || deleteDisabled}
+            />
           </div>
         ) : (
           <div key={i} className="chat-row assistant">
@@ -665,7 +807,8 @@ export default function ChatView({
             </div>
             <div className="chat-assistant-container">
               {/* 对话气泡：包含思维链、导演阐述文字 */}
-              <div className="chat-bubble assistant">
+              <div className="chat-assistant-bubble-wrap">
+                <div className="chat-bubble assistant">
                 <AssistantMessageBody
                   message={m}
                   live={liveIndex === i || (!m.content && !m.tasks?.length && !m.stages?.length)}
@@ -673,6 +816,8 @@ export default function ChatView({
                   onActionCard={onActionCard}
                   index={i}
                 />
+                </div>
+                {onDeleteMessage && <MessageDeleteButton onDelete={() => onDeleteMessage(i)} disabled={deleteDisabled} />}
               </div>
 
               {/* 气泡下方的任务媒体区域：生成中渐变动画 → 完成后过渡到图像 */}
@@ -699,6 +844,22 @@ export default function ChatView({
       })}
       <div ref={bottomRef} />
       {lightbox && <ImageLightbox image={lightbox} onClose={() => setLightbox(null)} />}
+      {mentionPreview && createPortal(
+        mentionPreview.kind === 'image' ? (
+          <ImageLightbox
+            image={{ url: mentionPreview.url, alt: mentionPreview.name, generation: mentionPreview.generation }}
+            onClose={() => setMentionPreview(null)}
+          />
+        ) : (
+          <VideoLightbox
+            src={mentionPreview.url}
+            name={mentionPreview.name}
+            generation={mentionPreview.generation}
+            onClose={() => setMentionPreview(null)}
+          />
+        ),
+        document.body,
+      )}
     </div>
   );
 }

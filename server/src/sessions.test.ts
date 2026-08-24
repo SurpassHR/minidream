@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  appendMessage, createSession, deleteSession, readSessions, renameSession,
-  selectSession, sessionList, sessionMessages, updateLastMessage,
+  appendMessage, createSession, deleteMessage, deleteSession, deleteSessions, readSessions, renameSession,
+  selectSession, sessionList, sessionMessages, truncateMessages, updateLastMessage,
 } from './sessions.js';
 
 let dir: string;
@@ -85,6 +85,29 @@ describe('createSession / renameSession / selectSession', () => {
   });
 });
 
+describe('deleteSessions', () => {
+  it('批量删除指定会话并回退 activeId', () => {
+    const first = createSession(file);
+    const firstId = first.activeId!;
+    appendMessage(file, firstId, userMsg('第一条'));
+    const second = createSession(file);
+    const secondId = second.activeId!;
+    const third = createSession(file);
+    const thirdId = third.activeId!;
+
+    const updated = deleteSessions(file, [firstId, thirdId, firstId]);
+    expect(updated.sessions.map(s => s.id)).toEqual([secondId]);
+    expect(updated.activeId).toBe(secondId);
+  });
+
+  it('批量删除包含不存在会话时不写入部分结果', () => {
+    const first = createSession(file);
+    const firstId = first.activeId!;
+    expect(() => deleteSessions(file, [firstId, 'missing'])).toThrowError(expect.objectContaining({ code: 'SESSION_NOT_FOUND' }));
+    expect(readSessions(file).sessions.map(s => s.id)).toEqual([firstId]);
+  });
+});
+
 describe('appendMessage', () => {
   it('无会话时自动创建，标题取首条用户消息前 20 字', () => {
     const r = appendMessage(file, null, userMsg('这是一条很长很长的用户消息用来测试标题截断逻辑'));
@@ -120,6 +143,53 @@ describe('deleteSession', () => {
 
   it('删除不存在的 id 抛 SESSION_NOT_FOUND', () => {
     expect(() => deleteSession(file, 'nope')).toThrowError(expect.objectContaining({ code: 'SESSION_NOT_FOUND' }));
+  });
+});
+
+describe('deleteMessage', () => {
+  it('按索引删除 user/assistant 消息并提升上下文版本，剩余消息可作为后续上下文', () => {
+    const r = appendMessage(file, null, userMsg('保留的用户消息'));
+    const sid = r.sessionId;
+    appendMessage(file, sid, asstMsg('删除的助手消息'));
+    appendMessage(file, sid, userMsg('最后一条消息'));
+
+    const updated = deleteMessage(file, sid, 1);
+    expect(updated.sessions.find(s => s.id === sid)?.messages).toEqual([
+      userMsg('保留的用户消息'),
+      userMsg('最后一条消息'),
+    ]);
+    expect(updated.sessions.find(s => s.id === sid)?.contextVersion).toBe(1);
+    expect(sessionMessages(file, sid)).not.toContainEqual(asstMsg('删除的助手消息'));
+  });
+
+  it('索引非法或会话不存在时抛出明确错误', () => {
+    const r = appendMessage(file, null, userMsg('你好'));
+    expect(() => deleteMessage(file, r.sessionId, 1)).toThrowError(/消息不存在/);
+    expect(() => deleteMessage(file, r.sessionId, -1)).toThrowError(/消息不存在/);
+    expect(() => deleteMessage(file, 'nope', 0)).toThrowError(expect.objectContaining({ code: 'SESSION_NOT_FOUND' }));
+  });
+});
+
+describe('truncateMessages', () => {
+  it('从指定 user 消息开始截断后续对话，并提升上下文版本', () => {
+    const r = appendMessage(file, null, userMsg('第一轮'));
+    const sid = r.sessionId;
+    appendMessage(file, sid, asstMsg('第一轮回复'));
+    appendMessage(file, sid, userMsg('要修改的旧内容'));
+    appendMessage(file, sid, asstMsg('不再保留的回复'));
+
+    const updated = truncateMessages(file, sid, 2);
+    expect(updated.sessions.find(s => s.id === sid)?.messages).toEqual([
+      userMsg('第一轮'),
+      asstMsg('第一轮回复'),
+    ]);
+    expect(updated.sessions.find(s => s.id === sid)?.contextVersion).toBe(1);
+  });
+
+  it('只能从 user 消息开始截断', () => {
+    const r = appendMessage(file, null, userMsg('问题'));
+    appendMessage(file, r.sessionId, asstMsg('回答'));
+    expect(() => truncateMessages(file, r.sessionId, 1)).toThrowError(/只能修改用户消息/);
   });
 });
 

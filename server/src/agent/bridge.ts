@@ -191,6 +191,10 @@ export interface RunAgentOptions {
   systemPrompt?: string;
   /** 虚构对话历史：构建为真实交替 user/assistant 消息，经动态生成的 Pi 扩展在每次 LLM 调用前注入请求头部 */
   seedHistory?: FabricatedTurn[];
+  /** 删除消息后保留的可见会话历史；仅注入请求，不写入 Pi 会话日志。 */
+  contextHistory?: FabricatedTurn[];
+  /** 使用 contextHistory 重建上下文时必须禁用 Pi 持久会话，避免每轮重复注入历史。 */
+  rebuildContext?: boolean;
   cwd?: string;
   env?: Record<string, string>;
   signal?: AbortSignal;
@@ -693,7 +697,7 @@ export async function runAgentStream(
     '--exclude-tools', 'bash,read,edit,write,fffind,ffgrep,grep,find,ls,context_tree_query,subagent,subagent_wait,subagent_supervisor,preview_export,studio_repl_send,studio_repl_status,studio_export_pdf,studio_export_html,ask_user_question,source_check,get_search_content,fetch_content',
   );
 
-  if (options.sessionId) {
+  if (options.sessionId && !options.rebuildContext) {
     args.push('--session-id', options.sessionId);
   } else {
     args.push('--no-session');
@@ -723,8 +727,12 @@ export async function runAgentStream(
   // 在每次 LLM 调用前注入请求头部（参考 custom-first-control-prompt 的请求路径注入：
   // 零会话日志写入、字节级一致保持前缀缓存复用）。扩展文件随进程结束一并清理。
   let seedExtensionFile: string | null = null;
-  if (options.seedHistory && options.seedHistory.length > 0) {
-    seedExtensionFile = writeSeedExtension(options.seedHistory);
+  const requestHistory = [
+    ...(options.seedHistory ?? []),
+    ...(options.contextHistory ?? []),
+  ];
+  if (requestHistory.length > 0) {
+    seedExtensionFile = writeSeedExtension(requestHistory);
     if (seedExtensionFile) {
       args.push('--extension', seedExtensionFile);
     }

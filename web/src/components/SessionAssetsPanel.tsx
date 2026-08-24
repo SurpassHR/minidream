@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { LightboxImage } from './ImageLightbox';
 import ImageLightbox from './ImageLightbox';
+import VideoLightbox from './VideoLightbox';
+import { VideoThumbnail } from './VideoPreview';
 import type { SessionAsset } from '../sessionAssets';
 
 export default function SessionAssetsPanel({
@@ -14,7 +16,7 @@ export default function SessionAssetsPanel({
   const [open, setOpen] = useState(true);
   const [lightboxAsset, setLightboxAsset] = useState<SessionAsset | null>(null);
 
-  const openImage = (asset: SessionAsset) => {
+  const openAsset = (asset: SessionAsset) => {
     setLightboxAsset(asset);
   };
 
@@ -44,17 +46,24 @@ export default function SessionAssetsPanel({
             <div className="session-assets-list">
               {assets.map(asset => (
                 <div className="session-asset" key={`${asset.kind}:${asset.url}`}>
-                  <button
-                    className="session-asset-preview"
-                    onClick={() => asset.kind === 'image' && openImage(asset)}
-                    aria-label={t('assets.viewAria', { name: asset.name })}
-                  >
+                  <div className="session-asset-preview">
                     {asset.kind === 'image' ? (
-                      <img src={asset.url} alt={asset.name} loading="lazy" />
+                      <button
+                        type="button"
+                        className="session-asset-image-button"
+                        onClick={() => openAsset(asset)}
+                        aria-label={t('assets.viewAria', { name: asset.name })}
+                      >
+                        <img src={asset.url} alt={asset.name} loading="lazy" />
+                      </button>
                     ) : (
-                      <video src={asset.url} muted playsInline preload="metadata" />
+                      <VideoThumbnail
+                        src={asset.url}
+                        alt={t('assets.viewAria', { name: asset.name })}
+                        onClick={() => openAsset(asset)}
+                      />
                     )}
-                  </button>
+                  </div>
                   <div className="session-asset-footer">
                     <span className="session-asset-name">{asset.name}</span>
                   </div>
@@ -66,14 +75,23 @@ export default function SessionAssetsPanel({
       )}
       {/* 灯箱必须渲染到 body：面板的 backdrop-filter 会使其成为 fixed 定位的包含块，导致预览被面板裁切 */}
       {lightboxAsset && createPortal(
-        <ImageLightbox
-          image={{
-            url: lightboxAsset.url,
-            alt: lightboxAsset.name,
-            generation: lightboxAsset.generation as LightboxImage['generation'],
-          }}
-          onClose={() => setLightboxAsset(null)}
-        />,
+        lightboxAsset.kind === 'image' ? (
+          <ImageLightbox
+            image={{
+              url: lightboxAsset.url,
+              alt: lightboxAsset.name,
+              generation: lightboxAsset.generation as LightboxImage['generation'],
+            }}
+            onClose={() => setLightboxAsset(null)}
+          />
+        ) : (
+          <VideoLightbox
+            src={lightboxAsset.url}
+            name={lightboxAsset.name}
+            generation={lightboxAsset.generation as LightboxImage['generation']}
+            onClose={() => setLightboxAsset(null)}
+          />
+        ),
         document.body,
       )}
     </aside>

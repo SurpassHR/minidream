@@ -29,7 +29,7 @@ import {
 } from './workflow.js';
 import { cancelJob, subscribeJob, getJob, jobSnapshot } from './jobs.js';
 import { ActivityRegistry } from './activity.js';
-import { DraftStore } from './drafts.js';
+import { DraftStore, inferMimeType } from './drafts.js';
 import { TaskQueue } from './tasks/queue.js';
 import type { TaskItem } from './tasks/types.js';
 import { createDirectorMCPServer, type McpServerInstance, type WorkflowRoute } from './mcp/server.js';
@@ -43,11 +43,14 @@ import {
   SessionError,
   appendMessage,
   createSession,
+  deleteMessage,
   deleteSession,
+  deleteSessions,
   renameSession,
   selectSession,
   sessionList,
   sessionMessages,
+  truncateMessages,
   updateLastMessage,
   type StoredMessage,
 } from './sessions.js';
@@ -208,6 +211,28 @@ app.get('/api/sessions', (_req, res) => {
   res.json(sessionList(SESSIONS_FILE));
 });
 
+/** 批量删除会话 */
+app.delete('/api/sessions', (req, res) => {
+  const ids = Array.isArray(req.body?.ids)
+    ? [...new Set(req.body.ids.filter((id: unknown): id is string => typeof id === 'string' && id.trim()))]
+    : [];
+  if (ids.length === 0) {
+    res.status(400).json({ error: 'ids is required' });
+    return;
+  }
+  try {
+    ids.forEach(id => activityRegistry.cancelSession(id));
+    const f = deleteSessions(SESSIONS_FILE, ids);
+    res.json({
+      sessions: f.sessions.map(s => ({ id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt })),
+      activeId: f.activeId,
+    });
+  } catch (e) {
+    if (e instanceof SessionError) { res.status(404).json({ error: e.message }); return; }
+    throw e;
+  }
+});
+
 /** 新建会话 */
 app.post('/api/sessions', (_req, res) => {
   const f = createSession(SESSIONS_FILE);
@@ -344,6 +369,21 @@ app.post('/api/sessions/:id/messages/last', (req, res) => {
   }
 });
 
+/** 删除一条用户或助手消息；删除后后续 Agent 只使用剩余可见消息重建上下文。 */
+app.delete('/api/sessions/:id/messages/:index', (req, res) => {
+  try {
+    const f = deleteMessage(SESSIONS_FILE, req.params.id, Number(req.params.index));
+    const session = f.sessions.find(item => item.id === req.params.id);
+    res.json({ ok: true, messages: session?.messages ?? [] });
+  } catch (e) {
+    if (e instanceof SessionError) {
+      res.status(e.code === 'MESSAGE_NOT_FOUND' ? 400 : 404).json({ error: e.message });
+      return;
+    }
+    throw e;
+  }
+});
+
 /* ---------------- 页面数据 ---------------- */
 
 app.get('/api/generate', (_req, res) => {
@@ -467,7 +507,11 @@ app.get('/comfyui/view', async (req, res) => {
       return;
     }
     const buf = Buffer.from(await upstream.arrayBuffer());
-    res.setHeader('Content-Type', upstream.headers.get('content-type') ?? 'application/octet-stream');
+    const upstreamType = upstream.headers.get('content-type');
+    const contentType = upstreamType && !/^application\/octet-stream(?:;|$)/i.test(upstreamType)
+      ? upstreamType
+      : inferMimeType(filename) ?? upstreamType ?? 'application/octet-stream';
+    res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=3600');
     res.send(buf);
   } catch (e) {
@@ -576,7 +620,7 @@ app.get('/api/drafts/:id/file', (req, res) => {
     res.status(404).json({ error: 'draft not found' });
     return;
   }
-  res.setHeader('Content-Type', draft.mime ?? 'application/octet-stream');
+  res.setHeader('Content-Type', draftStore.contentType(draft.id) ?? 'application/octet-stream');
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   createReadStream(draft.path).pipe(res);
 });
@@ -864,6 +908,25 @@ app.post('/api/chat', async (req, res) => {
     return;
   }
   const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : null;
+  const replaceMessageIndex = typeof req.body?.replaceMessageIndex === 'number' && Number.isInteger(req.body.replaceMessageIndex)
+    ? req.body.replaceMessageIndex
+    : undefined;
+  if (replaceMessageIndex !== undefined) {
+    if (!sessionId) {
+      res.status(400).json({ error: '编辑历史消息需要有效的 sessionId' });
+      return;
+    }
+    try {
+      // 原子地删除被编辑消息及其全部后续内容；下面 appendMessage 会把新文本写成当前轮 user 消息。
+      truncateMessages(SESSIONS_FILE, sessionId, replaceMessageIndex);
+    } catch (e) {
+      if (e instanceof SessionError) {
+        res.status(e.code === 'SESSION_NOT_FOUND' ? 404 : 400).json({ error: e.message });
+        return;
+      }
+      throw e;
+    }
+  }
 
   const isStream = req.headers.accept === 'text/event-stream' || req.query.stream === 'true' || req.body?.stream === true;
 
@@ -889,8 +952,17 @@ app.post('/api/chat', async (req, res) => {
   // 虚构对话历史：只要有配置就**每个请求**都注入（参考 custom-first-control-prompt 的
   // “every request re-injects it”设计——种子消息只在请求路径上，不写入会话日志，
   // 因此必须每次请求都重新前置注入，否则后续轮次模型从 session 恢复的历史中
-  // 看不到种子，准则/参考对话会“遗忘”；每次注入字节级一致，保持前缀缓存复用）
+  // 看不到种子，准则/参考对话会“遗忘”；每次注入字节级一致，保持前缀缓存复用）。
+  // 消息被删除后，切换到无持久化 Pi 会话，并把删除后的可见历史按请求注入，
+  // 从根上避免被删除内容继续留在 Agent 的隐式上下文中。
   const fabricatedHistory = readSettings(SETTINGS_FILE).agent.fabricatedHistory;
+  const sessionAfterAppend = append.file.sessions.find(item => item.id === sid);
+  const contextVersion = sessionAfterAppend?.contextVersion ?? 0;
+  const contextHistory = contextVersion > 0
+    ? (sessionAfterAppend?.messages ?? []).slice(0, -1)
+        .filter(item => typeof item.content === 'string' && item.content.trim())
+        .map(item => ({ role: item.role, content: item.content }))
+    : undefined;
 
   if (isStream) {
 
@@ -1123,7 +1195,10 @@ app.post('/api/chat', async (req, res) => {
 
     try {
       await runAgentStream(agentInput, {
-        sessionId: sid,
+        // 删除过消息的会话不再复用旧 Pi session；否则旧消息虽从 JSON 删除，仍会被 Pi 恢复。
+        sessionId: contextVersion > 0 ? undefined : sid,
+        contextHistory,
+        rebuildContext: contextVersion > 0,
         signal: agentController.signal,
         mcpServerUrl: mcpUrl,
         seedHistory: fabricatedHistory.length > 0 ? fabricatedHistory : undefined,

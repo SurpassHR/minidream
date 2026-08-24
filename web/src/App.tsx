@@ -15,6 +15,8 @@ import {
   openJobEvents,
   createSession,
   deleteSession as apiDeleteSession,
+  deleteSessions as apiDeleteSessions,
+  deleteSessionMessage,
   fetchSessions,
   fetchSessionMessages,
   renameSession as apiRenameSession,
@@ -265,6 +267,7 @@ export default function App() {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
+  const [deletingMessageIndex, setDeletingMessageIndex] = useState<number | null>(null);
   /** Agent 正文回复是否已结束：回复完成后即使生成任务仍在进行，也不再显示打字光标 */
   const [agentReplyDone, setAgentReplyDone] = useState(false);
   const [activity, setActivity] = useState<ActivitySnapshot>({ sessions: [], tasks: [] });
@@ -415,11 +418,13 @@ export default function App() {
     };
   }, [loadedConv]);
 
-  const handleSend = async (text?: string, opts?: ComposerSubmitOpts) => {
+  const handleSend = async (text?: string, opts?: ComposerSubmitOpts, replaceMessageIndex?: number) => {
     const content = (text ?? input).trim();
     if (!content || sending) return;
     const userMsg: ChatMessage = { role: 'user', content };
-    setMessages(prev => [...prev, userMsg]);
+    setMessages(prev => replaceMessageIndex === undefined
+      ? [...prev, userMsg]
+      : [...prev.slice(0, replaceMessageIndex), userMsg]);
     setInput('');
     setSending(true);
     setAgentReplyDone(false);
@@ -438,7 +443,11 @@ export default function App() {
     try {
       await sendChatStream(
         content,
-        { ...opts, sessionId: activeConv },
+        {
+          ...opts,
+          sessionId: activeConv,
+          replaceMessageIndex,
+        },
         event => {
           if (event.type === 'agent:reply_done') {
             setAgentReplyDone(true);
@@ -683,6 +692,25 @@ export default function App() {
     }).catch(() => undefined);
   };
 
+  const handleDeleteMessage = async (index: number) => {
+    if (!activeConv || sending || deletingMessageIndex !== null) return;
+    if (!window.confirm(t('app.confirmDeleteMessage'))) return;
+    setDeletingMessageIndex(index);
+    try {
+      const result = await deleteSessionMessage(activeConv, index);
+      setMessages(result.messages);
+    } catch {
+      /* ignore */
+    } finally {
+      setDeletingMessageIndex(null);
+    }
+  };
+
+  const handleEditMessage = (index: number, content: string) => {
+    if (!activeConv || sending) return;
+    void handleSend(content, undefined, index);
+  };
+
   const handleCancelTask = async (taskId: string) => {
     try {
       await cancelTask(taskId);
@@ -784,6 +812,35 @@ export default function App() {
     }
   };
 
+  const handleDeleteConversations = async (ids: string[]) => {
+    if (ids.length === 0 || !window.confirm(t('sidebar.confirmDeleteSelected', { count: ids.length }))) return;
+    const activeDeleted = activeConv !== null && ids.includes(activeConv);
+    if (activeDeleted) streamAbortRef.current?.abort();
+    try {
+      const r = await apiDeleteSessions(ids);
+      setConversations(r.sessions);
+      if (!activeDeleted) return;
+      if (r.activeId) {
+        activeConvRef.current = r.activeId;
+        setActiveConv(r.activeId);
+        setLoadedConv(null);
+        fetchSessionMessages(r.activeId)
+          .then(msgs => {
+            setMessages(msgs);
+            setLoadedConv(r.activeId);
+          })
+          .catch(() => undefined);
+      } else {
+        activeConvRef.current = null;
+        setActiveConv(null);
+        setLoadedConv(null);
+        setMessages([]);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
   if (error) {
     return (
       <div className="app-error">
@@ -822,6 +879,7 @@ export default function App() {
             onSelect={handleSelectConversation}
             onRename={id => void handleRenameConversation(id)}
             onDelete={id => void handleDeleteConversation(id)}
+            onDeleteMany={ids => void handleDeleteConversations(ids)}
           />
         )}
         <main className="main">
@@ -860,6 +918,11 @@ export default function App() {
                   onCancelJob={handleCancelJob}
                   onCancelTask={handleCancelTask}
                   onActionCard={handleActionCard}
+                  sessionAssets={sessionAssets}
+                  onDeleteMessage={handleDeleteMessage}
+                  onEditMessage={handleEditMessage}
+                  deleteDisabled={sending || deletingMessageIndex !== null}
+                  editDisabled={sending || deletingMessageIndex !== null}
                 />
               </div>
             )
