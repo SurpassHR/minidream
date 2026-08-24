@@ -2,6 +2,8 @@ import { useEffect, useState, useRef, useCallback, type CSSProperties } from 're
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
+import { useTranslation } from 'react-i18next';
+import i18n from '../i18n';
 import { openDraftLocation, type ChatMessage, type ChatStage, type GenerationOutput, type TaskItem, type ActionCardData, type WorkflowRoute, type ResponseBlock } from '../api';
 import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 import { getTaskMediaAspectRatio, getTaskMediaLayoutClass } from '../taskMediaRatio';
@@ -83,10 +85,10 @@ function ThinkingChain({
         </svg>
         <span className="thinking-label">
           {live
-            ? `思考中… (${elapsed}s)`
+            ? i18n.t('chat.thinkingLive', { s: elapsed })
             : seconds > 0
-              ? `已深度思考 (${seconds}秒)`
-              : '深度思考过程'}
+              ? i18n.t('chat.thinkingDone', { s: seconds })
+              : i18n.t('chat.thinkingProcess')}
         </span>
         {live && (
           <span className="thinking-dots">
@@ -116,7 +118,7 @@ function ResponseBlockView({ block }: { block: ResponseBlock }) {
   if (block.container === 'collapsible') {
     return (
       <details className="response-block response-block-collapsible" open={block.defaultOpen}>
-        <summary>{block.label || (block.type === 'thinking' ? '深度思考过程' : '回复内容')}</summary>
+        <summary>{block.label || (block.type === 'thinking' ? i18n.t('chat.thinkingProcess') : i18n.t('chat.replyContent'))}</summary>
         <div className="response-block-content">{content}</div>
       </details>
     );
@@ -141,19 +143,19 @@ function ResponseBlocksView({ blocks }: { blocks: ResponseBlock[] }) {
 
 function routeIntentLabel(intent: WorkflowRoute['intent']): string {
   switch (intent) {
-    case 'image_upscale': return '图像放大';
-    case 'image_to_image': return '图生图';
-    case 'image_to_video': return '图生视频';
-    case 'text_to_video': return '文生视频';
-    case 'text_to_image': return '文生图';
-    default: return '未识别';
+    case 'image_upscale': return i18n.t('chat.intentUpscale');
+    case 'image_to_image': return i18n.t('chat.intentImg2Img');
+    case 'image_to_video': return i18n.t('chat.intentImg2Vid');
+    case 'text_to_video': return i18n.t('chat.intentTxt2Vid');
+    case 'text_to_image': return i18n.t('chat.intentTxt2Img');
+    default: return i18n.t('chat.intentUnknown');
   }
 }
 
 function workflowLabel(id: string): string {
-  if (id === 'image_seedvr2_upscale') return 'SeedVR2 图像放大';
-  if (id === 'image_krea2_turbo_t2i') return 'Krea2 图像生成';
-  if (id.includes('video-minimax')) return 'MiniMax H3 视频生成';
+  if (id === 'image_seedvr2_upscale') return i18n.t('chat.wfSeedvr2');
+  if (id === 'image_krea2_turbo_t2i') return i18n.t('chat.wfKrea2');
+  if (id.includes('video-minimax')) return i18n.t('chat.wfMinimax');
   return id;
 }
 
@@ -179,7 +181,7 @@ function GenerationPromptView({ prompts }: { prompts: string[] }) {
     <div className="generation-prompt-list">
       {prompts.map((prompt, index) => (
         <div className="generation-prompt" key={`${index}-${prompt.slice(0, 24)}`}>
-          <div className="generation-prompt-title">生成提示词{prompts.length > 1 ? ` ${index + 1}` : ''}</div>
+          <div className="generation-prompt-title">{prompts.length > 1 ? i18n.t('chat.generationPromptN', { n: index + 1 }) : i18n.t('chat.generationPrompt')}</div>
           <pre className="generation-prompt-code"><code>{prompt}</code></pre>
         </div>
       ))}
@@ -195,8 +197,8 @@ function RouteSummaryView({ routes }: { routes: WorkflowRoute[] }) {
         <div className="route-summary" key={route.taskId ?? `${route.requestedWorkflowId}-${route.finalWorkflowId}-${index}`}>
           <div className="route-summary-title">
             <span className="route-summary-icon">↗</span>
-            <span>工作流路由</span>
-            <span className="route-summary-status">{route.forced ? '规则强制' : 'Agent 选择'}</span>
+            <span>{i18n.t('chat.routeTitle')}</span>
+            <span className="route-summary-status">{route.forced ? i18n.t('chat.routeForced') : i18n.t('chat.routeChosen')}</span>
           </div>
           <div className="route-summary-flow">
             <span>{routeIntentLabel(route.intent)}</span>
@@ -210,8 +212,10 @@ function RouteSummaryView({ routes }: { routes: WorkflowRoute[] }) {
             <strong>{workflowLabel(route.finalWorkflowId)}</strong>
           </div>
           <div className="route-summary-meta">
-            参考图 {route.referenceImageCount} 张
-            {route.referenceVideoCount > 0 ? `，参考视频 ${route.referenceVideoCount} 个` : ''}
+            {[
+              i18n.t('chat.refImages', { count: route.referenceImageCount }),
+              route.referenceVideoCount > 0 ? i18n.t('chat.refVideos', { count: route.referenceVideoCount }) : '',
+            ].filter(Boolean).join(' · ')}
             {' · '}
             {route.reason}
           </div>
@@ -248,11 +252,11 @@ function TaskLoadingMedia({
         preload="auto"
       />
       <span className="task-progress-badge">
-        {queued ? '排队中...' : `生成中... ${Math.round(percent)}%`}
+        {queued ? i18n.t('chat.queuing') : i18n.t('chat.generatingPercent', { percent: Math.round(percent) })}
       </span>
       {onCancel && (
         <button className="task-cancel task-cancel-overlay" onClick={onCancel}>
-          {cancelLabel ?? '取消任务'}
+          {cancelLabel ?? i18n.t('chat.cancelTask')}
         </button>
       )}
     </div>
@@ -320,7 +324,7 @@ function TaskMediaRegion({
     percent = activeStage?.progress ?? (queued ? 0 : 5);
     if (onCancelTask) {
       cancelFn = () => onCancelTask(activeTask!.id);
-      cancelLabel = '取消任务';
+      cancelLabel = i18n.t('chat.cancelTask');
     }
   } else if (legacyStage && !legacyStage.cancelled) {
     queued = Boolean(legacyStage.queued);
@@ -328,7 +332,7 @@ function TaskMediaRegion({
     percent = Math.min(100, (p.completed / Math.max(1, p.total)) * 100);
     if (onCancelJob && jobId) {
       cancelFn = () => onCancelJob(jobId);
-      cancelLabel = '取消生成';
+      cancelLabel = i18n.t('chat.cancelGeneration');
     }
   }
 
@@ -359,13 +363,13 @@ function ActionCardItem({
   return (
     <div className="action-card">
       <div className="action-card-head">
-        <div className="action-card-badge">分镜 / 创作建议</div>
+        <div className="action-card-badge">{i18n.t('chat.actionCardBadge')}</div>
         <div className="action-card-title">{card.title}</div>
       </div>
       <div className="action-card-prompt">{card.prompt}</div>
       {card.workflowId && (
         <div className="action-card-meta">
-          <span>工作流: {card.workflowId}</span>
+          <span>{i18n.t('chat.workflowColon', { id: card.workflowId })}</span>
         </div>
       )}
       <div className="action-card-foot">
@@ -373,7 +377,7 @@ function ActionCardItem({
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M3 2.5l8 4.5-8 4.5v-9z" fill="currentColor" />
           </svg>
-          一键生成此分镜
+          {i18n.t('chat.oneClickGenerate')}
         </button>
       </div>
     </div>
@@ -408,7 +412,7 @@ function GenerationOutputsView({
         <div className="result-grid">
           {images.map((img, i) => {
             const draftId = draftIdOf(img.url);
-            const alt = img.label ?? `生成图片 ${i + 1}`;
+            const alt = img.label ?? i18n.t('chat.generatedImageAlt', { n: i + 1 });
             return (
               <figure key={`${img.url ?? i}`} className="result-figure">
                 <div className="result-media">
@@ -430,8 +434,8 @@ function GenerationOutputsView({
                   {draftId && (
                     <button
                       className="result-open-location"
-                      title="打开文件位置"
-                      aria-label="打开文件位置"
+                      title={i18n.t('chat.openLocation')}
+                      aria-label={i18n.t('chat.openLocation')}
                       onClick={e => {
                         e.stopPropagation();
                         void openDraftLocation(draftId).catch(() => undefined);
@@ -574,7 +578,7 @@ function AssistantMessageBody({
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M12 7a5 5 0 1 1-1.46-3.54M12 2.5V6H8.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            重新生成
+            {i18n.t('chat.regenerate')}
           </button>
         </div>
       )}

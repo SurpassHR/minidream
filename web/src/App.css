@@ -339,7 +339,8 @@
 }
 
 .rail-settings,
-.rail-theme {
+.rail-theme,
+.rail-lang {
   width: 40px;
   height: 40px;
   display: flex;
@@ -350,17 +351,25 @@
   transition: background-color 0.15s, color 0.15s;
 }
 
-.rail-settings {
+.rail-lang {
   margin-top: auto;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .rail-theme {
+  margin-top: 4px;
+}
+
+.rail-settings {
   margin-top: 4px;
   margin-bottom: 16px;
 }
 
 .rail-settings:hover,
-.rail-theme:hover {
+.rail-theme:hover,
+.rail-lang:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
 }

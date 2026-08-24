@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from '../i18n';
 import { deleteDraft, fetchDrafts, type DraftRecord } from '../api';
 import ImageLightbox, { type LightboxImage } from './ImageLightbox';
 
 function formatDate(value: number): string {
-  return new Intl.DateTimeFormat('zh-CN', {
+  return new Intl.DateTimeFormat(i18n.language, {
     month: 'numeric',
     day: 'numeric',
     hour: '2-digit',
@@ -12,6 +14,7 @@ function formatDate(value: number): string {
 }
 
 export default function DraftsView() {
+  const { t } = useTranslation();
   const [drafts, setDrafts] = useState<DraftRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [lightbox, setLightbox] = useState<LightboxImage | null>(null);
@@ -38,20 +41,20 @@ export default function DraftsView() {
     <section className="drafts-view">
       <header className="drafts-header">
         <div>
-          <span className="drafts-kicker">本地创作缓存</span>
-          <h1>草稿</h1>
-          <p>生成完成的图片和视频会先保存在这里，方便继续整理。</p>
+          <span className="drafts-kicker">{t('drafts.kicker')}</span>
+          <h1>{t('drafts.title')}</h1>
+          <p>{t('drafts.desc')}</p>
         </div>
-        <button className="drafts-refresh" onClick={refresh} title="刷新草稿" aria-label="刷新草稿">↻</button>
+        <button className="drafts-refresh" onClick={refresh} title={t('drafts.refresh')} aria-label={t('drafts.refresh')}>↻</button>
       </header>
 
       {loading ? (
-        <div className="drafts-empty">正在读取草稿…</div>
+        <div className="drafts-empty">{t('drafts.loading')}</div>
       ) : drafts.length === 0 ? (
         <div className="drafts-empty">
           <div className="drafts-empty-icon">□</div>
-          <h2>还没有草稿</h2>
-          <p>生成图片或视频后，产物会自动保存到这里。</p>
+          <h2>{t('drafts.emptyTitle')}</h2>
+          <p>{t('drafts.emptyDesc')}</p>
         </div>
       ) : (
         <div className="drafts-grid">
@@ -68,10 +71,10 @@ export default function DraftsView() {
                     onClick={() => setLightbox({ url: `/api/drafts/${draft.id}/file`, alt: draft.filename })}
                   />
                 )}
-                <button className="draft-delete" onClick={() => void remove(draft.id)} title="删除草稿" aria-label="删除草稿">×</button>
+                <button className="draft-delete" onClick={() => void remove(draft.id)} title={t('drafts.delete')} aria-label={t('drafts.delete')}>×</button>
               </div>
               <div className="draft-meta">
-                <span className="draft-kind">{draft.kind === 'video' ? '视频' : '图片'}</span>
+                <span className="draft-kind">{draft.kind === 'video' ? t('common.kindVideo') : t('common.kindImage')}</span>
                 <span className="draft-date">{formatDate(draft.createdAt)}</span>
               </div>
               <div className="draft-name" title={draft.filename}>{draft.filename}</div>

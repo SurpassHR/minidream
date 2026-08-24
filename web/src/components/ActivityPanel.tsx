@@ -1,28 +1,30 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from '../i18n';
 import type { ActiveSession, ActivitySnapshot, TaskItem } from '../api';
 
 function formatDuration(startedAt: number, now: number): string {
   const seconds = Math.max(0, Math.floor((now - startedAt) / 1000));
-  if (seconds < 60) return `${seconds} 秒`;
+  if (seconds < 60) return i18n.t('activity.secShort', { s: seconds });
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} 分钟`;
-  return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`;
+  if (minutes < 60) return i18n.t('activity.minShort', { m: minutes });
+  return i18n.t('activity.hourMinShort', { h: Math.floor(minutes / 60), m: minutes % 60 });
 }
 
 function sessionStatus(status: ActiveSession['status']): string {
-  if (status === 'running') return '进行中';
-  if (status === 'canceled') return '已终止';
-  if (status === 'completed') return '已完成';
-  return '失败';
+  if (status === 'running') return i18n.t('activity.sessionRunning');
+  if (status === 'canceled') return i18n.t('activity.sessionCanceled');
+  if (status === 'completed') return i18n.t('activity.sessionCompleted');
+  return i18n.t('activity.sessionFailed');
 }
 
 function taskStatus(task: TaskItem): string {
-  if (task.status === 'queued') return '排队中';
-  if (task.status === 'running') return '生成中';
-  if (task.status === 'canceled') return '已取消';
-  if (task.status === 'completed') return '已完成';
-  if (task.status === 'interrupted') return '已中断';
-  return '失败';
+  if (task.status === 'queued') return i18n.t('activity.taskQueued');
+  if (task.status === 'running') return i18n.t('activity.taskRunning');
+  if (task.status === 'canceled') return i18n.t('activity.taskCanceled');
+  if (task.status === 'completed') return i18n.t('activity.taskCompleted');
+  if (task.status === 'interrupted') return i18n.t('activity.taskInterrupted');
+  return i18n.t('activity.taskFailed');
 }
 
 function taskProgress(task: TaskItem): number {
@@ -42,6 +44,7 @@ export default function ActivityPanel({
   onCancelSession: (sessionId: string) => void;
   onCancelTask: (taskId: string) => void;
 }) {
+  const { t } = useTranslation();
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -56,41 +59,41 @@ export default function ActivityPanel({
   const visibleTasks = snapshot.tasks;
 
   return (
-    <div className="activity-panel" role="dialog" aria-modal="true" aria-label="运行中活动">
+    <div className="activity-panel" role="dialog" aria-modal="true" aria-label={t('statusbar.ariaLabel')}>
       <div className="activity-panel-head">
         <div>
-          <div className="activity-panel-kicker">实时状态</div>
-          <h2>运行中的活动</h2>
+          <div className="activity-panel-kicker">{t('activity.kicker')}</div>
+          <h2>{t('activity.title')}</h2>
         </div>
-        <button className="activity-close" onClick={onClose} aria-label="关闭活动面板">×</button>
+        <button className="activity-close" onClick={onClose} aria-label={t('activity.closeAria')}>×</button>
       </div>
 
       {visibleSessions.length === 0 && visibleTasks.length === 0 ? (
         <div className="activity-empty">
           <span className="activity-empty-icon">✓</span>
-          <p>当前没有正在进行的会话或生成任务</p>
+          <p>{t('activity.empty')}</p>
         </div>
       ) : (
         <div className="activity-list">
           {visibleSessions.length > 0 && (
             <section className="activity-section">
-              <div className="activity-section-title">对话 <em>{visibleSessions.length}</em></div>
+              <div className="activity-section-title">{t('activity.sessions')} <em>{visibleSessions.length}</em></div>
               {visibleSessions.map(session => {
                 const isRunning = session.status === 'running';
                 return (
                   <div key={session.sessionId} className={`activity-item activity-session${isRunning ? '' : ' activity-history-item'}`}>
                     <div className="activity-item-head">
                       <span className={`activity-pulse${isRunning ? '' : ' history'}`} />
-                      <span className="activity-item-title">导演 Agent 对话</span>
+                      <span className="activity-item-title">{t('activity.sessionItemTitle')}</span>
                       <span className="activity-item-status">{sessionStatus(session.status)}</span>
                     </div>
                     <p className="activity-item-message">{session.message}</p>
                     <div className="activity-item-meta">
                       <span>{formatDuration(session.startedAt, now)}</span>
-                      <span>{session.taskIds.length} 个关联任务</span>
+                      <span>{t('activity.relatedTasks', { count: session.taskIds.length })}</span>
                       {isRunning && (
                         <button className="activity-danger-btn" onClick={() => onCancelSession(session.sessionId)}>
-                          终止会话
+                          {t('activity.terminateSession')}
                         </button>
                       )}
                     </div>
@@ -102,7 +105,7 @@ export default function ActivityPanel({
 
           {visibleTasks.length > 0 && (
             <section className="activity-section">
-              <div className="activity-section-title">生成任务 <em>{visibleTasks.length}</em></div>
+              <div className="activity-section-title">{t('activity.tasks')} <em>{visibleTasks.length}</em></div>
               {visibleTasks.map(task => {
                 const stage = task.stages.find(item => item.status === 'active') ?? task.stages[task.stages.length - 1];
                 const percent = taskProgress(task);
@@ -122,7 +125,7 @@ export default function ActivityPanel({
                       <span>{stage?.name ?? taskStatus(task)} · {Math.round(percent)}%</span>
                       {isRunning && (
                         <button className="activity-danger-btn" onClick={() => onCancelTask(task.id)}>
-                          取消任务
+                          {t('chat.cancelTask')}
                         </button>
                       )}
                     </div>

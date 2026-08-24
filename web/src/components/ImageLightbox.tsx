@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from '../i18n';
 
 export interface LightboxImage {
   url: string;
@@ -33,6 +35,7 @@ export default function ImageLightbox({
   image: LightboxImage;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const wrapRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   /** 适配窗口的基础缩放（contain，≤1，小图不放大） */
@@ -186,7 +189,7 @@ export default function ImageLightbox({
       className={`lightbox${dragging ? ' dragging' : ''}`}
       role="dialog"
       aria-modal="true"
-      aria-label="图片大图预览"
+      aria-label={t('lightbox.ariaLabel')}
       onMouseDown={onMouseDown}
       onMouseMove={onMouseMove}
       onMouseUp={endDrag}
@@ -211,8 +214,8 @@ export default function ImageLightbox({
       />
       <div className="lightbox-tools">
         <button
-          aria-label="缩小"
-          title="缩小"
+          aria-label={t('lightbox.zoomOut')}
+          title={t('lightbox.zoomOut')}
           onClick={e => {
             e.stopPropagation();
             zoomBy(1 / ZOOM_STEP);
@@ -221,8 +224,8 @@ export default function ImageLightbox({
           −
         </button>
         <button
-          aria-label="放大"
-          title="放大"
+          aria-label={t('lightbox.zoomIn')}
+          title={t('lightbox.zoomIn')}
           onClick={e => {
             e.stopPropagation();
             zoomBy(ZOOM_STEP);
@@ -231,8 +234,8 @@ export default function ImageLightbox({
           +
         </button>
         <button
-          aria-label="适应窗口"
-          title="适应窗口"
+          aria-label={t('lightbox.fit')}
+          title={t('lightbox.fit')}
           onClick={e => {
             e.stopPropagation();
             fitImage();
@@ -246,8 +249,8 @@ export default function ImageLightbox({
         )}
         {image.generation && (
           <button
-            aria-label="查看生成信息"
-            title="查看生成信息"
+            aria-label={t('lightbox.infoToggle')}
+            title={t('lightbox.infoToggle')}
             className={`lightbox-info-toggle${infoOpen ? ' active' : ''}`}
             onClick={e => {
               e.stopPropagation();
@@ -261,45 +264,45 @@ export default function ImageLightbox({
       {infoOpen && image.generation && (
         <aside className="lightbox-info" onClick={e => e.stopPropagation()}>
           <div className="lightbox-info-head">
-            <strong>生成信息</strong>
+            <strong>{t('lightbox.infoTitle')}</strong>
             <button
               className="lightbox-info-close"
-              aria-label="关闭生成信息"
-              title="关闭生成信息"
+              aria-label={t('lightbox.infoClose')}
+              title={t('lightbox.infoClose')}
               onClick={() => setInfoOpen(false)}
             >
               ×
             </button>
           </div>
           <div className="lightbox-info-section">
-            <div className="lightbox-info-label">提示词</div>
-            <pre className="lightbox-prompt"><code>{image.generation.prompt || '未记录'}</code></pre>
+            <div className="lightbox-info-label">{t('lightbox.prompt')}</div>
+            <pre className="lightbox-prompt"><code>{image.generation.prompt || t('lightbox.notRecorded')}</code></pre>
             {image.generation.prompt && (
               <button className="lightbox-copy" onClick={() => void copyPrompt()}>
-                {copied ? '已复制' : '复制提示词'}
+                {copied ? t('lightbox.copied') : t('lightbox.copyPrompt')}
               </button>
             )}
           </div>
           <dl className="lightbox-info-list">
             {image.generation.workflowId && (
-              <div><dt>工作流</dt><dd>{image.generation.workflowId}</dd></div>
+              <div><dt>{t('lightbox.workflow')}</dt><dd>{image.generation.workflowId}</dd></div>
             )}
             {naturalSize && (
-              <div><dt>分辨率</dt><dd>{naturalSize.w} × {naturalSize.h} px</dd></div>
+              <div><dt>{t('lightbox.resolution')}</dt><dd>{naturalSize.w} × {naturalSize.h} px</dd></div>
             )}
             {image.generation.ratio && (
-              <div><dt>比例</dt><dd>{image.generation.ratio}</dd></div>
+              <div><dt>{t('lightbox.ratio')}</dt><dd>{image.generation.ratio}</dd></div>
             )}
             {image.generation.size !== undefined && (
-              <div><dt>尺寸</dt><dd>{image.generation.size} MP</dd></div>
+              <div><dt>{t('lightbox.size')}</dt><dd>{image.generation.size} MP</dd></div>
             )}
             {image.generation.createdAt && (
-              <div><dt>生成时间</dt><dd>{new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(image.generation.createdAt)}</dd></div>
+              <div><dt>{t('lightbox.createdAt')}</dt><dd>{new Intl.DateTimeFormat(i18n.language, { dateStyle: 'medium', timeStyle: 'short' }).format(image.generation.createdAt)}</dd></div>
             )}
           </dl>
           {image.generation.params && Object.keys(image.generation.params).length > 0 && (
             <div className="lightbox-info-section">
-              <div className="lightbox-info-label">生成参数</div>
+              <div className="lightbox-info-label">{t('lightbox.params')}</div>
               <dl className="lightbox-params">
                 {Object.entries(image.generation.params)
                   .filter(([, value]) => value !== undefined && value !== null)
@@ -313,7 +316,7 @@ export default function ImageLightbox({
       )}
       <button
         className="lightbox-close"
-        aria-label="关闭大图"
+        aria-label={t('lightbox.closeAria')}
         onClick={e => {
           e.stopPropagation();
           onClose();
@@ -321,7 +324,7 @@ export default function ImageLightbox({
       >
         ×
       </button>
-      <div className="lightbox-hint">滚轮/按钮缩放 · 拖拽平移 · 双击适应 · Esc 关闭</div>
+      <div className="lightbox-hint">{t('lightbox.hint')}</div>
     </div>
   );
 }

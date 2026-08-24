@@ -1,4 +1,5 @@
 import { forwardRef, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { GenerateData } from '../api';
 import { computeResolution } from '../resolution';
 import { findMentionedSessionAssets, type SessionAsset } from '../sessionAssets';
@@ -27,7 +28,6 @@ function formatSize(v: number): string {
 }
 
 const Composer = forwardRef<ComposerHandle, {
-  placeholder: string;
   composer: GenerateData['composer'];
   value: string;
   onChange: (v: string) => void;
@@ -35,7 +35,8 @@ const Composer = forwardRef<ComposerHandle, {
   sessionAssets: SessionAsset[];
   onStop?: () => void;
   disabled?: boolean;
-}>(function Composer({ placeholder, composer, value, onChange, onSubmit, sessionAssets, onStop, disabled }, ref) {
+}>(function Composer({ composer, value, onChange, onSubmit, sessionAssets, onStop, disabled }, ref) {
+  const { t } = useTranslation();
   const [focused, setFocused] = useState(false);
   const [openPanel, setOpenPanel] = useState<PanelId>(null);
   const [ratio, setRatio] = useState(composer.preferences.ratios[0] ?? '智能');
@@ -50,6 +51,8 @@ const Composer = forwardRef<ComposerHandle, {
   const clampSize = (v: number) => Math.min(sizeCfg.max, Math.max(sizeCfg.min, v));
   // 当前比例+尺寸对应的像素预览（智能比例 → null）
   const preview = computeResolution(ratio, size);
+  // 「智能」是传给服务端的原始值，仅展示时翻译；计算仍用原始值
+  const ratioLabel = (r: string) => (r === '智能' ? t('composer.ratioSmart') : r);
 
   const fetchAssetDataUrl = async (asset: SessionAsset): Promise<string | null> => {
     if (asset.url.startsWith('data:')) return asset.url;
@@ -88,7 +91,7 @@ const Composer = forwardRef<ComposerHandle, {
   };
 
   const toggle = (p: Exclude<PanelId, null>) => {
-    setOpenPanel(openPanel === p ? null : openPanel);
+    setOpenPanel(openPanel === p ? null : p);
   };
 
   const filteredAssets = mention
@@ -160,7 +163,7 @@ const Composer = forwardRef<ComposerHandle, {
                   <video src={asset.url} muted playsInline preload="metadata" />
                 )}
                 <span className="mention-name">{asset.name}</span>
-                <span className="mention-tag">{asset.kind === 'image' ? '图片' : '视频'}</span>
+                <span className="mention-tag">{asset.kind === 'image' ? t('composer.mentionImage') : t('composer.mentionVideo')}</span>
               </button>
             ))}
           </div>
@@ -169,7 +172,7 @@ const Composer = forwardRef<ComposerHandle, {
           ref={taRef}
           className="composer-input"
           rows={2}
-          placeholder={placeholder}
+          placeholder={t('composer.placeholder')}
           value={value}
           onChange={onInputChange}
           onFocus={() => setFocused(true)}
@@ -216,16 +219,16 @@ const Composer = forwardRef<ComposerHandle, {
             <button
               className={`composer-mode${openPanel === 'preference' ? ' open' : ''}`}
               onClick={() => toggle('preference')}
-              title="生成比例 / 生成尺寸"
+              title={t('composer.ratioSizeTitle')}
             >
-              {ratio} · {formatSize(size)}MP
+              {ratioLabel(ratio)} · {formatSize(size)}MP
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                 <path d="M2.5 4.5 6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </button>
             {openPanel === 'preference' && (
               <div className="composer-panel pref-panel">
-                <div className="panel-title">生成比例</div>
+                <div className="panel-title">{t('composer.ratio')}</div>
                 <div className="pref-ratios">
                   {composer.preferences.ratios.map(r => (
                     <button
@@ -233,18 +236,18 @@ const Composer = forwardRef<ComposerHandle, {
                       className={`pref-ratio${ratio === r ? ' active' : ''}`}
                       onClick={() => setRatio(r)}
                     >
-                      {r}
+                      {ratioLabel(r)}
                     </button>
                   ))}
                 </div>
 
-                <div className="panel-title">生成尺寸</div>
+                <div className="panel-title">{t('composer.size')}</div>
                 <div className="pref-size">
                   <div className="pref-size-row">
                     <button
                       className="pref-size-btn"
                       onClick={() => setSize(prev => clampSize(Math.round((prev - sizeCfg.step) / sizeCfg.step) * sizeCfg.step))}
-                      aria-label="减小尺寸"
+                      aria-label={t('composer.decreaseSize')}
                     >
                       −
                     </button>
@@ -266,7 +269,7 @@ const Composer = forwardRef<ComposerHandle, {
                     <button
                       className="pref-size-btn"
                       onClick={() => setSize(prev => clampSize(Math.round((prev + sizeCfg.step) / sizeCfg.step) * sizeCfg.step))}
-                      aria-label="增大尺寸"
+                      aria-label={t('composer.increaseSize')}
                     >
                       +
                     </button>
@@ -289,11 +292,11 @@ const Composer = forwardRef<ComposerHandle, {
                       <>
                         <span className="pref-size-preview-px">{preview.width} × {preview.height} px</span>
                         {preview.capped && (
-                          <span className="pref-size-preview-hint">已按最大边长等比缩放</span>
+                          <span className="pref-size-preview-hint">{t('composer.cappedHint')}</span>
                         )}
                       </>
                     ) : (
-                      <span className="pref-size-preview-hint">智能比例：跟随工作流默认分辨率</span>
+                      <span className="pref-size-preview-hint">{t('composer.smartRatioHint')}</span>
                     )}
                   </div>
                 </div>
@@ -308,19 +311,19 @@ const Composer = forwardRef<ComposerHandle, {
             <button
               className="composer-stop"
               onClick={onStop}
-              title="停止生成"
-              aria-label="停止生成"
+              title={t('composer.stopTitle')}
+              aria-label={t('composer.stopTitle')}
             >
               <span className="composer-stop-icon" />
-              停止
+              {t('composer.stop')}
             </button>
           ) : (
             <button
               className={`composer-send${canSend ? ' enabled' : ''}`}
               disabled={!canSend}
               onClick={submit}
-              title="发送"
-              aria-label="发送"
+              title={t('common.send')}
+              aria-label={t('common.send')}
             >
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                 <path d="M10 2.5v11m0 0 4.5-4.5M10 13.5 5.5 9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />

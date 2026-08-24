@@ -1,6 +1,12 @@
 # AGENTS.md — 开发备忘
 
-## ComfyUI 配置持久化
+## 前端多语言（i18n）
+
+- 方案：`i18next` + `react-i18next`（web 依赖），资源文件在 `web/src/i18n/`：`zh.ts` 是全部 UI 文案的唯一来源，`en.ts` 用 `DeepStringify<typeof zh>` 在编译期强制结构一致；`i18next.d.ts` 通过 `CustomTypeOptions` 让 `t()` 的 key 类型安全（写错 key 直接 tsc 报错）。
+- 初始化在 `web/src/i18n/index.ts`，由 `web/src/main.tsx` 引入；语言默认跟随浏览器（`zh*` → zh），`localStorage['app.language']` 持久化，切换时同步 `<html lang>`。
+- 切换入口：侧边导航栏（Rail）底部的 `中/EN` 按钮（`.rail-lang`），调 `i18n.changeLanguage`。
+- 组件内用 `useTranslation()` 的 `t`；模块级工具函数（如 `routeIntentLabel`）用 `import i18n from '../i18n'` 的 `i18n.t`。插值用 `{{var}}`，数字格式化用 `i18n.language` 作为 `Intl` locale。
+- 服务端数据（Agent 回复、任务 stage 名、插件名/描述、API error）作为数据不翻译；服务端 `generate-data` 契约未动，rail 导航文案在前端按 `item.id` 翻译（`nav.*`），`智能` 比例值保持原始值仅展示时翻译。新增 UI 文案时同步补 `zh.ts` + `en.ts`，别写死在组件里。
 
 - 配置文件：`server/data/settings.json`（结构 `{ comfyui: { baseUrl: string } }`）
 - 持久化模块：`server/src/settings.ts`，照搬 v1 会话存储的原子写方案（tmp + rename）

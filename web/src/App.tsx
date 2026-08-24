@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from './i18n';
 import {
   fetchGenerateData,
   sendChatStream,
@@ -89,16 +91,17 @@ function mergeJobEvent(msg: ChatMessage, evt: JobEvent): ChatMessage {
     case 'queue': {
       const { t, i } = cloneTask();
       t.queued = evt.pending > 0;
-      t.queueLabel = evt.pending > 0 ? `${evt.pending} 个任务排队中` : undefined;
+      t.queueLabel = evt.pending > 0 ? i18n.t('app.queuedCount', { count: evt.pending }) : undefined;
       stages[i] = t;
       break;
     }
     case 'done': {
+      const count = evt.outputs?.length ?? 0;
       const done: ChatStage = {
         type: 'done',
-        logs: [`生成完成${evt.outputs?.length ? `，共 ${evt.outputs.length} 个结果` : ''}。`],
+        logs: [count > 0 ? i18n.t('app.doneLog', { count }) : i18n.t('app.doneDone')],
         outputs: evt.outputs ?? [],
-        suggestion: '按同样的想法再生成一次',
+        suggestion: i18n.t('app.doneSuggestion'),
       };
       return { ...msg, stages: [...stages.filter(s => s.type !== 'task'), done] };
     }
@@ -247,7 +250,7 @@ function mergeStreamEvent(
   } else if (event.type === 'agent:end' && !event.canceled && addEmptyResponseError && !current.content && !current.thinking) {
     current.stages = [
       ...(current.stages || []),
-      { type: 'error', logs: ['流式响应结束，但没有收到 Agent 输出。请检查 Pi CLI 和模型配置。'] },
+      { type: 'error', logs: [i18n.t('app.streamEndNoOutput')] },
     ];
   }
 
@@ -255,6 +258,7 @@ function mergeStreamEvent(
 }
 
 export default function App() {
+  const { t } = useTranslation();
   const [data, setData] = useState<GenerateData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeNav, setActiveNav] = useState('generate');
@@ -471,7 +475,7 @@ export default function App() {
               setConversations(prev => {
                 const now = Date.now();
                 const exists = prev.some(c => c.id === targetId);
-                if (!exists) return [...prev, { id: targetId, title: '新会话', updatedAt: now }];
+                if (!exists) return [...prev, { id: targetId, title: t('app.newChatTitle'), updatedAt: now }];
                 return prev.map(c => (c.id === targetId ? { ...c, updatedAt: now } : c));
               });
               if (activeConvRef.current === null || activeConvRef.current === targetId) {
@@ -610,7 +614,7 @@ export default function App() {
             } else if (event.type === 'agent:end' && !event.canceled && !receivedStreamContent) {
               current.stages = [
                 ...(current.stages || []),
-                { type: 'error', logs: ['流式响应结束，但没有收到 Agent 输出。请检查 Pi CLI 和模型配置。'] },
+                { type: 'error', logs: [t('app.streamEndNoOutput')] },
               ];
             }
 
@@ -641,8 +645,8 @@ export default function App() {
         ...prev,
         {
           role: 'assistant',
-          content: '（请求失败：请确认后端服务已正常运行）',
-          stages: [{ type: 'error', logs: ['请求失败：请确认后端服务已启动（pnpm dev）'] }],
+          content: t('app.requestFailed'),
+          stages: [{ type: 'error', logs: [t('app.requestFailedLog')] }],
         },
       ]);
     } finally {
@@ -742,7 +746,7 @@ export default function App() {
 
   const handleRenameConversation = async (id: string) => {
     const conv = conversations.find(c => c.id === id);
-    const title = window.prompt('重命名会话', conv?.title ?? '');
+    const title = window.prompt(t('app.promptRename'), conv?.title ?? '');
     if (title == null) return;
     try {
       const r = await apiRenameSession(id, title.trim());
@@ -753,7 +757,7 @@ export default function App() {
   };
 
   const handleDeleteConversation = async (id: string) => {
-    if (!window.confirm('删除该会话？此操作不可恢复。')) return;
+    if (!window.confirm(t('app.confirmDelete'))) return;
     // 中止进行中的流，避免其事件写入删除后切换到的会话
     streamAbortRef.current?.abort();
     try {
@@ -783,20 +787,21 @@ export default function App() {
   if (error) {
     return (
       <div className="app-error">
-        <p>加载失败：{error}</p>
-        <p className="app-error-hint">请确认后端服务已启动（pnpm dev）</p>
+        <p>{t('app.loadFailed', { error })}</p>
+        <p className="app-error-hint">{t('app.loadFailedHint')}</p>
       </div>
     );
   }
 
   if (!data) {
-    return <div className="app-loading">加载中…</div>;
+    return <div className="app-loading">{t('common.loading')}</div>;
   }
 
   const isEmpty = messages.length === 0;
   // 会话列表只属于「生成」工作台；草稿是全局产物、其余模块未开发，均不显示
   const isChatView = activeNav === 'generate';
-  const devLabel = data.rail.items.find(item => item.id === activeNav)?.label ?? '该模块';
+  // 导航文案按 id 走 i18n（服务端仅提供 id/icon）；未知 id 回退为原始值
+  const devLabel = t(`nav.${activeNav}` as 'nav.unknown', { defaultValue: activeNav });
 
   return (
     <div className="app">
@@ -811,8 +816,6 @@ export default function App() {
       <div className="workbench">
         {isChatView && (
           <Sidebar
-            createLabel={data.sidebar.createLabel}
-            newChatLabel={data.sidebar.newChatLabel}
             conversations={conversations}
             activeId={activeConv}
             onNewChat={() => void handleNewChat()}
@@ -826,11 +829,11 @@ export default function App() {
             <span className={`status-dot${activity.sessions.some(s => s.status === 'running') || activity.tasks.length > 0 ? ' active' : ''}`} />
             <span className="main-status-label">
               {activity.sessions.filter(s => s.status === 'running').length + activity.tasks.length > 0
-                ? `${activity.sessions.filter(s => s.status === 'running').length + activity.tasks.length} 项活动运行中`
-                : '暂无运行中的活动'}
+                ? t('statusbar.runningCount', { count: activity.sessions.filter(s => s.status === 'running').length + activity.tasks.length })
+                : t('statusbar.idle')}
             </span>
             <button className="activity-open-btn" onClick={() => setActivityOpen(true)}>
-              查看活动
+              {t('statusbar.viewActivity')}
             </button>
           </div>
           {activityOpen && (
@@ -846,7 +849,7 @@ export default function App() {
           ) : activeNav === 'generate' ? (
             isEmpty ? (
               <div className="generate-empty">
-                <h1 className="generate-title">{data.hero.title}</h1>
+                <h1 className="generate-title">{t('hero.title')}</h1>
               </div>
             ) : (
               <div className="chat-scroll" ref={chatRef}>
@@ -868,13 +871,12 @@ export default function App() {
                   <path d="M22 15v14M15 22h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                 </svg>
               </div>
-              <h1 className="dev-view-title">{devLabel} 正在开发中</h1>
-              <p className="dev-view-desc">该模块尚未上线，正在加紧建设中，敬请期待。</p>
+              <h1 className="dev-view-title">{t('app.devTitle', { label: devLabel })}</h1>
+              <p className="dev-view-desc">{t('app.devDesc')}</p>
             </div>
           )}
           {activeNav === 'generate' && <div className="composer-wrap">
             <Composer
-              placeholder={data.composer.placeholder}
               composer={data.composer}
               sessionAssets={sessionAssets}
               value={input}

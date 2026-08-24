@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import i18n from '../i18n';
 import type { RailItem } from '../api';
 
 function RailIcon({ id }: { id: string }) {
@@ -66,9 +68,13 @@ export default function Rail({
   onToggleTheme: () => void;
   onOpenSettings: () => void;
 }) {
+  const { t } = useTranslation();
+  const lang = i18n.language === 'zh' ? 'zh' : 'en';
+  const toggleLang = () => void i18n.changeLanguage(lang === 'zh' ? 'en' : 'zh');
+
   return (
-    <nav className="rail" aria-label="主导航">
-      <div className="rail-logo" aria-label="导演工作台">
+    <nav className="rail" aria-label={t('nav.aria')}>
+      <div className="rail-logo" aria-label={t('nav.logoAria')}>
         <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
           <rect width="40" height="40" rx="12" fill="#00cae0" />
           <rect x="8" y="10" width="24" height="17" rx="3.5" fill="white" />
@@ -83,25 +89,27 @@ export default function Rail({
             <button
               className={`rail-item${activeId === item.id ? ' active' : ''}`}
               onClick={() => onSelect(item.id)}
-              title={item.label}
+              title={t(`nav.${item.id}` as 'nav.unknown', { defaultValue: item.label })}
             >
               <RailIcon id={item.icon} />
-              <span>{item.label}</span>
+              <span>{t(`nav.${item.id}` as 'nav.unknown', { defaultValue: item.label })}</span>
             </button>
           </li>
         ))}
       </ul>
-      <button className="rail-settings" onClick={onOpenSettings} title="设置" aria-label="设置">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
+      <button
+        className="rail-lang"
+        onClick={toggleLang}
+        title={lang === 'zh' ? t('nav.switchToEn') : t('nav.switchToZh')}
+        aria-label={lang === 'zh' ? t('nav.switchToEn') : t('nav.switchToZh')}
+      >
+        {lang === 'zh' ? 'EN' : '中'}
       </button>
       <button
         className="rail-theme"
         onClick={onToggleTheme}
-        title={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
-        aria-label={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
+        title={theme === 'dark' ? t('nav.lightMode') : t('nav.darkMode')}
+        aria-label={theme === 'dark' ? t('nav.lightMode') : t('nav.darkMode')}
       >
         {theme === 'dark' ? (
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -118,6 +126,12 @@ export default function Rail({
             <path d="M17 11.5A7 7 0 0 1 8.5 3a7 7 0 1 0 8.5 8.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
           </svg>
         )}
+      </button>
+      <button className="rail-settings" onClick={onOpenSettings} title={t('common.settings')} aria-label={t('common.settings')}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
       </button>
     </nav>
   );

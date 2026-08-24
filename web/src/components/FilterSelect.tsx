@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import FloatingMenu from './FloatingMenu';
 
 /**
@@ -10,8 +11,8 @@ export default function FilterSelect({
   value,
   onChange,
   options,
-  placeholder = '请选择',
-  searchPlaceholder = '输入以筛选…',
+  placeholder,
+  searchPlaceholder,
   className = '',
   disabled,
   ariaLabel,
@@ -25,6 +26,9 @@ export default function FilterSelect({
   disabled?: boolean;
   ariaLabel?: string;
 }) {
+  const { t } = useTranslation();
+  placeholder = placeholder ?? t('common.select');
+  searchPlaceholder = searchPlaceholder ?? t('common.search');
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
@@ -69,7 +73,7 @@ export default function FilterSelect({
           />
           <div className="filter-select-options">
             {filtered.length === 0 ? (
-              <div className="filter-select-empty">无匹配选项</div>
+              <div className="filter-select-empty">{t('common.noMatch')}</div>
             ) : (
               filtered.map(o => (
                 <button

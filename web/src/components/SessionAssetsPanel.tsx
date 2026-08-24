@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import type { LightboxImage } from './ImageLightbox';
 import ImageLightbox from './ImageLightbox';
 import type { SessionAsset } from '../sessionAssets';
@@ -9,6 +10,7 @@ export default function SessionAssetsPanel({
 }: {
   assets: SessionAsset[];
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(true);
   const [lightboxAsset, setLightboxAsset] = useState<SessionAsset | null>(null);
 
@@ -21,8 +23,8 @@ export default function SessionAssetsPanel({
       <button
         className="session-assets-toggle"
         onClick={() => setOpen(value => !value)}
-        title={open ? '收起会话素材' : '展开会话素材'}
-        aria-label={open ? '收起会话素材' : '展开会话素材'}
+        title={open ? t('assets.collapse') : t('assets.expand')}
+        aria-label={open ? t('assets.collapse') : t('assets.expand')}
         aria-expanded={open}
       >
         <svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true">
@@ -30,14 +32,14 @@ export default function SessionAssetsPanel({
           <circle cx="6.5" cy="7" r="1.2" fill="currentColor" />
           <path d="m4.5 13 3.2-3.2 2.4 2.2 1.6-1.6 2.2 2.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-        {open && <span>会话素材</span>}
+        {open && <span>{t('assets.title')}</span>}
         {open && <span className="session-assets-count">{assets.length}</span>}
       </button>
 
       {open && (
         <div className="session-assets-content">
           {assets.length === 0 ? (
-            <div className="session-assets-empty">生成的图像和视频会显示在这里</div>
+            <div className="session-assets-empty">{t('assets.empty')}</div>
           ) : (
             <div className="session-assets-list">
               {assets.map(asset => (
@@ -45,7 +47,7 @@ export default function SessionAssetsPanel({
                   <button
                     className="session-asset-preview"
                     onClick={() => asset.kind === 'image' && openImage(asset)}
-                    aria-label={`查看${asset.name}`}
+                    aria-label={t('assets.viewAria', { name: asset.name })}
                   >
                     {asset.kind === 'image' ? (
                       <img src={asset.url} alt={asset.name} loading="lazy" />

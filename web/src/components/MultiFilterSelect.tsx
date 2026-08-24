@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import FloatingMenu from './FloatingMenu';
 
 /** 多选参数中一个带强度的选中项（如 LoRA 名称 + 强度） */
@@ -74,8 +75,8 @@ export default function MultiFilterSelect({
   value,
   onChange,
   options,
-  placeholder = '请选择',
-  searchPlaceholder = '输入以筛选…',
+  placeholder,
+  searchPlaceholder,
   className = '',
   disabled,
   ariaLabel,
@@ -98,6 +99,9 @@ export default function MultiFilterSelect({
   strengthMax?: number;
   strengthStep?: number;
 }) {
+  const { t } = useTranslation();
+  placeholder = placeholder ?? t('common.select');
+  searchPlaceholder = searchPlaceholder ?? t('common.search');
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
@@ -134,7 +138,7 @@ export default function MultiFilterSelect({
         aria-label={ariaLabel}
       >
         <span className="filter-select-value">
-          {selected.length > 0 ? `已选 ${selected.length} 项` : placeholder}
+          {selected.length > 0 ? t('common.selectedCount', { count: selected.length }) : placeholder}
         </span>
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
           <path d="M2.5 4.5 6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -153,7 +157,7 @@ export default function MultiFilterSelect({
           />
           <div className="filter-select-options">
             {filtered.length === 0 ? (
-              <div className="filter-select-empty">无匹配选项</div>
+              <div className="filter-select-empty">{t('common.noMatch')}</div>
             ) : (
               filtered.map(o => (
                 <button
@@ -183,21 +187,21 @@ export default function MultiFilterSelect({
             <span key={item.name} className="multi-filter-chip" title={item.name}>
               <span className="multi-filter-chip-text">{item.name}</span>
               <label className="multi-filter-chip-strength">
-                <span className="multi-filter-chip-strength-label">强度</span>
+                <span className="multi-filter-chip-strength-label">{t('common.strength')}</span>
                 <StrengthInput
                   value={strengthOf(item)}
                   min={strengthMin}
                   max={strengthMax}
                   step={strengthStep}
                   onCommit={num => setStrength(item.name, num)}
-                  ariaLabel={`${item.name} 强度`}
+                  ariaLabel={t('common.strengthAria', { name: item.name })}
                 />
               </label>
               <button
                 type="button"
                 className="multi-filter-chip-x"
                 onClick={() => remove(item.name)}
-                aria-label={`移除 ${item.name}`}
+                aria-label={t('common.removeAria', { name: item.name })}
               >
                 ×
               </button>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { WorkflowGraph, WorkflowGraphField, WorkflowGraphNode } from '../api';
 import { dragTargetForMouse, moveWorkflowNode, positionsFromGraph, type WorkflowNodePositions } from './workflowNodeLayout';
 import FilterSelect from './FilterSelect';
@@ -55,6 +56,7 @@ function fieldKey(nodeId: string, field: string): string {
 }
 
 export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam, onChangeParamDefault, onRemoveParam, onRetry, onFullscreen, fullscreen }: Props) {
+  const { t } = useTranslation();
   const [scale, setScale] = useState(0.72);
   const [pan, setPan] = useState({ x: 24, y: 24 });
   const [positions, setPositions] = useState<WorkflowNodePositions>({});
@@ -138,19 +140,19 @@ export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam
   };
 
   if (loading) {
-    return <div className="workflow-graph-state"><span className="workflow-graph-spinner" />正在解析工作流节点…</div>;
+    return <div className="workflow-graph-state"><span className="workflow-graph-spinner" />{t('nodeGraph.loading')}</div>;
   }
   if (error) {
     return (
       <div className="workflow-graph-state workflow-graph-state-error">
-        <strong>节点视图加载失败</strong>
+        <strong>{t('nodeGraph.loadError')}</strong>
         <span>{error}</span>
-        {onRetry && <button className="settings-btn" onClick={onRetry}>重试</button>}
+        {onRetry && <button className="settings-btn" onClick={onRetry}>{t('common.retry')}</button>}
       </div>
     );
   }
   if (!graph || graph.nodes.length === 0) {
-    return <div className="workflow-graph-state">暂无可显示的工作流节点</div>;
+    return <div className="workflow-graph-state">{t('nodeGraph.empty')}</div>;
   }
 
   const pointFor = (nodeId: string, field: string, side: 'source' | 'target') => {
@@ -167,10 +169,10 @@ export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam
   return (
     <div className="workflow-graph-shell">
       <div className="workflow-graph-toolbar">
-        <span>节点视图 · 勾选参数加入 LLM 上下文，combo 均可直接配置固定值 · 连接字段只读 · 中键拖动节点</span>
+        <span>{t('nodeGraph.toolbarHint')}</span>
         <div className="workflow-graph-toolbar-actions">
           <span className="workflow-graph-zoom">{Math.round(scale * 100)}%</span>
-          {onFullscreen && <button className="workflow-graph-action" onClick={onFullscreen}>{fullscreen ? '退出全屏' : '全屏'}</button>}
+          {onFullscreen && <button className="workflow-graph-action" onClick={onFullscreen}>{fullscreen ? t('common.exitFullscreen') : t('common.fullscreen')}</button>}
         </div>
       </div>
       <div
@@ -210,7 +212,7 @@ export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam
               const position = positionOf(node);
               return (
                 <article key={node.nodeId} data-node-id={node.nodeId} className="workflow-graph-node" style={{ left: position.x, top: position.y, width: NODE_WIDTH }}>
-                  <header className="workflow-graph-node-head" onContextMenu={event => event.preventDefault()} title="左键拖动节点，中键拖动画布">
+                  <header className="workflow-graph-node-head" onContextMenu={event => event.preventDefault()} title={t('nodeGraph.dragHint')}>
                     <strong>{node.title || node.classType}</strong>
                     <span>#{node.nodeId}</span>
                     <small>{node.classType}</small>
@@ -228,10 +230,10 @@ export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam
                               checked={field.selected}
                               onChange={() => onToggleParam(field)}
                               onPointerDown={event => event.stopPropagation()}
-                              aria-label={`将 ${node.nodeId}.${field.field} 加入/移出 LLM 上下文`}
-                              title="勾选后参数加入 LLM 上下文，由 LLM 控制"
+                              aria-label={t('nodeGraph.toggleAria', { node: node.nodeId, field: field.field })}
+                              title={t('nodeGraph.toggleTitle')}
                             />
-                          ) : <span className="workflow-graph-lock" aria-label="连接字段，不可选择">↔</span>}
+                          ) : <span className="workflow-graph-lock" aria-label={t('nodeGraph.lockedAria')}>↔</span>}
                           <span className="workflow-graph-field-name">{field.field}</span>
                           <span className="workflow-graph-field-type">{field.type}</span>
                           <span className="workflow-graph-field-value" title={linkedTo || displayValue(field.value)}>{linkedTo || displayValue(field.value)}</span>
@@ -244,7 +246,7 @@ export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam
                                   onChange={items => onChangeParamDefault(field, items)}
                                   options={field.options}
                                   ariaLabel={`${node.nodeId}.${field.field}`}
-                                  searchPlaceholder={`筛选 ${field.field}…`}
+                                  searchPlaceholder={t('nodeGraph.filterPlaceholder', { field: field.field })}
                                   defaultStrength={1}
                                   strengthMin={field.strengthable ? (field.min ?? -10) : -10}
                                   strengthMax={field.strengthable ? (field.max ?? 10) : 10}
@@ -257,21 +259,21 @@ export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam
                                   onChange={value => onChangeParamDefault(field, value)}
                                   options={field.options}
                                   ariaLabel={`${node.nodeId}.${field.field}`}
-                                  searchPlaceholder={`筛选 ${field.field}…`}
+                                  searchPlaceholder={t('nodeGraph.filterPlaceholder', { field: field.field })}
                                 />
                               )}
                               {field.paramId && !field.selected && (
                                 <button
                                   type="button"
                                   className="workflow-graph-combo-reset"
-                                  title="删除参数并恢复模板默认值"
-                                  aria-label={`删除参数 ${node.nodeId}.${field.field}`}
+                                  title={t('nodeGraph.resetTitle')}
+                                  aria-label={t('nodeGraph.resetAria', { node: node.nodeId, field: field.field })}
                                   onClick={() => onRemoveParam?.(field)}
                                 >×</button>
                               )}
                             </div>
                           )}
-                          {field.paramId && <span className={`workflow-graph-param-mark${field.selected ? '' : ' pinned'}`}>{field.selected ? (field.paramId || '参数') : '已固定'}</span>}
+                          {field.paramId && <span className={`workflow-graph-param-mark${field.selected ? '' : ' pinned'}`}>{field.selected ? (field.paramId || t('nodeGraph.param')) : t('nodeGraph.pinned')}</span>}
                         </div>
                       );
                     })}

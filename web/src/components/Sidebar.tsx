@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+
 export interface Conversation {
   id: string;
   title: string;
@@ -15,8 +17,6 @@ function fmtSessionDate(at: number): string {
 }
 
 export default function Sidebar({
-  createLabel,
-  newChatLabel,
   conversations,
   activeId,
   onNewChat,
@@ -24,8 +24,6 @@ export default function Sidebar({
   onRename,
   onDelete,
 }: {
-  createLabel: string;
-  newChatLabel: string;
   conversations: Conversation[];
   activeId: string | null;
   onNewChat: () => void;
@@ -33,19 +31,20 @@ export default function Sidebar({
   onRename: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <aside className="sidebar">
       <button className="sidebar-create" onClick={onNewChat}>
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
           <path d="M9 3.5v11M3.5 9h11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         </svg>
-        <span>{createLabel}</span>
+        <span>{t('sidebar.create')}</span>
       </button>
       <div className="sidebar-section">
-        <div className="sidebar-section-title">{newChatLabel}</div>
+        <div className="sidebar-section-title">{t('sidebar.newChat')}</div>
         <ul className="sidebar-chats">
           {conversations.length === 0 && (
-            <li className="sidebar-chat-empty">暂无对话，开启你的第一部作品</li>
+            <li className="sidebar-chat-empty">{t('sidebar.empty')}</li>
           )}
           {conversations.map(conv => (
             <li key={conv.id}>
@@ -65,7 +64,7 @@ export default function Sidebar({
               <div className="sidebar-chat-acts">
                 <button
                   className="sidebar-chat-act"
-                  title="重命名"
+                  title={t('sidebar.rename')}
                   onClick={e => {
                     e.stopPropagation();
                     onRename(conv.id);
@@ -77,7 +76,7 @@ export default function Sidebar({
                 </button>
                 <button
                   className="sidebar-chat-act danger"
-                  title="删除"
+                  title={t('common.delete')}
                   onClick={e => {
                     e.stopPropagation();
                     onDelete(conv.id);

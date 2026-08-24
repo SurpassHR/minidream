@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   deleteWorkflowPlugin,
   fetchAgentModels,
@@ -24,7 +25,6 @@ import WorkflowMappingModal from './WorkflowMappingModal';
 
 interface Category {
   id: string;
-  label: string;
   icon: React.ReactNode;
 }
 
@@ -34,7 +34,6 @@ const RETRY_INTERVAL = 2000;
 const CATEGORIES: Category[] = [
   {
     id: 'comfyui',
-    label: 'ComfyUI 服务',
     icon: (
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
         <rect x="1.5" y="1.5" width="6.5" height="6.5" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
@@ -46,7 +45,6 @@ const CATEGORIES: Category[] = [
   },
   {
     id: 'agent',
-    label: 'Agent 配置',
     icon: (
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
         <path d="M9 2.25a4 4 0 0 0-4 4v2.5a4 4 0 0 0 8 0v-2.5a4 4 0 0 0-4-4Z" stroke="currentColor" strokeWidth="1.3" />
@@ -56,7 +54,6 @@ const CATEGORIES: Category[] = [
   },
   {
     id: 'storage',
-    label: '产物存储',
     icon: (
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
         <path d="M2.5 5.5A1.5 1.5 0 0 1 4 4h3l1.5 1.5H14A1.5 1.5 0 0 1 15.5 7v6A1.5 1.5 0 0 1 14 14.5H4A1.5 1.5 0 0 1 2.5 13v-7.5Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
@@ -66,7 +63,6 @@ const CATEGORIES: Category[] = [
   },
   {
     id: 'plugins',
-    label: '插件',
     icon: (
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
         <path d="M6 2.5v2M12 2.5v2M4.5 4.5h9v3A2.5 2.5 0 0 1 11 10H7a2.5 2.5 0 0 1-2.5-2.5v-3Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
@@ -76,7 +72,18 @@ const CATEGORIES: Category[] = [
   },
 ];
 
-const PLUGIN_KIND_LABEL = { image: '图片', video: '视频', text: '文本' };
+const PLUGIN_KIND_LABEL: Record<string, string> = { image: 'common.kindImage', video: 'common.kindVideo', text: 'common.kindText' };
+const CATEGORY_KEY: Record<string, string> = {
+  comfyui: 'settings.catComfyui',
+  agent: 'settings.catAgent',
+  storage: 'settings.catStorage',
+  plugins: 'settings.catPlugins',
+};
+const ROLE_KEY: Record<string, string> = {
+  system: 'settings.agent.roleSystem',
+  user: 'settings.agent.roleUser',
+  assistant: 'settings.agent.roleAssistant',
+};
 
 /** 两个 Set 内容是否一致 */
 function setEquals(a: Set<string>, b: Set<string>): boolean {
@@ -107,6 +114,7 @@ export default function SettingsModal({
   onRefreshStatus: () => void;
   onRefreshWorkflows?: () => void;
 }) {
+  const { t } = useTranslation();
   const [active, setActive] = useState(CATEGORIES[0]!.id);
   const [baseUrl, setBaseUrl] = useState('');
   const [baseUrlSaved, setBaseUrlSaved] = useState('');
@@ -266,7 +274,7 @@ export default function SettingsModal({
         result = await importWorkflowPlugin({ filename: file.name, workflow });
       } catch (e) {
         if (!String((e as Error).message).includes('HTTP 409')) throw e;
-        if (!window.confirm(`插件「${file.name.replace(/\\.json$/i, '')}」已存在，是否覆盖？`)) return;
+        if (!window.confirm(t('settings.plugins.confirmOverwrite', { name: file.name.replace(/\\.json$/i, '')}))) return;
         result = await importWorkflowPlugin({ filename: file.name, workflow, overwrite: true });
       }
       await refreshPluginRecords();
@@ -279,7 +287,7 @@ export default function SettingsModal({
   };
 
   const handleDeletePlugin = async (plugin: WorkflowPluginRecord) => {
-    if (!window.confirm(`确定删除插件「${plugin.name}」吗？`)) return;
+    if (!window.confirm(t('settings.plugins.confirmDelete', { name: plugin.name }))) return;
     try {
       await deleteWorkflowPlugin(plugin.id);
       if (mappingTarget?.id === plugin.id) setMappingTarget(null);
@@ -309,10 +317,10 @@ export default function SettingsModal({
       if (res.ok) {
         setPluginDisabled(res.plugins.disabled);
         setPluginsSaved(res.plugins.disabled);
-        setPluginsTip('插件配置已保存并生效');
+        setPluginsTip(t('settings.plugins.savedTip'));
         return true;
       }
-      setPluginsError('保存失败');
+      setPluginsError(t('common.saveFailed'));
       return false;
     } catch (e) {
       setPluginsError((e as Error).message);
@@ -400,7 +408,7 @@ export default function SettingsModal({
       timerRef.current = setTimeout(() => {
         if (statusRef.current?.connected) {
           setReconnecting(false);
-          setTip('已连接');
+          setTip(t('settings.comfyui.connected'));
           onRefreshWorkflows?.();
           return;
         }
@@ -408,7 +416,7 @@ export default function SettingsModal({
         setAttempt(n);
         if (n >= MAX_ATTEMPTS) {
           setReconnecting(false);
-          setTip('自动重连未成功，请检查地址后重试');
+          setTip(t('settings.comfyui.reconnectFailed'));
           return;
         }
         run();
@@ -420,7 +428,7 @@ export default function SettingsModal({
   const saveComfy = async (): Promise<boolean> => {
     const url = baseUrl.trim();
     if (!/^https?:\/\//i.test(url)) {
-      setError('地址需以 http:// 或 https:// 开头');
+      setError(t('settings.comfyui.urlInvalid'));
       return false;
     }
     setError(null);
@@ -429,17 +437,17 @@ export default function SettingsModal({
     try {
       const res = await saveComfySettings(url);
       if (!res.ok) {
-        setError(res.error ?? '保存失败');
+        setError(res.error ?? t('common.saveFailed'));
         return false;
       }
       setBaseUrl(res.baseUrl);
       setBaseUrlSaved(res.baseUrl);
       if (res.connected) {
-        setTip('已连接');
+        setTip(t('settings.comfyui.connected'));
         onRefreshStatus();
         onRefreshWorkflows?.();
       } else {
-        setTip('地址已保存，正在自动重连…');
+        setTip(t('settings.comfyui.savedReconnecting'));
         startAutoReconnect();
       }
       return true;
@@ -452,7 +460,7 @@ export default function SettingsModal({
   const saveStorage = async (): Promise<boolean> => {
     const value = outputDir.trim();
     if (!value.startsWith('/')) {
-      setStorageError('产物存储目录必须是绝对路径');
+      setStorageError(t('settings.storage.absoluteRequired'));
       return false;
     }
     setStorageTip(null);
@@ -461,7 +469,7 @@ export default function SettingsModal({
       const res = await saveStorageSettings(value);
       setOutputDir(res.storage.outputDir);
       setOutputDirSaved(res.storage.outputDir);
-      setStorageTip('产物存储目录已保存并生效');
+      setStorageTip(t('settings.storage.savedTip'));
       return true;
     } catch (e) {
       setStorageError((e as Error).message);
@@ -480,7 +488,7 @@ export default function SettingsModal({
         fabricatedHistory: agentFabricated,
       });
       if (!result.ok) {
-        setAgentError(result.error ?? '保存失败');
+        setAgentError(result.error ?? t('common.saveFailed'));
         return false;
       }
       setAgentModel(result.agent.model);
@@ -493,7 +501,7 @@ export default function SettingsModal({
         pollTaskStatus: result.agent.pollTaskStatus,
         fabricatedHistory: result.agent.fabricatedHistory ?? [],
       });
-      setAgentTip('Agent 配置已保存并生效');
+      setAgentTip(t('settings.agent.savedTip'));
       return true;
     } catch (e) {
       setAgentError((e as Error).message);
@@ -514,34 +522,31 @@ export default function SettingsModal({
     setAgentFabricated(prev => prev.filter((_, i) => i !== index));
   };
 
-  const FABRICATED_ROLE_LABEL: Record<FabricatedHistoryMessage['role'], string> = {
-    system: '系统',
-    user: '用户',
-    assistant: '助手',
-  };
-
   if (!open) return null;
 
+  const kindLabel = (kind: string) => t(PLUGIN_KIND_LABEL[kind] as 'common.kindImage');
   const connected = comfyStatus?.connected;
   const statusText = connected
-    ? `已连接（${comfyStatus?.baseUrl ?? baseUrl}）${comfyStatus?.system?.comfyui_version ? `· v${comfyStatus.system.comfyui_version}` : ''}`
-    : `未连接${comfyStatus?.error ? `：${comfyStatus.error}` : ''}`;
+    ? `${t('settings.connected', { url: comfyStatus?.baseUrl ?? baseUrl })}${comfyStatus?.system?.comfyui_version ? ` · v${comfyStatus.system.comfyui_version}` : ''}`
+    : comfyStatus?.error
+      ? t('settings.disconnectedWithError', { error: comfyStatus.error })
+      : t('settings.disconnected');
 
   // 插件区：只负责导入、映射和启用/停用；combo 参数统一在节点视图中配置。
   const pluginList = pluginRecords.length > 0 ? pluginRecords : workflows;
   const pluginSection = (
     <section className="settings-section">
-      <h3 className="settings-section-title">生成插件（工作流）</h3>
+      <h3 className="settings-section-title">{t('settings.plugins.sectionTitle')}</h3>
       <p className="settings-section-desc">
-        导入任意 ComfyUI JSON 工作流，在映射编辑器的节点视图中勾选 widget 并配置 combo 参数。停用的插件不会出现在生成流程中。
+        {t('settings.plugins.sectionDesc')}
       </p>
       <input ref={fileInputRef} type="file" accept=".json,application/json" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void handlePluginFile(file); }} />
       <div className="workflow-plugin-toolbar">
-        <button className="settings-btn primary" disabled={pluginImporting} onClick={() => fileInputRef.current?.click()}>{pluginImporting ? '导入中…' : '+ 导入工作流 JSON'}</button>
-        <span className="settings-field-hint">支持 ComfyUI API Format 与 UI/LiteGraph JSON</span>
+        <button className="settings-btn primary" disabled={pluginImporting} onClick={() => fileInputRef.current?.click()}>{pluginImporting ? t('settings.plugins.importing') : t('settings.plugins.importBtn')}</button>
+        <span className="settings-field-hint">{t('settings.plugins.importHint')}</span>
       </div>
       {pluginList.length === 0 ? (
-        <div className="pref-empty">暂无插件：请导入工作流 JSON 或把 workflow 文件放到 server/workflows/</div>
+        <div className="pref-empty">{t('settings.plugins.empty')}</div>
       ) : (
         <div className="plugin-groups">
           {(['image', 'video'] as const).map(kind => {
@@ -549,7 +554,7 @@ export default function SettingsModal({
             if (list.length === 0) return null;
             return (
               <div key={kind} className="plugin-group">
-                <div className="plugin-group-title">{kind === 'image' ? '图像' : '视频'}</div>
+                <div className="plugin-group-title">{kind === 'image' ? t('settings.plugins.groupImage') : t('settings.plugins.groupVideo')}</div>
                 <div className="plugin-list">
                   {list.map(w => {
                     const disabled = pluginDraft?.has(w.id) ?? false;
@@ -559,19 +564,19 @@ export default function SettingsModal({
                         <div className="plugin-card-head">
                           <span className="plugin-card-name">{w.name}</span>
                           <div className="plugin-card-acts">
-                            <button className="plugin-mapping-btn" onClick={() => record && void openMappingEditor(record)} title="编辑节点映射">节点映射</button>
-                            {record && <button className="plugin-delete-btn" onClick={() => void handleDeletePlugin(record)} title="删除插件">删除</button>}
-                            <button className={`plugin-toggle${disabled ? '' : ' on'}`} onClick={() => togglePlugin(w.id)} role="switch" aria-checked={!disabled} aria-label={`${disabled ? '启用' : '停用'} ${w.name}`}>
+                            <button className="plugin-mapping-btn" onClick={() => record && void openMappingEditor(record)} title={t('settings.plugins.mappingTitle')}>{t('settings.plugins.mappingBtn')}</button>
+                            {record && <button className="plugin-delete-btn" onClick={() => void handleDeletePlugin(record)} title={t('settings.plugins.deleteTitle')}>{t('common.delete')}</button>}
+                            <button className={`plugin-toggle${disabled ? '' : ' on'}`} onClick={() => togglePlugin(w.id)} role="switch" aria-checked={!disabled} aria-label={t('settings.plugins.toggleAria', { action: disabled ? t('settings.plugins.enable') : t('settings.plugins.disable'), name: w.name })}>
                               <span className="plugin-toggle-knob" />
                             </button>
                           </div>
                         </div>
                         {w.description && <div className="plugin-card-desc">{w.description}</div>}
-                        {record?.manifestError && <div className="settings-error">清单异常：{record.manifestError}</div>}
-                        {record?.source && <div className="plugin-card-source">{record.source.type === 'imported' ? '已导入插件' : record.hasManifest ? '已编辑清单' : '自动识别'}</div>}
+                        {record?.manifestError && <div className="settings-error">{t('settings.plugins.manifestError', { error: record.manifestError })}</div>}
+                        {record?.source && <div className="plugin-card-source">{record.source.type === 'imported' ? t('settings.plugins.sourceImported') : record.hasManifest ? t('settings.plugins.sourceEdited') : t('settings.plugins.sourceAuto')}</div>}
                         <div className="plugin-card-badges">
-                          {w.inputs.map(i => <em key={i.id} className={`wf-badge in ${i.kind}`}>输入·{PLUGIN_KIND_LABEL[i.kind]}{i.required ? '·必传' : ''}</em>)}
-                          {w.outputs.map(o => <em key={o.id} className={`wf-badge out ${o.kind}`}>输出·{PLUGIN_KIND_LABEL[o.kind]}</em>)}
+                          {w.inputs.map(i => <em key={i.id} className={`wf-badge in ${i.kind}`}>{i.required ? t('settings.plugins.badgeInRequired', { kind: kindLabel(i.kind) }) : t('settings.plugins.badgeIn', { kind: kindLabel(i.kind) })}</em>)}
+                          {w.outputs.map(o => <em key={o.id} className={`wf-badge out ${o.kind}`}>{t('settings.plugins.badgeOut', { kind: kindLabel(o.kind) })}</em>)}
                         </div>
                       </div>
                     );
@@ -590,15 +595,15 @@ export default function SettingsModal({
 
   return (
     <div className="settings-overlay" onClick={onClose}>
-      <div className="settings-modal" role="dialog" aria-modal="true" aria-label="设置" onClick={e => e.stopPropagation()}>
+      <div className="settings-modal" role="dialog" aria-modal="true" aria-label={t('common.settings')} onClick={e => e.stopPropagation()}>
         <header className="settings-header">
-          <h2 className="settings-title">设置</h2>
-          <button className="settings-close" onClick={onClose} aria-label="关闭">
+          <h2 className="settings-title">{t('common.settings')}</h2>
+          <button className="settings-close" onClick={onClose} aria-label={t('common.close')}>
             ×
           </button>
         </header>
         <div className="settings-body">
-          <nav className="settings-cats" aria-label="设置分类">
+          <nav className="settings-cats" aria-label={t('settings.catsAria')}>
             {CATEGORIES.map(c => (
               <button
                 key={c.id}
@@ -606,19 +611,19 @@ export default function SettingsModal({
                 onClick={() => setActive(c.id)}
               >
                 {c.icon}
-                <span>{c.label}</span>
+                <span>{t(CATEGORY_KEY[c.id] as 'settings.catComfyui')}</span>
               </button>
             ))}
           </nav>
           <div className="settings-pane">
             {active === 'comfyui' && (
               <section className="settings-section">
-                <h3 className="settings-section-title">ComfyUI 连接</h3>
+                <h3 className="settings-section-title">{t('settings.comfyui.title')}</h3>
                 <p className="settings-section-desc">
-                  生成任务与素材上传都由服务端代理到这个地址。保存新地址后会自动尝试重连。
+                  {t('settings.comfyui.desc')}
                 </p>
                 <label className="settings-field">
-                  <span className="settings-label">ComfyUI 地址</span>
+                  <span className="settings-label">{t('settings.comfyui.url')}</span>
                   <input
                     className="settings-input"
                     value={baseUrl}
@@ -630,14 +635,14 @@ export default function SettingsModal({
                 <div className="settings-status">
                   <span className={`settings-dot ${connected ? 'ok' : 'bad'}`} />
                   <span>{statusText}</span>
-                  {reconnecting && <span className="settings-retry">正在自动重连（{attempt}/{MAX_ATTEMPTS}）…</span>}
+                  {reconnecting && <span className="settings-retry">{t('settings.comfyui.reconnecting', { n: attempt, max: MAX_ATTEMPTS })}</span>}
                 </div>
                 {error && <div className="settings-error">{error}</div>}
                 {tip && <div className="settings-tip">{tip}</div>}
                 {reconnecting && (
                   <div className="settings-actions">
                     <button className="settings-btn" onClick={stopReconnect}>
-                      停止重试
+                      {t('settings.comfyui.stopRetry')}
                     </button>
                   </div>
                 )}
@@ -646,73 +651,73 @@ export default function SettingsModal({
 
             {active === 'agent' && (
               <section className="settings-section">
-                <h3 className="settings-section-title">Agent 配置</h3>
+                <h3 className="settings-section-title">{t('settings.agent.title')}</h3>
                 <p className="settings-section-desc">
-                  选择创作 Agent 使用的默认模型与思考强度。配置会保存到服务端，并应用于后续对话。
+                  {t('settings.agent.desc')}
                 </p>
                 <label className="settings-field">
-                  <span className="settings-label">默认模型</span>
+                  <span className="settings-label">{t('settings.agent.model')}</span>
                   <select
                     className="settings-select"
                     value={agentModel}
                     onChange={e => setAgentModel(e.target.value)}
                   >
-                    <option value="">使用 Pi 默认模型</option>
+                    <option value="">{t('settings.agent.useDefault')}</option>
                     {agentModel && !agentModels.some(model => model.id === agentModel) && (
-                      <option value={agentModel}>{agentModel}（当前值）</option>
+                      <option value={agentModel}>{t('settings.agent.currentValue', { model: agentModel })}</option>
                     )}
                     {agentModels.map(model => (
                       <option key={model.id} value={model.id}>
-                        {model.id}{model.thinking ? ' · 支持思考' : ''}{model.images ? ' · 支持图片' : ''}
+                        {model.id}{model.thinking ? t('settings.agent.supportsThinking') : ''}{model.images ? t('settings.agent.supportsImages') : ''}
                       </option>
                     ))}
                   </select>
                   <span className="settings-field-hint">
-                    {agentModelsLoading ? '正在读取 Pi 模型列表…' : '模型列表来自当前 Pi 配置；列表为空时仍可使用 Pi 默认模型'}
+                    {agentModelsLoading ? t('settings.agent.modelsLoading') : t('settings.agent.modelsHint')}
                   </span>
                 </label>
                 <label className="settings-field">
-                  <span className="settings-label">思考强度</span>
+                  <span className="settings-label">{t('settings.agent.thinkingLabel')}</span>
                   <select
                     className="settings-select"
                     value={agentThinking}
                     onChange={e => setAgentThinking(e.target.value as AgentThinking)}
                   >
-                    <option value="off">关闭</option>
-                    <option value="minimal">最低</option>
-                    <option value="low">低</option>
-                    <option value="medium">中</option>
-                    <option value="high">高</option>
-                    <option value="xhigh">极高</option>
-                    <option value="max">最大</option>
+                    <option value="off">{t('settings.agent.thinkingOff')}</option>
+                    <option value="minimal">{t('settings.agent.thinkingMinimal')}</option>
+                    <option value="low">{t('settings.agent.thinkingLow')}</option>
+                    <option value="medium">{t('settings.agent.thinkingMedium')}</option>
+                    <option value="high">{t('settings.agent.thinkingHigh')}</option>
+                    <option value="xhigh">{t('settings.agent.thinkingXhigh')}</option>
+                    <option value="max">{t('settings.agent.thinkingMax')}</option>
                   </select>
-                  <span className="settings-field-hint">思考越深通常响应越慢；最低是当前 v2 默认值。</span>
+                  <span className="settings-field-hint">{t('settings.agent.thinkingHint')}</span>
                 </label>
                 <label className="settings-field">
                   <span className="settings-switch-head">
-                    <span className="settings-label">Agent 轮询生成状态</span>
+                    <span className="settings-label">{t('settings.agent.pollLabel')}</span>
                     <button
                       className={`plugin-toggle${agentPoll ? ' on' : ''}`}
                       onClick={() => setAgentPoll(v => !v)}
                       role="switch"
                       aria-checked={agentPoll}
-                      aria-label="Agent 轮询生成状态"
+                      aria-label={t('settings.agent.pollAria')}
                     >
                       <span className="plugin-toggle-knob" />
                     </button>
                   </span>
                   <span className="settings-field-hint">
-                    开启后 Agent 会主动查询任务状态，并在完成后输出结果摘要（更慢、更耗 token）；关闭则依赖实时事件流推送进度与产物，响应更快。
+                    {t('settings.agent.pollHint')}
                   </span>
                 </label>
                 <div className="settings-field">
-                  <span className="settings-label">虚构对话历史（每请求注入）</span>
+                  <span className="settings-label">{t('settings.agent.fabricatedLabel')}</span>
                   <span className="settings-field-hint">
-                    只要有配置，就**每个对话请求**都注入：把下面的虚构对话构建为真实交替的用户/助手消息，在每次 LLM 调用前注入请求头部（参考 custom-first-control-prompt 请求路径注入——种子消息只在请求路径上、不写入会话日志，因此必须每次请求重新注入，否则后续轮次模型会“遗忘”准则；前缀字节级一致，保持缓存复用）。内容和条数都可自由配置；留空则不注入。
+                    {t('settings.agent.fabricatedHint')}
                   </span>
                   <div className="fabricated-list">
                     {agentFabricated.length === 0 && (
-                      <div className="fabricated-empty">尚未配置，将不注入参考对话，模型直接使用真实消息。</div>
+                      <div className="fabricated-empty">{t('settings.agent.fabricatedEmpty')}</div>
                     )}
                     {agentFabricated.map((m, i) => (
                       <div key={i} className="fabricated-row">
@@ -720,11 +725,11 @@ export default function SettingsModal({
                           className="settings-select fabricated-role"
                           value={m.role}
                           onChange={e => updateFabricated(i, { role: e.target.value as FabricatedHistoryMessage['role'] })}
-                          aria-label={`第 ${i + 1} 条虚构历史角色`}
+                          aria-label={t('settings.agent.fabricatedRoleAria', { n: i + 1 })}
                         >
-                          {(Object.keys(FABRICATED_ROLE_LABEL) as FabricatedHistoryMessage['role'][]).map(r => (
+                          {(Object.keys(ROLE_KEY) as FabricatedHistoryMessage['role'][]).map(r => (
                             <option key={r} value={r}>
-                              {FABRICATED_ROLE_LABEL[r]}
+                              {t(ROLE_KEY[r] as 'settings.agent.roleSystem')}
                             </option>
                           ))}
                         </select>
@@ -732,12 +737,12 @@ export default function SettingsModal({
                           className="settings-input fabricated-content"
                           value={m.content}
                           onChange={e => updateFabricated(i, { content: e.target.value })}
-                          placeholder="消息内容"
+                          placeholder={t('settings.agent.messageContent')}
                         />
                         <button
                           className="fabricated-del"
                           onClick={() => removeFabricated(i)}
-                          aria-label={`删除第 ${i + 1} 条虚构历史`}
+                          aria-label={t('settings.agent.fabricatedDeleteAria', { n: i + 1 })}
                         >
                           ×
                         </button>
@@ -745,7 +750,7 @@ export default function SettingsModal({
                     ))}
                   </div>
                   <button className="settings-btn fabricated-add" onClick={addFabricated}>
-                    + 添加消息
+                    {t('settings.agent.addMessage')}
                   </button>
                 </div>
                 {agentError && <div className="settings-error">{agentError}</div>}
@@ -755,12 +760,12 @@ export default function SettingsModal({
 
             {active === 'storage' && (
               <section className="settings-section">
-                <h3 className="settings-section-title">生成产物存储</h3>
+                <h3 className="settings-section-title">{t('settings.storage.title')}</h3>
                 <p className="settings-section-desc">
-                  生成完成后，项目会把 ComfyUI 的临时产物转存到这里，并使用本地文件作为草稿和聊天结果。
+                  {t('settings.storage.desc')}
                 </p>
                 <label className="settings-field">
-                  <span className="settings-label">本地存储目录（绝对路径）</span>
+                  <span className="settings-label">{t('settings.storage.dir')}</span>
                   <input
                     className="settings-input"
                     value={outputDir}
@@ -769,7 +774,7 @@ export default function SettingsModal({
                     spellCheck={false}
                   />
                 </label>
-                <div className="storage-path-hint">目录不存在时会自动创建；需要当前服务进程具备读写权限。</div>
+                <div className="storage-path-hint">{t('settings.storage.dirHint')}</div>
                 {storageError && <div className="settings-error">{storageError}</div>}
                 {storageTip && <div className="settings-tip">{storageTip}</div>}
               </section>
@@ -783,16 +788,16 @@ export default function SettingsModal({
           <div className="settings-save-toast" role="status">
             <span className="settings-save-toast-msg">
               {savingAll
-                ? '保存中…'
+                ? t('common.saving')
                 : toastFlash === 'saved'
-                  ? '已保存 ✓'
+                  ? t('common.saved')
                   : toastFlash === 'failed'
-                    ? '保存失败，请检查对应面板的提示'
-                    : '有配置已修改，是否保存？'}
+                    ? t('common.saveFailedToast')
+                    : t('common.unsavedPrompt')}
             </span>
             {!savingAll && toastFlash !== 'saved' && (
               <button className="settings-btn primary" onClick={handleSaveAll}>
-                保存
+                {t('common.save')}
               </button>
             )}
           </div>

@@ -1,3 +1,5 @@
+import i18n from './i18n';
+
 export interface RailItem {
   id: string;
   label: string;
@@ -745,12 +747,12 @@ export async function sendChatStream(
   });
 
   if (!res.ok) {
-    const errorText = await res.text().catch(() => '网络请求失败');
+    const errorText = await res.text().catch(() => i18n.t('api.networkError'));
     throw new Error(`HTTP ${res.status}: ${errorText}`);
   }
 
   if (!res.body) {
-    throw new Error('ReadableStream not supported in response');
+    throw new Error(i18n.t('api.streamUnsupported'));
   }
 
   const reader = res.body.getReader();
