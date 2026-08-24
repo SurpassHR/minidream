@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DraftStore } from '../drafts.js';
-import { TaskQueue, extractHistoryError } from './queue.js';
+import { TaskQueue, extractHistoryError, resolveSessionAssetLabels } from './queue.js';
 import type { TaskItem } from './types.js';
 
 let dir: string;
@@ -262,5 +262,54 @@ describe('TaskQueue 基础功能与单测', () => {
     expect(finalT1?.status).toBe('completed');
     expect(finalT1?.outputs?.[0]?.filename).toBe('test.png');
     expect(finalT2?.status).toBe('completed');
+  });
+});
+
+describe('resolveSessionAssetLabels：@imageN/@videoN 标签解析', () => {
+  it('按会话消息顺序累计 image/video 产物并命名（与前端 extractSessionAssets 同口径）', () => {
+    const sessionsFile = join(dir, 'sessions.json');
+    writeFileSync(sessionsFile, JSON.stringify({
+      sessions: [{
+        id: 'session-1',
+        title: 't',
+        createdAt: 1,
+        updatedAt: 2,
+        messages: [
+          {
+            role: 'user',
+            content: '生成一张图',
+          },
+          {
+            role: 'assistant',
+            content: 'ok',
+            tasks: [{
+              id: 'task-a',
+              workflowId: 'image_krea2_turbo_t2i',
+              outputs: [
+                { kind: 'image', filename: 'draft-aaa.png', url: '/api/drafts/draft-aaa/file' },
+                { kind: 'image', filename: 'draft-aaa.png', url: '/api/drafts/draft-aaa/file' },
+              ],
+            }],
+            stages: [{
+              outputs: [
+                { kind: 'video', filename: 'video-1.mp4', url: '/comfyui/view?filename=video-1.mp4' },
+              ],
+            }],
+          },
+        ],
+      }],
+      activeId: 'session-1',
+    }), 'utf8');
+
+    const map = resolveSessionAssetLabels(sessionsFile, 'session-1');
+    // 同名 URL 去重：image1 指向第一个（也是唯一）图像产物
+    expect(map.get('image1')?.filename).toBe('draft-aaa.png');
+    expect(map.has('image2')).toBe(false);
+    expect(map.get('video1')?.filename).toBe('video-1.mp4');
+  });
+
+  it('会话不存在或无 sessionsFile 时返回空映射', () => {
+    expect(resolveSessionAssetLabels(undefined, 'session-x').size).toBe(0);
+    expect(resolveSessionAssetLabels(join(dir, 'sessions.json'), 'session-x').size).toBe(0);
   });
 });

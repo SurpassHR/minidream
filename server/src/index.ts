@@ -69,6 +69,7 @@ app.use('/assets', express.static(path.resolve(__dirname, '../assets')));
 
 const SETTINGS_FILE = path.resolve(__dirname, '../data/settings.json');
 const TASKS_FILE = path.resolve(__dirname, '../data/tasks.json');
+const SESSIONS_FILE = path.resolve(__dirname, '../data/sessions.json');
 const DRAFTS_INDEX_FILE = path.resolve(__dirname, '../data/drafts.json');
 const initialSettings = readSettings(SETTINGS_FILE);
 
@@ -105,6 +106,7 @@ export const draftStore = new DraftStore({
 export const taskQueue = new TaskQueue({
   dataFile: TASKS_FILE,
   settingsFile: SETTINGS_FILE,
+  sessionsFile: SESSIONS_FILE,
   drafts: draftStore,
 });
 
@@ -149,11 +151,35 @@ app.use(createWorkflowPluginRouter({
   chatSkill: runPluginSkillChat,
 }));
 
+/* ---------------- 会话素材标签解析（兜底 LLM 误传 @imageN/@videoN 标签） ---------------- */
+
+// sessionId -> 素材标签（image1/video2，小写）-> 已上传到 ComfyUI 的真实文件名
+const sessionAssetLabels = new Map<string, Map<string, string>>();
+// 兜底：Agent 未传 sessionId 时，使用最近一次会话上传的素材映射
+let latestSessionAssetLabels: Map<string, string> = new Map();
+function resolveSessionAssetLabel(sessionId: string | undefined, label: string): string | undefined {
+  const key = label.replace(/^@/, '').toLowerCase();
+  if (sessionId) {
+    const resolved = sessionAssetLabels.get(sessionId)?.get(key);
+    if (resolved) return resolved;
+  }
+  return latestSessionAssetLabels.get(key);
+}
+
+function registerSessionAssetLabels(sid: string, assets: Array<{ name: string; filename: string }>): void {
+  if (assets.length === 0) return;
+  const map = new Map<string, string>();
+  for (const asset of assets) map.set(asset.name.toLowerCase(), asset.filename);
+  sessionAssetLabels.set(sid, map);
+  latestSessionAssetLabels = map;
+}
+
 export const activityRegistry = new ActivityRegistry(taskQueue);
 export const mcpServer: McpServerInstance = createDirectorMCPServer(
   taskQueue,
   isWorkflowEnabled,
   () => readSettings(SETTINGS_FILE).agent.pollTaskStatus,
+  resolveSessionAssetLabel,
 );
 
 /**
@@ -203,8 +229,6 @@ async function uploadChatMedia(
 
 
 /* ---------------- 会话（JSON 文件持久化，照搬 v1 方案） ---------------- */
-
-const SESSIONS_FILE = path.resolve(__dirname, '../data/sessions.json');
 
 /** 会话元信息列表 + 当前会话 id */
 app.get('/api/sessions', (_req, res) => {
@@ -1174,6 +1198,8 @@ app.post('/api/chat', async (req, res) => {
     // 预上传用户 @ 提及的会话素材，把素材名与 ComfyUI 文件名暴露给 Agent。
     const chatImages = await uploadChatMedia('image', req.body?.images);
     const chatVideos = await uploadChatMedia('video', req.body?.videos);
+    // 注册素材标签映射，供 generation.submit 兜底解析 Agent 误传的 @imageN/@videoN 标签。
+    registerSessionAssetLabels(sid, [...chatImages, ...chatVideos]);
     const agentInput = buildAgentInput({
       message: message.trim(),
       images: chatImages.length > 0 ? chatImages : undefined,

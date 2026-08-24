@@ -1,35 +1,56 @@
 ---
 name: video-minimax-h3-i2v
-description: 本地运行：MiniMax H3 首/末帧生成视频（i2v/fl2v，含原生音频）。需 comfyui-minimax-h3 节点与 H3 模型权重。
+description: 图生视频工作流
 ---
 
-# MiniMax H3 图生视频
+# video-minimax-h3-i2v
 
-> 本文件由 server/src/workflow-skill.ts 自动生成，勿手工编辑；修改插件 manifest 或重新识别后会自动重新生成。
+图生视频工作流
 
 ## 用途
 
-本地运行：MiniMax H3 首/末帧生成视频（i2v/fl2v，含原生音频）。需 comfyui-minimax-h3 节点与 H3 模型权重。
+执行图生视频（Image-to-Video）生成任务，基于 MiniMax H3 模型，将参考图转换为动态视频。支持首帧、尾帧设定以及提示词控制。
 
 ## 输入
 
-- **参考图**（类型 图像；必传）
-- **提示词**（类型 文本；默认值非空（模板内置））
+| 名称 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| 参考图（首帧） | image | 至少一张 | 作为视频起始画面的参考图片 |
+| 参考图（尾帧） | image | 否 | 作为视频结束画面的参考图片（可选） |
+
+- 至少传入 1 张参考图；可传 1 张（首帧或尾帧）或 2 张（首帧 + 尾帧）。
+- 传 1 张时，上传的图片按顺序落到第一个图像输入（首帧）；**必须**用 `bypass` 跳过未使用的帧节点，否则未使用的帧会使用模板默认文件，产生错误画面。
 
 ## 可控制参数
 
-以下参数可由 LLM 通过 `generation.submit` 的 `params` 调整（键为参数 id）：
-
-- **VAE · 节点 105_sg11**（id `vae_name-105_sg11`；类型 文本；默认 minimax_h3_video_vae_fp16.safetensors）
-- **VAE · 节点 105_sg24**（id `vae_name-105_sg24`；类型 文本；默认 minimax_h3_audio_vae_fp32.safetensors）
-- **扩散模型 (Diffusion Model)**（id `unet_name-105_sg6`；类型 文本；默认 minimax_h3_fl2va_pruned_int8_convrot.safetensors）
-- **CLIP**（id `clip_name-105_sg13`；类型 文本；默认 qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors）
-- **LoRA**（id `lora_name-105_sg121`；类型 文本；默认 minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors）
+| 参数 ID | 标签 | 类型 | 默认值 | 说明 |
+|---------|------|------|--------|------|
+| image-5404 | image（首帧） | combo | on_the_bus_2.png | 首帧参考图片 |
+| text-5506 | text（提示词） | string | （空） | 图生视频提示词 |
+| bypass-5404 | 跳过 First Frame | boolean | false | 设为 true 时跳过首帧节点 |
+| bypass-5506 | 跳过 Text Multiline | boolean | false | 设为 true 时跳过提示词节点 |
+| image-5482 | image（尾帧） | combo | check_virgin.png | 尾帧参考图片 |
+| bypass-5482 | Last Frame | boolean | true | 设为 true 时跳过尾帧节点 |
+| long_side_target-5405 | long_side_target | int | 1152 | 视频最长边长度，用于限制视频像素，避免 OOM |
+| bypass-5405 | Target Dimension | boolean | false | 设为 true 时跳过目标尺寸节点 |
 
 ## 输出
 
-- **SaveVideo**（视频）
+| 名称 | 类型 | 说明 |
+|------|------|------|
+| Save Video | video | 生成完成的视频文件 |
+| Preview Image | image | 视频预览图像 |
 
 ## 使用规则
 
-- 必须按顺序传入 1 张参考图（`generation.submit` 的 `images` 参数）。
+1. 首帧 + 尾帧两张图都提供时：两者保持启用（不设 bypass），模型生成从首帧过渡到尾帧的动态内容。
+2. **只提供 1 张图时，必须先判断它是首帧还是尾帧**，再屏蔽另一侧：
+   - 是首帧（默认/未指明时）：把这张图作为首帧，并设 `bypass-5482: true` 跳过尾帧节点。
+   - 是尾帧（用户明确说"作为结尾/结束画面"等）：把图作为尾帧，并设 `bypass-5404: true` 跳过首帧节点；此时首帧输入不会收到图像，因此模型仅从尾帧与文字描述反推运动。
+3. 判断依据：用户指令里"这张图作为开头/首帧/起始"或默认情形 → 首帧；"作为结尾/尾帧/结束画面" → 尾帧。
+4. 提示词（text-5506）必填，用于描述期望的视频动态、镜头运动或内容变化，以获取较好质量。
+5. `bypass` 参数值为 true 时，对应节点被跳过，其分支（含模板默认图片）不带入生成过程；不要漏设，否则未使用的帧会沿用默认图。
+6. `long_side_target-5405` 用于限制视频最长边像素，默认 1152，范围 1-1280。当源图片分辨率过大、预计可能超出显存时，可适当调低该值以避免 OOM；如需生成更大画面，可在安全范围内增大该值。注意：调低会降低视频分辨率与清晰度。
+7. `bypass-5405` 为 true 时跳过目标尺寸限制节点，视频将按模型默认尺寸生成；仅在不需要限制尺寸时启用，否则建议保持 false。
+8. 生成的视频通过 Save Video 输出，预览帧通过 Preview Image 输出。
+9. 图片文件需为工作流可访问目录中的现有文件，否则请先上传或更换文件名。

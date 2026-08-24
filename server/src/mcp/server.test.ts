@@ -291,6 +291,61 @@ describe('Director MCP Server', () => {
     }));
   });
 
+  it('generation.submit 将 @imageN/@videoN 标签解析为已上传文件名', async () => {
+    const labeled = createMcpServer({
+      taskQueue,
+      port: 0,
+      sessionAssetResolver: (sessionId, label) => {
+        expect(sessionId).toBe('session-1');
+        if (label === '@image1') return 'chat-1700000000000-0.png';
+        if (label === 'video2') return 'chat-1700000000000-1.mp4';
+        return undefined;
+      },
+    });
+    try {
+      const res = (await labeled.handleRpcMessage({
+        jsonrpc: '2.0',
+        id: 40,
+        method: 'tools/call',
+        params: {
+          name: 'generation.submit',
+          arguments: {
+            workflowId: 'image_krea2_turbo_t2i',
+            prompt: '根据参考图生成视频',
+            images: ['@image1', 'already-uploaded.png'],
+            videos: ['video2'],
+            sessionId: 'session-1',
+          },
+        },
+      })) as any;
+      const parsed = JSON.parse(res.result.content[0].text);
+      const task = taskQueue.get(parsed.taskId);
+      expect(task?.images).toEqual(['chat-1700000000000-0.png', 'already-uploaded.png']);
+      expect(task?.videos).toEqual(['chat-1700000000000-1.mp4']);
+    } finally {
+      await labeled.close();
+    }
+  });
+
+  it('generation.submit 无 sessionId 且标签未注册时保留原值', async () => {
+    const res = await sendRpc({
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: {
+        name: 'generation.submit',
+        arguments: {
+          workflowId: 'image_krea2_turbo_t2i',
+          prompt: '用这张图生成',
+          images: ['@image9'],
+        },
+      },
+    });
+    const parsed = JSON.parse(res.result.content[0].text);
+    // 默认 MCP server 未配置解析器，标签保持原样，避免静默改坏真实文件名
+    expect(taskQueue.get(parsed.taskId)?.images).toEqual(['@image9']);
+  });
+
   it('calls generation.submit and creates a queued task', async () => {
     const res = await sendRpc({
       jsonrpc: '2.0',

@@ -11,6 +11,7 @@ import {
   cancelPrompt,
   deleteOutput,
   downloadOutput,
+  fileExists,
   COMFYUI_BASE_URL,
   getHistory,
   submitPrompt,
@@ -18,8 +19,47 @@ import {
   watchComfyUI,
   type WsMessage,
 } from '../comfyui.js';
+import { readSessions } from '../sessions.js';
 import { readSettings } from '../settings.js';
 import { buildGenerationMetadata } from '../image-metadata.js';
+
+/**
+ * 会话素材标签 → 真实产物 的映射：与前端 extractSessionAssets 同口径，
+ * 按会话消息顺序累计 image/video 产物并命名为 image1/image2/video1/video2…。
+ * 用于把 Agent 误传的 `@imageN`/`@videoN` 标签解析为真实文件。
+ */
+export function resolveSessionAssetLabels(
+  sessionsFile: string | undefined,
+  sessionId: string | undefined,
+): Map<string, TaskOutput> {
+  const map = new Map<string, TaskOutput>();
+  if (!sessionsFile || !sessionId) return map;
+  let file;
+  try {
+    file = readSessions(sessionsFile);
+  } catch {
+    return map;
+  }
+  const session = file.sessions.find(s => s.id === sessionId);
+  if (!session) return map;
+  const counts: Record<'image' | 'video', number> = { image: 0, video: 0 };
+  const seen = new Set<string>();
+  const collect = (output: TaskOutput | undefined) => {
+    if (!output || (output.kind !== 'image' && output.kind !== 'video') || !output.url || seen.has(output.url)) return;
+    seen.add(output.url);
+    counts[output.kind] += 1;
+    map.set(`${output.kind}${counts[output.kind]}`, output);
+  };
+  for (const msg of session.messages) {
+    for (const task of (msg.tasks ?? []) as Array<{ outputs?: TaskOutput[] }>) {
+      for (const output of task.outputs ?? []) collect(output);
+    }
+    for (const stage of (msg.stages ?? []) as Array<{ outputs?: TaskOutput[] }>) {
+      for (const output of stage.outputs ?? []) collect(output);
+    }
+  }
+  return map;
+}
 
 export interface ProgressUpdate {
   stage?: string;
@@ -38,6 +78,8 @@ export type TaskExecutor = (
 export interface TaskQueueOptions {
   dataFile: string;
   settingsFile?: string;
+  /** 会话存储文件；提供后支持把 @imageN/@videoN 标签解析为会话历史中的真实产物 */
+  sessionsFile?: string;
   drafts?: DraftStore;
   autoStart?: boolean;
   executor?: TaskExecutor;
@@ -71,6 +113,7 @@ export function extractHistoryError(history: Record<string, any> | undefined): s
 export class TaskQueue extends EventEmitter {
   private dataFile: string;
   private settingsFile?: string;
+  private sessionsFile?: string;
   private drafts?: DraftStore;
   private tasks: Map<string, TaskItem> = new Map();
   private isProcessing = false;
@@ -83,6 +126,7 @@ export class TaskQueue extends EventEmitter {
     super();
     this.dataFile = options.dataFile;
     this.settingsFile = options.settingsFile;
+    this.sessionsFile = options.sessionsFile;
     this.drafts = options.drafts;
     this.customExecutor = options.executor;
 
@@ -412,10 +456,19 @@ export class TaskQueue extends EventEmitter {
       throw new Error(`找不到工作流源文件: ${spec.id}`);
     }
 
+    // 0. 计算节点屏蔽（bypass）集（与 buildPrompt 同口径）：
+    //    上传素材按顺序落到第一个“未被屏蔽”的帧输入，才能让 LLM 通过
+    //    bypass-<nodeId> 正确选择首帧/尾帧（例如只传尾帧时屏蔽首帧节点）。
+    const bypassNodeIds = new Set(
+      spec.params
+        .filter(p => p.bypass === true && (task.params?.[p.id] === true || task.params?.[p.id] === 'true'))
+        .map(p => p.nodeId),
+    );
+
     // 1. 上传任务携带的素材（上传也属于队列执行生命周期）
     const uploaded: Record<string, string> = {};
-    const imageInputs = spec.inputs.filter(i => i.kind === 'image');
-    const videoInputs = spec.inputs.filter(i => i.kind === 'video');
+    const imageInputs = spec.inputs.filter(i => i.kind === 'image' && !bypassNodeIds.has(i.nodeId));
+    const videoInputs = spec.inputs.filter(i => i.kind === 'video' && !bypassNodeIds.has(i.nodeId));
     for (let i = 0; i < (task.imageUploads?.length ?? 0) && i < imageInputs.length; i++) {
       const upload = task.imageUploads?.[i];
       const inputSpec = imageInputs[i];
@@ -437,9 +490,58 @@ export class TaskQueue extends EventEmitter {
       uploaded[inputSpec.id] = upRes.subfolder ? `${upRes.subfolder}/${upRes.name}` : upRes.name;
     }
 
+    // 1.5 兜底解析 @imageN/@videoN 会话素材标签：Agent 可能把用户指令中的引用标签
+    // 原样传入（而不是真实文件名），把它解析为会话历史中的真实产物并上传到 input 目录。
+    const logToTask = (text: string) => {
+      const stage = task.stages.find(s => s.status === 'active') ?? task.stages[task.stages.length - 1];
+      stage?.logs.push(text);
+    };
+    const sessionLabels = resolveSessionAssetLabels(this.sessionsFile, task.sessionId);
+    const resolveLabel = async (raw: string, kind: 'image' | 'video'): Promise<string> => {
+      const trimmed = raw.trim();
+      if (!/^@?(image|video)\d+$/i.test(trimmed)) return raw;
+      const key = trimmed.replace(/^@/, '').toLowerCase();
+      const output = sessionLabels.get(key);
+      if (!output?.filename) {
+        logToTask(`素材标签 ${trimmed} 未能在会话历史中解析到对应产物，按原值提交`);
+        console.warn(`[task:${task.id}] 无法解析会话素材标签 ${trimmed}（会话中无对应产物），按原值提交`);
+        return raw;
+      }
+      // 产物可能是本地草稿（/api/drafts/<id>/file）或 ComfyUI output 目录文件，
+      // 而 LoadImage/LoadVideo 只读 ComfyUI input 目录：统一取到字节后上传到 input。
+      let data: Buffer;
+      const draftMatch = /^\/api\/drafts\/([\w-]+)\/file$/.exec(output.url ?? '');
+      if (draftMatch?.[1]) {
+        const draftPath = this.drafts?.filePath(draftMatch[1]);
+        if (!draftPath) {
+          logToTask(`素材标签 ${trimmed} 对应草稿 ${draftMatch[1]} 不存在，按原值提交`);
+          console.warn(`[task:${task.id}] 素材标签 ${trimmed} 对应草稿不存在，按原值提交`);
+          return raw;
+        }
+        data = readFileSync(draftPath);
+      } else {
+        if (await fileExists(output.filename, 'input')) return output.filename;
+        const downloaded = await downloadOutput(output.filename, output.subfolder ?? '', output.type ?? 'output');
+        data = downloaded.data;
+      }
+      const ext = output.filename.split('.').pop() || (kind === 'image' ? 'png' : 'mp4');
+      try {
+        const upRes = await uploadFile(kind, `asset-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`, data);
+        const resolved = upRes.subfolder ? `${upRes.subfolder}/${upRes.name}` : upRes.name;
+        logToTask(`素材标签 ${trimmed} → 已解析为 ${resolved}`);
+        return resolved;
+      } catch (error) {
+        logToTask(`素材标签 ${trimmed} 对应产物上传到 ComfyUI 失败（${(error as Error).message}），按原值提交`);
+        console.warn(`[task:${task.id}] 素材标签 ${trimmed} 对应产物上传失败，按原值提交:`, (error as Error).message);
+        return raw;
+      }
+    };
+    const resolvedImages = task.images ? await Promise.all(task.images.map(v => resolveLabel(String(v), 'image'))) : undefined;
+    const resolvedVideos = task.videos ? await Promise.all(task.videos.map(v => resolveLabel(String(v), 'video'))) : undefined;
+
     // 2. 兼容外部传入的本地路径或已上传 ComfyUI 文件名
-    for (let i = 0; i < (task.images?.length ?? 0) && i < imageInputs.length; i++) {
-      const imagePath = task.images?.[i];
+    for (let i = 0; i < (resolvedImages?.length ?? 0) && i < imageInputs.length; i++) {
+      const imagePath = resolvedImages?.[i];
       const inputSpec = imageInputs[i];
       if (!imagePath || !inputSpec || uploaded[inputSpec.id]) continue;
       if (imagePath.startsWith('/') || imagePath.startsWith('./')) {
@@ -454,8 +556,8 @@ export class TaskQueue extends EventEmitter {
         uploaded[inputSpec.id] = imagePath;
       }
     }
-    for (let i = 0; i < (task.videos?.length ?? 0) && i < videoInputs.length; i++) {
-      const videoPath = task.videos?.[i];
+    for (let i = 0; i < (resolvedVideos?.length ?? 0) && i < videoInputs.length; i++) {
+      const videoPath = resolvedVideos?.[i];
       const inputSpec = videoInputs[i];
       if (!videoPath || !inputSpec || uploaded[inputSpec.id]) continue;
       uploaded[inputSpec.id] = videoPath;

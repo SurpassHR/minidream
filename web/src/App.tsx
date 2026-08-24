@@ -44,7 +44,7 @@ import ChatView from './components/ChatView';
 import ActivityPanel from './components/ActivityPanel';
 import DraftsView from './components/DraftsView';
 import SessionAssetsPanel from './components/SessionAssetsPanel';
-import { extractSessionAssets } from './sessionAssets';
+import { extractSessionAssets, findMentionedSessionAssets, type SessionAsset } from './sessionAssets';
 import './App.css';
 
 function mergeActivityEvent(snapshot: ActivitySnapshot, event: ActivityStreamEvent): ActivitySnapshot {
@@ -665,9 +665,47 @@ export default function App() {
     }
   };
 
-  const handleRegenerate = (index: number) => {
+  const fetchAssetDataUrl = async (asset: SessionAsset): Promise<string | null> => {
+    if (asset.url.startsWith('data:')) return asset.url;
+    try {
+      const response = await fetch(asset.url);
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      return await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return null;
+    }
+  };
+
+  // 解析文本中 @imageN/@videoN 提及的会话素材为上传载荷（与 Composer.submit 同口径）。
+  // 重新生成/编辑重发旧消息时若不附带素材，Agent 只能看到文本里的 @ 标签而拿不到真实文件。
+  const attachMentionedAssets = async (text: string) => {
+    const mentioned = findMentionedSessionAssets(text, sessionAssets);
+    const uploaded = await Promise.all(mentioned.map(async asset => ({
+      asset,
+      dataUrl: await fetchAssetDataUrl(asset),
+    })));
+    return {
+      images: uploaded
+        .filter(item => item.asset.kind === 'image' && item.dataUrl)
+        .map(item => ({ name: item.asset.name, dataUrl: item.dataUrl! })),
+      videos: uploaded
+        .filter(item => item.asset.kind === 'video' && item.dataUrl)
+        .map(item => ({ name: item.asset.name, dataUrl: item.dataUrl! })),
+    };
+  };
+
+  const handleRegenerate = async (index: number) => {
     const userMsg = [...messages].slice(0, index).reverse().find(m => m.role === 'user');
-    if (userMsg) void handleSend(userMsg.content);
+    if (userMsg) {
+      const assets = await attachMentionedAssets(userMsg.content);
+      void handleSend(userMsg.content, assets);
+    }
   };
 
   const handleCancelJob = async (jobId: string) => {
@@ -706,9 +744,10 @@ export default function App() {
     }
   };
 
-  const handleEditMessage = (index: number, content: string) => {
+  const handleEditMessage = async (index: number, content: string) => {
     if (!activeConv || sending) return;
-    void handleSend(content, undefined, index);
+    const assets = await attachMentionedAssets(content);
+    void handleSend(content, assets, index);
   };
 
   const handleCancelTask = async (taskId: string) => {

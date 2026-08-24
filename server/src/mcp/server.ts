@@ -29,6 +29,11 @@ export interface McpServerOptions {
   isStatusPollingEnabled?: () => boolean;
   /** 插件 Skill 文件目录；用于读取自定义 Skill，默认仓库 .pi/skills */
   skillsDir?: string;
+  /**
+   * 会话素材标签解析：把 LLM 误传的 `@imageN`/`imageN`/`@videoN`/`videoN` 标签
+   * 解析为已上传到 ComfyUI 的真实文件名；返回 undefined 时保留原值。
+   */
+  sessionAssetResolver?: (sessionId: string | undefined, label: string) => string | undefined;
 }
 
 export interface McpServerInstance {
@@ -81,12 +86,12 @@ const MCP_TOOLS: McpToolDescriptor[] = [
         images: {
           type: 'array',
           items: { type: 'string' },
-          description: '参考图片文件名/本地路径/URL 列表。用户提供的参考图已由系统上传到 ComfyUI input 目录（见对话【参考图片】段中的文件名），图生图/图生视频时必须按序传入',
+          description: '参考图片文件名/本地路径/URL 列表，也可直接传用户指令中的 @imageN 标签（后端自动解析为对应文件）。用户提供的参考图已由系统上传到 ComfyUI input 目录（见对话【参考图片】段中的文件名），图生图/图生视频时必须按序传入',
         },
         videos: {
           type: 'array',
           items: { type: 'string' },
-          description: '可选的输入视频本地路径或 URL 列表',
+          description: '可选的输入视频本地路径或 URL 列表，也可直接传 @videoN 标签（后端自动解析为对应文件）',
         },
         params: {
           type: 'object',
@@ -134,8 +139,9 @@ export function createDirectorMCPServer(
   taskQueue: TaskQueue,
   isWorkflowEnabled?: (id: string) => boolean,
   isStatusPollingEnabled?: () => boolean,
+  sessionAssetResolver?: (sessionId: string | undefined, label: string) => string | undefined,
 ): McpServerInstance {
-  return createMcpServer({ taskQueue, isWorkflowEnabled, isStatusPollingEnabled });
+  return createMcpServer({ taskQueue, isWorkflowEnabled, isStatusPollingEnabled, sessionAssetResolver });
 }
 
 export function createMcpServer(options: McpServerOptions): McpServerInstance {
@@ -236,11 +242,21 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
             isError: true,
           };
         }
+        // 兜底解析素材标签：Agent 可能把用户指令中的 @imageN/@videoN 标签原样传入，
+        // 而不是【参考图片】/【参考视频】段展示的真实文件名，导致 ComfyUI 校验失败。
+        const resolveAssetLabel = (raw: string): string => {
+          const trimmed = raw.trim();
+          if (!/^@?(image|video)\d+$/i.test(trimmed)) return raw;
+          return options.sessionAssetResolver?.(
+            args.sessionId ? String(args.sessionId) : undefined,
+            trimmed,
+          ) ?? raw;
+        };
         const task = taskQueue.submit({
           workflowId,
           prompt: String(args.prompt),
-          images: Array.isArray(args.images) ? args.images.map(String) : undefined,
-          videos: Array.isArray(args.videos) ? args.videos.map(String) : undefined,
+          images: Array.isArray(args.images) ? args.images.map(v => resolveAssetLabel(String(v))) : undefined,
+          videos: Array.isArray(args.videos) ? args.videos.map(v => resolveAssetLabel(String(v))) : undefined,
           params: args.params && typeof args.params === 'object' ? args.params : undefined,
           sessionId: args.sessionId ? String(args.sessionId) : undefined,
         });
