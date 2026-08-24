@@ -3762,17 +3762,21 @@
 
 /* ============ 生成占位动画（复刻即梦 record-loading-animation） ============ */
 
-/* 气泡下方的任务媒体区域：relative 容器，进行中 16:9 占位，渐变层覆盖其上 */
+/* 气泡下方的任务媒体区域：使用气泡约一半宽度，加载态沿用图像比例 */
 .task-media-region {
   position: relative;
-  width: 100%;
+  width: 50%;
   border-radius: 12px;
   overflow: hidden;
 }
 
-/* 进行中：无产物时以 16:9 撑起区域高度 */
-.task-media-region.has-loading {
-  aspect-ratio: 16 / 9;
+/* 进行中：有目标尺寸时使用图像比例；未知时让媒体自身撑起区域 */
+.task-media-region.has-loading.has-aspect-ratio {
+  aspect-ratio: var(--task-media-aspect-ratio);
+}
+
+.task-media-region.has-loading.intrinsic {
+  aspect-ratio: auto;
 }
 
 /* 完成淡出后：高度由产物自然撑起 */
@@ -3788,6 +3792,33 @@
   border-radius: 12px;
   overflow: hidden;
   background: var(--bg-progress, #eef0f3);
+}
+
+.task-media-region.has-loading.intrinsic .task-card-media {
+  position: relative;
+  inset: auto;
+  aspect-ratio: auto;
+}
+
+.task-media-region .generation-results {
+  width: 100%;
+  margin-top: 0;
+}
+
+.task-media-region .result-grid {
+  display: block;
+}
+
+.task-media-region .result-figure {
+  width: 100%;
+}
+
+.task-media-region .result-img {
+  width: 100%;
+  height: auto;
+  max-height: none;
+  object-fit: fill;
+  background: transparent;
 }
 
 .task-card-media-loading {

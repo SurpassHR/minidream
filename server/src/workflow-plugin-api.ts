@@ -412,7 +412,7 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
             return;
           }
           writeCustomSkill(id, content, skillsDir);
-          res.json({ ok: true });
+          res.json({ ok: true, content });
           return;
         }
         if (req.method === 'POST' && req.path.endsWith('/skill/regenerate')) {
@@ -523,12 +523,9 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           writeManifest(options.catalog.manifestDir, normalized);
           try {
             const spec = await skillSpec(id);
-            if (spec) {
-              syncPluginSkill(spec, skillsDir);
-              syncPluginResponseProtocol(spec, skillsDir);
-            }
+            if (spec) syncPluginResponseProtocol(spec, skillsDir);
           } catch (error) {
-            console.error(`[workflow-skill] 重新生成 ${id} 失败:`, error);
+            console.error(`[workflow-skill] 同步 ${id} 回复协议失败:`, error);
           }
           options.invalidate();
           res.json({ ok: true, plugin: normalized });

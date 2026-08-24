@@ -500,7 +500,7 @@ export async function regeneratePluginSkill(id: string): Promise<{ ok: boolean }
 }
 
 /** 保存插件 SKILL.md 的自定义内容（手工编辑） */
-export async function savePluginSkill(id: string, content: string): Promise<{ ok: boolean }> {
+export async function savePluginSkill(id: string, content: string): Promise<{ ok: boolean; content: string }> {
   return http(`/api/plugins/${encodeURIComponent(id)}/skill`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

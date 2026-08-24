@@ -193,7 +193,7 @@ describe('workflow plugin API', () => {
     });
   });
 
-  it('导入插件时生成 skill 文件，PUT 后重新生成，DELETE 时删除', async () => {
+  it('导入插件时生成 skill 文件，manifest 保存不自动更新，显式重新生成后更新，DELETE 时删除', async () => {
     const root = makeRoot();
     const options = makeOptions(root);
     await withServer(makeApp(options), async baseUrl => {
@@ -211,6 +211,10 @@ describe('workflow plugin API', () => {
         method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(edited),
       });
       expect(saved.status).toBe(200);
+      expect(readPluginSkill('demo', options.skillsDir!)).not.toMatch(/steps-4/);
+
+      const regenerated = await fetch(`${baseUrl}/api/plugins/demo/skill/regenerate`, { method: 'POST' });
+      expect(regenerated.status).toBe(200);
       expect(readPluginSkill('demo', options.skillsDir!)).toMatch(/steps-4/);
 
       const deleted = await fetch(`${baseUrl}/api/plugins/demo`, { method: 'DELETE' });
@@ -256,15 +260,16 @@ describe('workflow plugin API', () => {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
       });
-      const custom = '# 自定义 skill\n\n手工编写的内容';
+      const generated = readPluginSkill('demo', options.skillsDir!)!;
+      const custom = `${generated}\n\n用户修改的内容`;
       const saved = await fetch(`${baseUrl}/api/plugins/demo/skill`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ content: custom }),
       });
       expect(saved.status).toBe(200);
-      expect(readPluginSkill('demo', options.skillsDir!)).toBe(custom);
+      expect(await (await fetch(`${baseUrl}/api/plugins/demo/skill`)).text()).toBe(custom);
 
-      // 保存 manifest 不应覆盖自定义版本
+      // 保存 manifest 不应覆盖从自动版编辑而来的自定义版本
       const current = (await (await fetch(`${baseUrl}/api/plugins`)).json() as WorkflowSpec[]).find(p => p.id === 'demo')!;
       const resave = await fetch(`${baseUrl}/api/plugins/demo`, {
         method: 'PUT', headers: { 'content-type': 'application/json' },
@@ -272,6 +277,7 @@ describe('workflow plugin API', () => {
       });
       expect(resave.status).toBe(200);
       expect(readPluginSkill('demo', options.skillsDir!)).toBe(custom);
+      expect(await (await fetch(`${baseUrl}/api/plugins/demo/skill`)).text()).toBe(custom);
     });
   });
 

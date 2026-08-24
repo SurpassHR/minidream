@@ -150,7 +150,9 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     setSkillSaving(true);
     setSkillError(null);
     try {
-      await savePluginSkill(id, skillContent);
+      const result = await savePluginSkill(id, skillContent);
+      setSkillContent(result.content);
+      setSkillLoaded(true);
     } catch (e) {
       setSkillError((e as Error).message);
     } finally {

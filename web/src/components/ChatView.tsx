@@ -1,9 +1,10 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, type CSSProperties } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { openDraftLocation, type ChatMessage, type ChatStage, type GenerationOutput, type TaskItem, type ActionCardData, type WorkflowRoute, type ResponseBlock } from '../api';
 import ImageLightbox, { type LightboxImage } from './ImageLightbox';
+import { getTaskMediaAspectRatio, getTaskMediaLayoutClass } from '../taskMediaRatio';
 
 /* ==================== 工具函数 ==================== */
 
@@ -285,6 +286,13 @@ function TaskMediaRegion({
   const legacyActive = Boolean(legacyStage && !legacyStage.cancelled && !done);
 
   const isActive = anyTaskActive || legacyActive;
+  const mediaTask = activeTask ?? tasks.find(task => task.outputs?.length || task.generationParams || task.params);
+  const outputParams = mediaTask?.outputs?.find(output => output.kind === 'image' && output.generation?.params)?.generation?.params
+    ?? outputs.find(output => output.kind === 'image' && output.generation?.params)?.generation?.params;
+  const mediaRatioSource = mediaTask || outputParams ? { ...mediaTask, outputParams } : undefined;
+  const [loadedImageRatio, setLoadedImageRatio] = useState<string>();
+  const mediaAspectRatio = loadedImageRatio ?? getTaskMediaAspectRatio(mediaRatioSource);
+  const mediaLayoutClass = mediaAspectRatio ? 'has-aspect-ratio' : getTaskMediaLayoutClass(mediaRatioSource);
 
   // 任务从进行中 -> 完成时，保留动画容器播放淡出，再卸载
   const [leaving, setLeaving] = useState(false);
@@ -326,9 +334,12 @@ function TaskMediaRegion({
   }
 
   return (
-    <div className={`task-media-region${leaving ? ' leaving' : ''}${showLoading ? ' has-loading' : ''}`}>
+    <div
+      className={`task-media-region${leaving ? ' leaving' : ''}${showLoading ? ` has-loading ${mediaLayoutClass}` : ''}`}
+      style={mediaAspectRatio ? { '--task-media-aspect-ratio': mediaAspectRatio } as CSSProperties : undefined}
+    >
       {/* 底层：生成结果（完成后淡入） */}
-      {outputs.length > 0 && <GenerationOutputsView outputs={outputs} onOpenImage={onOpenImage} onCite={onCite} />}
+      {outputs.length > 0 && <GenerationOutputsView outputs={outputs} onOpenImage={onOpenImage} onCite={onCite} onImageRatio={(width, height) => setLoadedImageRatio(`${width} / ${height}`)} />}
       {/* 上层：渐变动画覆盖（进行中显示，完成时淡出让位） */}
       {showLoading && (
         <TaskLoadingMedia queued={queued} percent={percent} onCancel={cancelFn} cancelLabel={cancelLabel} />
@@ -382,10 +393,12 @@ function GenerationOutputsView({
   outputs,
   onOpenImage,
   onCite,
+  onImageRatio,
 }: {
   outputs: GenerationOutput[];
   onOpenImage?: (img: LightboxImage) => void;
   onCite?: (img: { url: string; alt: string }) => void;
+  onImageRatio?: (width: number, height: number) => void;
 }) {
   if (!outputs?.length) return null;
   const images = outputs.filter(o => o.kind === 'image');
@@ -407,6 +420,12 @@ function GenerationOutputsView({
                     src={img.url}
                     alt={alt}
                     loading="lazy"
+                    onLoad={event => {
+                      const image = event.currentTarget;
+                      if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+                        onImageRatio?.(image.naturalWidth, image.naturalHeight);
+                      }
+                    }}
                     onClick={() => {
                       if (img.url) onOpenImage?.({ url: img.url, alt, generation: img.generation });
                     }}
