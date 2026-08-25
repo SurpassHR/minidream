@@ -489,4 +489,218 @@ describe('workflow plugin API', () => {
     };
     expect(validateParamMappings(broken, graph as any)).toMatch(/指向不存在字段：9999\.nope/);
   });
+
+  it('analyze 只返回配置建议预览，不写入任何文件', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    await withServer(makeApp(options), async baseUrl => {
+      const imported = await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      expect(imported.status).toBe(200);
+
+      const snapshot = (): string[] => (fs.readdirSync(root, { recursive: true }) as string[])
+        .filter(entry => entry.endsWith('.json') || entry.endsWith('.md'))
+        .sort()
+        .map(entry => `${entry}:${fs.readFileSync(path.join(root, entry), 'utf8')}`);
+      const before = snapshot();
+
+      const result = await fetch(`${baseUrl}/api/plugins/demo/analyze`, { method: 'POST' });
+      expect(result.status).toBe(200);
+      const body = await result.json() as {
+        ok: boolean;
+        analysis: {
+          workflow: { format: string; nodeCount: number };
+          inputs: Array<{ candidate: { id: string }; recommended: boolean }>;
+          outputs: Array<{ candidate: { id: string }; recommended: boolean }>;
+          widgets: Array<{ exposure: string; field: { field: string } }>;
+        };
+      };
+      expect(body.ok).toBe(true);
+      expect(body.analysis.workflow.format).toBe('api');
+      expect(body.analysis.workflow.nodeCount).toBe(4);
+      expect(body.analysis.inputs[0]?.candidate.id).toBe('text-1');
+      expect(body.analysis.outputs[0]?.candidate.id).toBe('images-2');
+      // KSampler.steps 未在 manifest 中 → review；连接字段不进入 widget 建议
+      const exposures = Object.fromEntries(body.analysis.widgets.map(w => [w.field.field, w.exposure]));
+      expect(exposures['steps']).toBe('review');
+      expect(exposures['model']).toBeUndefined();
+
+      expect(snapshot()).toEqual(before);
+    });
+  });
+
+  it('analyze 对未知插件返回 404', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    await withServer(makeApp(options), async baseUrl => {
+      const result = await fetch(`${baseUrl}/api/plugins/nope/analyze`, { method: 'POST' });
+      expect(result.status).toBe(404);
+    });
+  });
+
+  it('analyze 合并 LLM 建议并丢弃非法引用；LLM 失败时回退基础分析', async () => {
+    const options = makeOptions(makeRoot());
+    const analyzeLlm = vi.fn(async () => ({
+      purpose: { description: 'LLM 描述' },
+      widgets: [{ nodeId: '4', field: 'steps', exposure: 'llm' as const, reason: '常用' }],
+    }));
+    await withServer(makeApp({ ...options, analyzeLlm }), async baseUrl => {
+      await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      const result = await fetch(`${baseUrl}/api/plugins/demo/analyze`, { method: 'POST' });
+      expect(result.status).toBe(200);
+      const body = await result.json() as { analysis: { purpose: { description: string }; widgets: Array<{ exposure: string; field: { field: string } }> } };
+      expect(body.analysis.purpose.description).toBe('LLM 描述');
+      expect(body.analysis.widgets.find(w => w.field.field === 'steps')?.exposure).toBe('llm');
+
+      // useLlm:false 跳过 LLM
+      analyzeLlm.mockClear();
+      await fetch(`${baseUrl}/api/plugins/demo/analyze`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ useLlm: false }),
+      });
+      expect(analyzeLlm).not.toHaveBeenCalled();
+    });
+  });
+
+  it('analyze LLM 失败时仍返回基础分析并附警告', async () => {
+    const options = makeOptions(makeRoot());
+    await withServer(makeApp({ ...options, analyzeLlm: async () => { throw new Error('boom'); } }), async baseUrl => {
+      await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      const result = await fetch(`${baseUrl}/api/plugins/demo/analyze`, { method: 'POST' });
+      expect(result.status).toBe(200);
+      const body = await result.json() as { analysis: { inputs: unknown[] }; warnings: string[] };
+      expect(body.analysis.inputs.length).toBeGreaterThan(0);
+      expect(body.warnings.join(' ')).toContain('boom');
+    });
+  });
+
+  it('configure 校验通过后保存完整配置，并按覆盖标志联动 Skill/response', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    const generateSkill = vi.fn(async (spec: WorkflowSpec) => `# LLM skill for ${spec.id}\n\n生成内容`);
+    await withServer(makeApp({ ...options, generateSkill }), async baseUrl => {
+      const imported = await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      const current = (await imported.json() as { plugin: WorkflowSpec }).plugin;
+      const draft = {
+        ...current,
+        name: '自定义插件名',
+        params: [{ id: 'steps-4', label: '步数', nodeId: '4', field: 'steps', type: 'INT' as const, default: 20, llm: true }],
+      };
+      const result = await fetch(`${baseUrl}/api/plugins/demo/configure`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ manifest: draft, overwriteSkill: true, overwriteResponse: true }),
+      });
+      expect(result.status).toBe(200);
+      const body = await result.json() as { ok: boolean; plugin: WorkflowSpec };
+      expect(body.ok).toBe(true);
+      expect(body.plugin.name).toBe('自定义插件名');
+      expect(body.plugin.params[0]).toMatchObject({ id: 'steps-4', type: 'INT' });
+      const saved = readManifest(options.catalog.manifestDir, 'demo');
+      expect(saved.status).toBe('valid');
+      if (saved.status === 'valid') {
+        expect(saved.manifest.params.map(p => p.id)).toEqual(['steps-4']);
+      }
+      // overwriteSkill → LLM 自定义版本落盘；overwriteResponse → 默认协议重写
+      expect(fs.readFileSync(path.join(root, 'skills', 'demo', 'SKILL.md'), 'utf8')).toContain('LLM skill for demo');
+      expect(fs.existsSync(path.join(root, 'skills', 'demo', 'response.json'))).toBe(true);
+    });
+  });
+
+  it('configure 校验失败时 manifest、Skill 与 response 均保持原样', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    await withServer(makeApp(options), async baseUrl => {
+      const imported = await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      const current = (await imported.json() as { plugin: WorkflowSpec }).plugin;
+
+      const snapshot = (): string[] => (fs.readdirSync(root, { recursive: true }) as string[])
+        .filter(entry => entry.endsWith('.json') || entry.endsWith('.md'))
+        .sort()
+        .map(entry => `${entry}:${fs.readFileSync(path.join(root, entry), 'utf8')}`);
+      const before = snapshot();
+
+      // 参数指向不存在字段 → 400 且无任何文件变化
+      const badField = {
+        ...current,
+        params: [{ id: 'bad-4', label: 'x', nodeId: '4', field: 'nope', type: 'INT' as const, default: 1 }],
+      };
+      const badResponse = await fetch(`${baseUrl}/api/plugins/demo/configure`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ manifest: badField, overwriteSkill: true, overwriteResponse: true }),
+      });
+      expect(badResponse.status).toBe(400);
+      expect(snapshot()).toEqual(before);
+
+      // 输入结构被修改 → 结构校验拒绝
+      const badStructure = { ...current, inputs: [{ ...current.inputs[0], kind: 'image' as const }] };
+      const structureResponse = await fetch(`${baseUrl}/api/plugins/demo/configure`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ manifest: badStructure }),
+      });
+      expect(structureResponse.status).toBe(400);
+      expect(snapshot()).toEqual(before);
+
+      // manifest.id 与 URL 不一致 → 400
+      const mismatch = await fetch(`${baseUrl}/api/plugins/demo/configure`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ manifest: { ...current, id: 'other' } }),
+      });
+      expect(mismatch.status).toBe(400);
+      expect(snapshot()).toEqual(before);
+    });
+  });
+
+  it('configure 不带覆盖标志时保留自定义 Skill 与回复协议', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    const generateSkill = vi.fn(async (spec: WorkflowSpec) => `# LLM for ${spec.id}`);
+    await withServer(makeApp({ ...options, generateSkill }), async baseUrl => {
+      const imported = await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+      });
+      const current = (await imported.json() as { plugin: WorkflowSpec }).plugin;
+
+      // 写入自定义 Skill 与自定义回复协议
+      await fetch(`${baseUrl}/api/plugins/demo/skill`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: '# 完全自定义\n\n内容' }),
+      });
+      const protocol = (await (await fetch(`${baseUrl}/api/plugins/demo/response`)).json() as { protocol: { blocks: Array<{ id: string; label?: string }> } }).protocol;
+      const promptBlock = protocol.blocks.find(block => block.id === 'generation-prompt')!;
+      promptBlock.label = '自定义标签';
+      await fetch(`${baseUrl}/api/plugins/demo/response`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ protocol }),
+      });
+
+      // 确认保存但不带覆盖标志：manifest 更新，自定义文件原样保留
+      const draft = { ...current, name: '新名字' };
+      const result = await fetch(`${baseUrl}/api/plugins/demo/configure`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ manifest: draft }),
+      });
+      expect(result.status).toBe(200);
+      expect(generateSkill).not.toHaveBeenCalled();
+      expect(readPluginSkill('demo', path.join(root, 'skills'))).toContain('完全自定义');
+      const savedProtocol = JSON.parse(fs.readFileSync(path.join(root, 'skills', 'demo', 'response.json'), 'utf8')) as { blocks: Array<{ id: string; label?: string }> };
+      expect(savedProtocol.blocks.find(block => block.id === 'generation-prompt')?.label).toBe('自定义标签');
+      const saved = readManifest(options.catalog.manifestDir, 'demo');
+      if (saved.status === 'valid') expect(saved.manifest.name).toBe('新名字');
+    });
+  });
 });

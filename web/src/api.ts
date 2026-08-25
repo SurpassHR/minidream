@@ -488,6 +488,61 @@ export async function redetectWorkflowManifest(id: string): Promise<WorkflowMani
   return http(`/api/plugins/${encodeURIComponent(id)}/redetect`, { method: 'POST' });
 }
 
+/** plugin-creator 配置建议（预览，不落盘） */
+export interface PluginAnalysisCandidate {
+  candidate: { id: string; kind: string; label: string; description?: string; hidden?: boolean };
+  confidence: number;
+  reason: string;
+  recommended: boolean;
+}
+
+export interface PluginAnalysisWidget {
+  field: {
+    nodeId: string;
+    field: string;
+    type: string;
+    connected: boolean;
+    selectable: boolean;
+    value?: unknown;
+    options?: string[];
+  };
+  exposure: 'llm' | 'fixed' | 'hidden' | 'review';
+  reason: string;
+  confidence: number;
+  /** 仅连线字段：沿连线追溯到的上游源头节点及其可暴露 widget */
+  sources?: Array<{ nodeId: string; classType: string; title: string; fields: string[] }>;
+}
+
+export interface PluginAnalysis {
+  workflow: { format: 'api' | 'ui'; nodeCount: number; sourceFingerprint: string };
+  purpose: { name: string; description: string; capabilities: string[] };
+  inputs: PluginAnalysisCandidate[];
+  outputs: PluginAnalysisCandidate[];
+  widgets: PluginAnalysisWidget[];
+  response: {
+    recommendedPromptVisibility: boolean;
+    blocks: Array<{ source: string; timing: string; format: string }>;
+  };
+}
+
+/** 请求插件配置分析建议预览；服务端只读不写盘 */
+export async function analyzePluginConfig(id: string): Promise<{ ok: boolean; analysis: PluginAnalysis; warnings?: string[] }> {
+  return http(`/api/plugins/${encodeURIComponent(id)}/analyze`, { method: 'POST' });
+}
+
+/** 用户确认后保存完整插件配置；overwrite 标志控制是否重写自定义 Skill/回复协议 */
+export async function configureWorkflowPlugin(
+  id: string,
+  manifest: WorkflowManifest,
+  flags: { overwriteSkill?: boolean; overwriteResponse?: boolean } = {},
+): Promise<{ ok: boolean; plugin: WorkflowPluginRecord }> {
+  return http(`/api/plugins/${encodeURIComponent(id)}/configure`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ manifest, ...flags }),
+  });
+}
+
 /** 获取插件自动生成的 SKILL.md（预览用） */
 export async function fetchPluginSkill(id: string): Promise<string> {
   const res = await fetch(`/api/plugins/${encodeURIComponent(id)}/skill`);
@@ -512,7 +567,7 @@ export async function savePluginSkill(id: string, content: string): Promise<{ ok
   });
 }
 
-/** 用 plugin-skill-creator 为插件生成 SKILL.md（覆盖当前内容） */
+/** 用 plugin-creator 为插件生成 SKILL.md（覆盖当前内容） */
 export async function generatePluginSkillLlm(id: string): Promise<{ ok: boolean; content: string }> {
   return http(`/api/plugins/${encodeURIComponent(id)}/skill/generate`, { method: 'POST' });
 }

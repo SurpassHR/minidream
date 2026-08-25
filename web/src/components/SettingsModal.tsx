@@ -11,7 +11,7 @@ import {
   saveComfySettings,
   saveStorageSettings,
   savePluginsSettings,
-  saveWorkflowManifest,
+  configureWorkflowPlugin,
   type AgentModel,
   type AgentThinking,
   type ComfyStatus,
@@ -248,7 +248,8 @@ export default function SettingsModal({
     setMappingSaving(true);
     setMappingError(null);
     try {
-      const result = await saveWorkflowManifest(manifest.id, manifest);
+      // 保存走确认事务端点：同一套校验，且默认保留自定义 Skill/回复协议
+      const result = await configureWorkflowPlugin(manifest.id, manifest);
       setPluginRecords(records => records.map(record => record.id === result.plugin.id ? result.plugin : record));
       onRefreshWorkflows?.();
       return true;

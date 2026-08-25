@@ -1,21 +1,21 @@
 ---
 name: video-minimax-h3-r2v
-description: 本地运行：MiniMax H3 参考图/参考视频生成（r2v，含原生音频）。需 comfyui-minimax-h3 节点与 H3 模型权重。
+description: 工作流插件 video-minimax-h3-r2v
 ---
 
-# MiniMax H3 参考图生视频
+# video-minimax-h3-r2v
 
 > 本文件由 server/src/workflow-skill.ts 自动生成，勿手工编辑；修改插件 manifest 或重新识别后会自动重新生成。
 
 ## 用途
 
-本地运行：MiniMax H3 参考图/参考视频生成（r2v，含原生音频）。需 comfyui-minimax-h3 节点与 H3 模型权重。
+工作流插件 video-minimax-h3-r2v
 
 ## 输入
 
-- **参考图**（类型 图像；必传）
-- **提示词**（类型 文本）
-- **参考图**（类型 图像；必传）
+- **参考图**（类型 图像；默认值非空（模板内置））
+- **提示词**（类型 文本；默认值非空（模板内置））
+- **参考图**（类型 图像；默认值非空（模板内置））
 
 ## 可控制参数
 
@@ -29,4 +29,4 @@ description: 本地运行：MiniMax H3 参考图/参考视频生成（r2v，含�
 
 ## 使用规则
 
-- 必须按顺序传入 2 张参考图（`generation.submit` 的 `images` 参数）。
+- 按提示词直接生成即可，无额外素材要求。

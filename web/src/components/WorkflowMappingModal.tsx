@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  analyzePluginConfig,
   chatPluginSkill,
   fetchPluginSkill,
   fetchWorkflowGraph,
@@ -9,6 +10,7 @@ import {
   fetchPluginResponse,
   savePluginResponse,
   regeneratePluginResponse,
+  type PluginAnalysis,
   type PluginResponseProtocol,
   type WorkflowGraph,
   type WorkflowGraphField,
@@ -86,6 +88,15 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   const [responseLoading, setResponseLoading] = useState(false);
   const [responseSaving, setResponseSaving] = useState(false);
   const [responseError, setResponseError] = useState<string | null>(null);
+  // plugin-creator 配置建议：只预览，用户确认后才应用到草稿
+  const [analysis, setAnalysis] = useState<PluginAnalysis | null>(null);
+  const [analysisWarnings, setAnalysisWarnings] = useState<string[]>([]);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  // review 类建议需要用户勾选确认才会应用；键为 nodeId:field
+  const [confirmedReview, setConfirmedReview] = useState<Set<string>>(new Set());
+
+  const reviewKey = (item: { field: { nodeId: string; field: string } }) => `${item.field.nodeId}:${item.field.field}`;
 
   const loadGraph = async (id: string) => {
     setGraphLoading(true);
@@ -127,6 +138,62 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     } finally {
       setResponseLoading(false);
     }
+  };
+
+  /** 生成配置建议（只读预览，不落盘） */
+  const runAnalysis = async () => {
+    if (analysisLoading) return;
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    try {
+      const result = await analyzePluginConfig(draft.id);
+      setAnalysis(result.analysis);
+      setConfirmedReview(new Set(
+        result.analysis.widgets
+          .filter(item => item.exposure === 'review' && !item.field.connected)
+          .map(reviewKey),
+      ));
+      setAnalysisWarnings(result.warnings ?? []);
+    } catch (e) {
+      setAnalysis(null);
+      setAnalysisWarnings([]);
+      setAnalysisError((e as Error).message);
+    } finally {
+      setAnalysisLoading(false);
+    }
+  };
+
+  /** 用户确认：把建议应用到本地草稿（仍需点击保存才落盘） */
+  const applySuggestions = () => {
+    if (!analysis) return;
+    setDraft(current => {
+      let next = current;
+      for (const item of analysis.widgets) {
+        const field = item.field as WorkflowGraphField;
+        if (!field.selectable || field.connected) continue;
+        if (item.exposure === 'llm' || (item.exposure === 'review' && confirmedReview.has(`${field.nodeId}:${field.field}`))) {
+          if (!paramForField(next, field)) next = addParamFromField(next, field);
+          next = addBypassParam(setParamExposed(next, field, true), field.nodeId, nodeTitle(field.nodeId));
+          continue;
+        }
+        const index = next.params.findIndex(param => param.nodeId === field.nodeId && param.field === field.field);
+        if (index < 0) continue;
+        const param = next.params[index]!;
+        next.params[index] = item.exposure === 'hidden'
+          ? { ...param, hidden: true }
+          : item.exposure === 'fixed'
+            ? { ...param, llm: false }
+            : param;
+      }
+      // 用途描述仅在为空时填充，不覆盖手工内容
+      if (!next.description?.trim() && analysis.purpose.description) {
+        next = { ...next, description: analysis.purpose.description };
+      }
+      return next;
+    });
+    setAnalysis(null);
+    setAnalysisWarnings([]);
+    setConfirmedReview(new Set());
   };
 
   const selectView = (next: 'node' | 'form' | 'skill' | 'response') => {
@@ -200,6 +267,9 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     setSkillChatSending(false);
     setResponseProtocol(null);
     setResponseError(null);
+    setAnalysis(null);
+    setAnalysisWarnings([]);
+    setAnalysisError(null);
     void loadGraph(manifest.id);
   }, [manifest]);
 
@@ -622,6 +692,75 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
             </section>
           )}
         </div>
+        {(analysis || analysisLoading || analysisError) && (
+          <div className="workflow-mapping-suggest" role="status">
+            <div className="workflow-mapping-suggest-head">
+              <strong>{t('mapping.suggest.title')}</strong>
+              <div className="workflow-skill-actions">
+                <button className="settings-btn" disabled={analysisLoading} onClick={() => void runAnalysis()}>{analysisLoading ? t('mapping.suggest.loading') : t('mapping.suggest.refresh')}</button>
+                {analysis && <button className="settings-btn primary" onClick={applySuggestions}>{t('mapping.suggest.apply')}</button>
+                }
+                {!analysisLoading && <button className="settings-btn" onClick={() => { setAnalysis(null); setAnalysisWarnings([]); setAnalysisError(null); }}>{t('common.cancel')}</button>}
+              </div>
+            </div>
+            {analysisError && <p className="workflow-mapping-error">{analysisError}</p>}
+            {analysis && (
+              <>
+                <p className="workflow-mapping-suggest-desc">{analysis.purpose.description || t('mapping.suggest.noPurpose')}</p>
+                <ul className="workflow-mapping-suggest-list">
+                  {analysis.inputs.filter(item => !item.candidate.hidden).map(item => (
+                    <li key={`in-${item.candidate.id}`}><strong>{t('mapping.suggest.input')}</strong>{item.candidate.label}（{item.candidate.kind}）<span className="workflow-mapping-suggest-reason">{item.reason}</span></li>
+                  ))}
+                  {analysis.outputs.filter(item => !item.candidate.hidden).map(item => (
+                    <li key={`out-${item.candidate.id}`}><strong>{t('mapping.suggest.output')}</strong>{item.candidate.label}（{item.candidate.kind}）<span className="workflow-mapping-suggest-reason">{item.reason}</span></li>
+                  ))}
+                  {analysis.widgets.map(item => {
+                    const labelKey = item.exposure === 'llm'
+                      ? 'mapping.suggest.exposureLlm'
+                      : item.exposure === 'fixed'
+                        ? 'mapping.suggest.exposureFixed'
+                        : item.exposure === 'hidden'
+                          ? 'mapping.suggest.exposureHidden'
+                          : 'mapping.suggest.exposureReview';
+                    const key = reviewKey(item);
+                    const confirmable = item.exposure === 'review' && !item.field.connected;
+                    return (
+                      <li key={`w-${item.field.nodeId}-${item.field.field}`}>
+                        {confirmable && (
+                          <label className="workflow-mapping-suggest-confirm">
+                            <input
+                              type="checkbox"
+                              checked={confirmedReview.has(key)}
+                              onChange={event => {
+                                setConfirmedReview(current => {
+                                  const next = new Set(current);
+                                  if (event.target.checked) next.add(key); else next.delete(key);
+                                  return next;
+                                });
+                              }}
+                            />
+                            <span>{t('mapping.suggest.confirmExpose')}</span>
+                          </label>
+                        )}
+                        <strong>{t(labelKey)}</strong>{item.field.nodeId}.{item.field.field}
+                        {item.field.value !== undefined && item.exposure !== 'llm' ? ` = ${String(item.field.value)}` : ''}
+                        <span className="workflow-mapping-suggest-reason">{item.reason}</span>
+                        {item.sources && item.sources.length > 0 && (
+                          <span className="workflow-mapping-suggest-reason">
+                            {t('mapping.suggest.upstreamHint', {
+                              sources: item.sources.map(source => `${source.title || source.classType}(${source.fields.join('/')})`).join('、'),
+                            })}
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+                {analysisWarnings.length > 0 && <p className="workflow-mapping-notice">{analysisWarnings.join('；')}</p>}
+              </>
+            )}
+          </div>
+        )}
         {(localError || error || (view === 'node' && graph?.manifestError)) && <div className="workflow-mapping-error">{localError || error || graph?.manifestError}</div>}
         {redetectNotice && <div className="workflow-mapping-notice">{t('mapping.redetectNotice')}</div>}
         {(isDirty || toast) && (
@@ -644,6 +783,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
         )}
         <footer className="workflow-mapping-foot">
           <button className="settings-btn" onClick={() => { setRedetectNotice(true); onRedetect(); }}>{t('mapping.redetect')}</button>
+          <button className="settings-btn" disabled={analysisLoading} onClick={() => void runAnalysis()}>{analysisLoading ? t('mapping.suggest.loading') : t('mapping.suggest.generate')}</button>
           <span />
           <button className="settings-btn" onClick={onClose}>{t('common.cancel')}</button>
           <button className="settings-btn primary" disabled={saving || responseSaving} onClick={() => void save()}>{saving || responseSaving ? t('common.saving') : t('mapping.saveMapping')}</button>

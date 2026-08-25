@@ -230,7 +230,7 @@ export function writeCustomSkill(id: string, content: string, root: string = PLU
 
 /**
  * 同步自动版 skill：仅在文件缺失或当前为自动版时写入；
- * 不覆盖 plugin-skill-creator 生成或手工编辑的自定义版本。
+ * 不覆盖 plugin-creator 生成或手工编辑的自定义版本。
  */
 export function syncPluginSkill(spec: WorkflowSpec, root: string = PLUGIN_SKILLS_DIR): void {
   const file = pluginSkillPath(spec.id, root);

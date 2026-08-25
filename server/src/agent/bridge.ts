@@ -4,6 +4,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { WorkflowSpec } from '../workflow.js';
+import type { PluginCreatorSuggestions } from '../plugin-creator.js';
+import { parsePluginSuggestions } from '../plugin-creator.js';
 import { writeSeedExtension } from './seed.js';
 
 export interface AgentStreamEvent {
@@ -73,7 +75,7 @@ const PROJECT_SKILL_PATH = path.resolve(
 );
 const PLUGIN_SKILL_CREATOR_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  '../../../.pi/skills/plugin-skill-creator/SKILL.md',
+  '../../../.pi/skills/plugin-creator/SKILL.md',
 );
 
 function appendSkillIsolationArgs(args: string[], includeProjectSkill: boolean): void {
@@ -319,7 +321,7 @@ function serializeSpecForSkillCreator(spec: WorkflowSpec): string {
 /** 抑制前言/解释，要求直接输出 SKILL.md 本体 */
 const PLUGIN_SKILL_CREATOR_SYSTEM_PROMPT = [
   '你是工作流插件的 Skill 作者。',
-  '严格按照 plugin-skill-creator skill 的规则为输入的插件 manifest 生成 SKILL.md。',
+  '严格按照 plugin-creator skill 的规则为输入的插件 manifest 生成 SKILL.md。',
   '直接输出 SKILL.md 的完整内容本身：第一行必须是 ---（frontmatter 起始），',
   '不要任何前言、解释、分析、问候语或 Markdown 代码围栏（```）。',
   '不要输出思考过程。',
@@ -354,7 +356,7 @@ function looksLikeSkillMd(content: string): boolean {
 }
 
 /**
- * 用 plugin-skill-creator skill 为插件生成 SKILL.md（无工具的单次 pi 调用）。
+ * 用 plugin-creator skill 为插件生成 SKILL.md（无工具的单次 pi 调用）。
  * 使用 --mode json 并通过 agent_end 事件主动终止进程（--print 模式完成后不退出）。
  * 失败、超时或空输出时抛错，由调用方决定是否回退到自动生成版。
  */
@@ -401,7 +403,7 @@ export async function runPluginSkillCreator(
         setTimeout(() => {
           if (child.exitCode === null) child.kill('SIGKILL');
         }, 3000).unref();
-        finish(new Error('plugin-skill-creator 生成超时'));
+        finish(new Error('plugin-creator 生成超时'));
       }, timeoutMs);
 
     const rl = createInterface({ input: child.stdout!, crlfDelay: Infinity });
@@ -458,10 +460,10 @@ export async function runPluginSkillCreator(
     const content = await runOnce();
     if (content && looksLikeSkillMd(content)) return content;
     if (attempt === 1) {
-      throw new Error('plugin-skill-creator 未返回有效 SKILL.md 内容');
+      throw new Error('plugin-creator 未返回有效 SKILL.md 内容');
     }
   }
-  throw new Error('plugin-skill-creator 未返回有效 SKILL.md 内容');
+  throw new Error('plugin-creator 未返回有效 SKILL.md 内容');
 }
 
 export interface PluginSkillChatMessage {
@@ -654,6 +656,104 @@ export async function runPluginSkillChat(
     child.stdin?.write(input);
     child.stdin?.end();
   });
+}
+
+const PLUGIN_CREATOR_SUGGESTION_SYSTEM_PROMPT = [
+  '你是 ComfyUI 工作流插件的配置分析助手。',
+  '根据输入的工作流事实（节点图、输入/输出候选、widget 候选），只输出一个 JSON 对象，不要 Markdown 围栏或任何其他文字：',
+  '{"purpose":{"name":"插件名","description":"一句话用途","capabilities":["能力"]},',
+  '"inputs":{"<候选id>":{"description":"用途说明","recommended":true}},',
+  '"outputs":{"<候选id>":{"description":"用途说明","recommended":true}},',
+  '"widgets":[{"nodeId":"3","field":"steps","exposure":"llm","reason":"采样步数常调"}],',
+  '"response":{"recommendedPromptVisibility":true,"blocks":[{"source":"result.image","timing":"complete","format":"plain"}]}}',
+  '硬性约束：',
+  '- nodeId/field 只能引用输入 widgets 中列出的候选；exposure 只能是 llm/fixed/hidden/review。',
+  '- connected:true 的字段由上游连线驱动，不能标为 llm；若它对插件用途重要（如尺寸、时长、帧数），应从其 sources 列出的上游节点 widget 中找到对应源头参数，并将那个源头参数标为 llm。',
+  '- inputs/outputs 的键只能是输入候选的 id；不得虚构节点、字段或参数。',
+  '- blocks.source 只能是 result.image / result.video / result.text；timing 只能是 submit/complete/always；format 只能是 plain/markdown/code。',
+  '- 图像/视频产物永远在气泡外展示，不要为它们生成 submit 块。',
+].join('\n');
+
+/**
+ * 用无工具 pi 子进程生成插件配置语义建议（严格 JSON）。
+ * 只返回解析后的建议对象，不落盘；结构合法性由 applyPluginSuggestions 在合并时校验。
+ */
+export async function runPluginCreatorSuggestions(
+  facts: string,
+  opts: PluginSkillCreatorOptions = {},
+): Promise<PluginCreatorSuggestions> {
+  const timeoutMs = opts.timeoutMs ?? 120_000;
+  const args: string[] = ['--mode', 'json', '--no-tools', '--no-session', '--thinking', 'off'];
+  appendSkillIsolationArgs(args, false);
+  args.push('--no-context-files', '--append-system-prompt', PLUGIN_CREATOR_SUGGESTION_SYSTEM_PROMPT);
+
+  const text = await new Promise<string>((resolve, reject) => {
+    let child: ChildProcess;
+    try {
+      child = spawn('pi', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    let output = '';
+    let settled = false;
+    let timer: NodeJS.Timeout | null = null;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(output);
+    };
+    timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        if (child.exitCode === null) child.kill('SIGKILL');
+      }, 3000).unref();
+      finish(new Error('plugin-creator 配置建议生成超时'));
+    }, timeoutMs);
+
+    const rl = createInterface({ input: child.stdout!, crlfDelay: Infinity });
+    rl.on('line', (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      let json: Record<string, any>;
+      try {
+        json = JSON.parse(trimmed);
+      } catch {
+        return;
+      }
+      if (json.type === 'agent_end') {
+        child.kill('SIGTERM');
+        finish();
+        return;
+      }
+      if (json.type === 'message_update') {
+        const event = json.assistantMessageEvent as { type?: string; delta?: string } | undefined;
+        if (event?.type === 'text_delta' && typeof event.delta === 'string') output += event.delta;
+        return;
+      }
+      if (json.type === 'message') {
+        const message = (json.message && typeof json.message === 'object' ? json.message : json) as { content?: unknown };
+        if (typeof message.content === 'string') output += message.content;
+        else if (Array.isArray(message.content)) {
+          for (const block of message.content) {
+            if (block && typeof block === 'object' && (block as { type?: string }).type === 'text' && typeof (block as { text?: string }).text === 'string') {
+              output += (block as { text: string }).text;
+            }
+          }
+        }
+        return;
+      }
+      if (json.type === 'error') finish(new Error(String(json.error ?? json.message ?? 'Agent 错误')));
+    });
+    child.once('error', (error: Error) => finish(error));
+    child.once('close', () => finish());
+    child.stdin?.write(facts);
+    child.stdin?.end();
+  });
+
+  return parsePluginSuggestions(text);
 }
 
 /**

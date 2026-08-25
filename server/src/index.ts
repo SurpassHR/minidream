@@ -38,7 +38,8 @@ import { migrateLegacyPluginConfig } from './workflow-plugin-migration.js';
 import { IMPORTED_WORKFLOWS_DIR, MANIFESTS_DIR, WORKFLOW_PLUGIN_DATA_DIR } from './workflow-plugin-store.js';
 import { ensurePluginSkills, DEFAULT_PLUGIN_RESPONSE_POLICY, filterPluginGenerationArgs, pluginResponseAllows, readPluginResponsePolicy, PLUGIN_SKILLS_DIR, type PluginResponsePolicy } from './workflow-skill.js';
 import { readPluginResponseProtocol, renderResponseBlocks, responseProtocolAllowsPrompt, syncPluginResponseProtocol, validatePluginResponseProtocol, type PluginResponseContext, type PluginResponseProtocol, type RenderedResponseBlock, type ResponseTiming } from './workflow-response.js';
-import { listAgentModels, runAgentStream, buildAgentInput, generateConversationTitle, toolCallFingerprint, runPluginSkillChat, runPluginSkillCreator, type AgentStreamEvent } from './agent/bridge.js';
+import { listAgentModels, runAgentStream, buildAgentInput, generateConversationTitle, toolCallFingerprint, runPluginSkillChat, runPluginSkillCreator, runPluginCreatorSuggestions, type AgentStreamEvent } from './agent/bridge.js';
+import { serializeAnalysisForLlm } from './plugin-creator.js';
 import {
   SessionError,
   appendMessage,
@@ -149,6 +150,7 @@ app.use(createWorkflowPluginRouter({
   invalidate: invalidateComfyCaches,
   generateSkill: runPluginSkillCreator,
   chatSkill: runPluginSkillChat,
+  analyzeLlm: async analysis => runPluginCreatorSuggestions(serializeAnalysisForLlm(analysis)),
 }));
 
 /* ---------------- 会话素材标签解析（兜底 LLM 误传 @imageN/@videoN 标签） ---------------- */

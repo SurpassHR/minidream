@@ -384,7 +384,7 @@ description: 测试
     });
   });
 
-  it('runPluginSkillCreator 加载 plugin-skill-creator skill 并解析围栏输出', async () => {
+  it('runPluginSkillCreator 加载 plugin-creator skill 并解析围栏输出', async () => {
     const child = createFakeChild();
     spawnMock.mockReturnValue(child);
     const spec = {
@@ -402,7 +402,7 @@ description: 测试
     expect(spawnArgs).toContain('--no-skills');
     expect(spawnArgs).toContain('--no-context-files');
     const skillIndex = spawnArgs.indexOf('--skill');
-    expect(spawnArgs[skillIndex + 1]).toMatch(/\.pi\/skills\/plugin-skill-creator\/SKILL\.md$/);
+    expect(spawnArgs[skillIndex + 1]).toMatch(/\.pi\/skills\/plugin-creator\/SKILL\.md$/);
     expect(spawnArgs).not.toContain('--session-id');
 
     // 用户 prompt 写入 stdin

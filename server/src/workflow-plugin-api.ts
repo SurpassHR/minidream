@@ -18,6 +18,7 @@ import {
   type WorkflowCatalogSource,
 } from './workflow-catalog.js';
 import { getObjectInfo } from './comfyui.js';
+import { applyPluginSuggestions, buildPluginAnalysis, serializeAnalysisForLlm, type PluginAnalysis, type PluginCreatorSuggestions } from './plugin-creator.js';
 import { buildWorkflowGraph, createParamFromGraphField, type WorkflowGraph, type WorkflowGraphField } from './workflow-graph.js';
 import { PLUGIN_SKILLS_DIR, deletePluginSkill, generatePluginSkill, readPluginSkill, syncPluginSkill, writeCustomSkill, writePluginSkill } from './workflow-skill.js';
 import { defaultPluginResponseProtocol, deletePluginResponseProtocol, readPluginResponseProtocol, syncPluginResponseProtocol, validatePluginResponseProtocol, writePluginResponseProtocol, resolvePluginResponseProtocol, type PluginResponseProtocol } from './workflow-response.js';
@@ -38,7 +39,7 @@ export interface WorkflowPluginApiOptions {
   invalidate: () => void;
   /** skill 文件落盘目录（默认仓库 .pi/skills） */
   skillsDir?: string;
-  /** 用 plugin-skill-creator 为插件生成 SKILL.md 的调用方（未配置时 generate 端点返回 501） */
+  /** 用 plugin-creator 为插件生成 SKILL.md 的调用方（未配置时 generate 端点返回 501） */
   generateSkill?: (spec: WorkflowSpec) => Promise<string>;
   /** 对话调整 Skill 的调用方；返回预览内容，不应在此处写盘 */
   chatSkill?: (
@@ -47,6 +48,8 @@ export interface WorkflowPluginApiOptions {
     history: PluginSkillChatMessage[],
     userMessage: string,
   ) => Promise<PluginSkillChatResult>;
+  /** 用 plugin-creator 生成配置语义建议的调用方；返回非法结构时由路由层丢弃并回退基础分析 */
+  analyzeLlm?: (analysis: PluginAnalysis) => Promise<PluginCreatorSuggestions>;
 }
 
 function jsonError(res: Response, status: number, message: string): void {
@@ -430,7 +433,7 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
         }
         if (req.method === 'POST' && req.path.endsWith('/skill/generate')) {
           if (!options.generateSkill) {
-            res.status(501).json({ ok: false, error: '未配置 plugin-skill-creator 生成器' });
+            res.status(501).json({ ok: false, error: '未配置 plugin-creator 生成器' });
             return;
           }
           const content = await options.generateSkill(spec);
@@ -469,7 +472,7 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
         }
       }
 
-      const match = req.path.match(/^\/api\/plugins\/([^/]+)(?:\/(nodes|graph|redetect))?$/);
+      const match = req.path.match(/^\/api\/plugins\/([^/]+)(?:\/(nodes|graph|redetect|analyze|configure))?$/);
       if (match) {
         const id = decodeURIComponent(match[1]!);
         const action = match[2];
@@ -491,6 +494,100 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           const graph = buildWorkflowGraph(source.json, objectInfoData, manifest);
           if (manifestRead.status === 'invalid') graph.manifestError = manifestRead.error;
           res.json({ graph });
+          return;
+        }
+        if (req.method === 'POST' && action === 'analyze') {
+          // 只生成配置建议预览，不写任何文件；落盘必须走用户确认后的保存流程。
+          const objectInfoData = await objectInfoOf(options);
+          const manifestRead = readManifest(options.catalog.manifestDir, id);
+          const spec = await skillSpec(id) ?? await introspectWorkflow(source.json, objectInfoData);
+          const graph = buildWorkflowGraph(source.json, objectInfoData, manifestRead.status === 'valid' ? manifestRead.manifest : { params: [] });
+          let analysis = buildPluginAnalysis({ spec, graph, format: isUiFormat(source.json) ? 'ui' : 'api' });
+          const warnings: string[] = [];
+          if (options.analyzeLlm && req.body?.useLlm !== false) {
+            try {
+              const suggestions = await options.analyzeLlm(analysis);
+              const merged = applyPluginSuggestions(analysis, suggestions);
+              analysis = merged.analysis;
+              warnings.push(...merged.warnings);
+            } catch (error) {
+              // LLM 失败或返回非法结构：丢弃建议，保留基础分析
+              warnings.push(`配置建议生成失败，已保留基础分析：${(error as Error).message}`);
+            }
+          }
+          res.json({ ok: true, analysis, ...(warnings.length ? { warnings } : {}) });
+          return;
+        }
+        if (req.method === 'POST' && action === 'configure') {
+          // 用户确认后的完整配置保存：先全部校验并预生成 Skill/response，再统一写盘。
+          // 任一步失败都不会改动 manifest、SKILL.md 或 response.json。
+          const body = (req.body ?? {}) as {
+            manifest?: WorkflowManifestRecord;
+            overwriteSkill?: boolean;
+            overwriteResponse?: boolean;
+          };
+          const manifest = body.manifest;
+          if (!manifest || typeof manifest !== 'object' || manifest.id !== id) {
+            jsonError(res, 400, 'manifest.id 必须与 URL 中的工作流 ID 一致');
+            return;
+          }
+          const objectInfoData = await objectInfoOf(options);
+          const previous = readManifest(options.catalog.manifestDir, id);
+          const previousSpec = previous.status === 'valid'
+            ? previous.manifest
+            : await introspectWorkflow(source.json, objectInfoData);
+          const structureError = validateManifestStructure(previousSpec, manifest);
+          if (structureError) {
+            jsonError(res, 400, structureError);
+            return;
+          }
+          const graph = buildWorkflowGraph(source.json, objectInfoData, previousSpec);
+          const paramError = validateParamMappings(manifest, graph);
+          if (paramError) {
+            jsonError(res, 400, paramError);
+            return;
+          }
+          const manifestError = await validateWorkflowManifest(manifest, source.json, objectInfoData);
+          if (manifestError) {
+            jsonError(res, 400, manifestError);
+            return;
+          }
+          const normalized: WorkflowManifestRecord = { ...manifest, source: sourceFor(source), hasManifest: true, editable: true };
+
+          // 预生成阶段：LLM Skill 或默认协议的任何失败都发生在写盘之前
+          let skillContent: string | null = null;
+          if (body.overwriteSkill === true) {
+            skillContent = options.generateSkill
+              ? await options.generateSkill(normalized)
+              : generatePluginSkill(normalized);
+          }
+          let responseProtocol: PluginResponseProtocol | null = null;
+          if (body.overwriteResponse === true) {
+            responseProtocol = defaultPluginResponseProtocol();
+            const protocolErrors = validatePluginResponseProtocol(responseProtocol, normalized);
+            if (protocolErrors.length > 0) {
+              jsonError(res, 400, protocolErrors.join('；'));
+              return;
+            }
+          }
+
+          writeManifest(options.catalog.manifestDir, normalized);
+          try {
+            if (body.overwriteSkill === true && skillContent !== null) {
+              writeCustomSkill(id, skillContent, skillsDir);
+            } else {
+              syncPluginSkill(normalized, skillsDir); // 只补缺失/自动版，不覆盖自定义
+            }
+            if (body.overwriteResponse === true && responseProtocol !== null) {
+              writePluginResponseProtocol(id, responseProtocol, skillsDir);
+            } else {
+              syncPluginResponseProtocol(normalized, skillsDir);
+            }
+          } catch (error) {
+            console.error(`[workflow-plugin] 配置 ${id} 的 Skill/response 同步失败:`, error);
+          }
+          options.invalidate();
+          res.json({ ok: true, plugin: normalized });
           return;
         }
         if (req.method === 'POST' && action === 'redetect') {

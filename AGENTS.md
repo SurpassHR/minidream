@@ -38,6 +38,6 @@
 - 插件导入、manifest 保存和启动补齐缺失 response.json，但不覆盖有效自定义协议；删除插件同步删除。
 - 导演 Agent 启动参数含 `--no-context-files`：全局/项目 AGENTS.md 不再注入，知识来源仅 director-copilot skill + `--append-system-prompt` + MCP 工具。
 - 插件参数契约变更（params/inputs/llm 标记等）会经生成器自动反映到 skill，无需手工同步；但 MCP 工具契约变化仍须按上节同步 director-copilot skill。
-- Skill 视图（映射弹窗第三个 tab）可编辑保存（`PUT /api/plugins/:id/skill`）、用 `plugin-skill-creator` 重新生成（`POST /api/plugins/:id/skill/generate`）、或回退自动版（`POST .../skill/regenerate`）。Skill 编辑器下方提供对话调整区（`POST /api/plugins/:id/skill/chat`），上下文包含当前 widget 契约、Skill 和最近对话；返回的新 Skill 只更新前端预览，必须点击保存才落盘。
+- Skill 视图（映射弹窗第三个 tab）可编辑保存（`PUT /api/plugins/:id/skill`）、用 `plugin-creator` 重新生成（`POST /api/plugins/:id/skill/generate`）、或回退自动版（`POST .../skill/regenerate`）。Skill 编辑器下方提供对话调整区（`POST /api/plugins/:id/skill/chat`），上下文包含当前 widget 契约、Skill 和最近对话；返回的新 Skill 只更新前端预览，必须点击保存才落盘。
 - LLM 生成/手工编辑的 skill 属于自定义版本：导入与启动只做 `syncPluginSkill`（缺失或自动版才重写）；manifest 保存不自动生成或同步 Skill，只为显式 Skill 生成提供最新上下文，不会覆盖自定义内容。
-- `plugin-skill-creator`（`.pi/skills/plugin-skill-creator/SKILL.md`）是项目级 skill：由 `runPluginSkillCreator`（`server/src/agent/bridge.ts`）以无工具 pi 子进程加载，接收插件 manifest JSON 产出 SKILL.md；它约束生成内容只含 `!hidden && llm !== false` 参数、保留用户 description，并禁止输出 `response` frontmatter 与 `## 回复协议`。修改它的生成规则时同步更新 `serializeSpecForSkillCreator` 的入参结构和格式校验。
+- `plugin-creator`（`.pi/skills/plugin-creator/SKILL.md`）是项目级 skill：由 `runPluginSkillCreator`（`server/src/agent/bridge.ts`）以无工具 pi 子进程加载，接收插件 manifest JSON 产出 SKILL.md；它约束生成内容只含 `!hidden && llm !== false` 参数、保留用户 description，并禁止输出 `response` frontmatter 与 `## 回复协议`。修改它的生成规则时同步更新 `serializeSpecForSkillCreator` 的入参结构和格式校验。
