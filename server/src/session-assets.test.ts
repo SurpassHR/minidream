@@ -1,5 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { extractSessionAssets, findMentionedSessionAssets } from '../../web/src/sessionAssets.js';
+import {
+  extractSessionAssets,
+  findMentionedSessionAssets,
+  insertAssetMention,
+  nextSessionAssetName,
+} from '../../web/src/sessionAssets.js';
+
+describe('session asset references', () => {
+  it('allocates the next image name without reusing existing indexes', () => {
+    expect(nextSessionAssetName('image', [
+      { kind: 'image', url: '/a.png', name: 'image1' },
+      { kind: 'image', url: '/b.png', name: 'image3' },
+      { kind: 'video', url: '/v.mp4', name: 'video1' },
+    ])).toBe('image4');
+  });
+
+  it('inserts an asset reference at the caret and preserves the suffix', () => {
+    expect(insertAssetMention('请参考 继续说明', 4, 'image1')).toEqual({
+      text: '请参考 @image1 继续说明',
+      caret: 12,
+    });
+  });
+});
 
 describe('extractSessionAssets', () => {
   it('collects completed images and videos in session order with stable names', () => {

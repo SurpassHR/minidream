@@ -1692,6 +1692,13 @@
 /* textarea 继续负责编辑和提交；高亮层镜像文本，让已解析的 @素材显示为可点击的行内代码块。 */
 .composer-rich-input {
   position: relative;
+  border-radius: 10px;
+  transition: background-color 0.15s, box-shadow 0.15s;
+}
+
+.composer-rich-input.is-dragging-image {
+  background: var(--brand-soft);
+  box-shadow: 0 0 0 2px var(--brand-deep) inset;
 }
 
 .composer-input-highlight {
@@ -3584,7 +3591,7 @@
   margin-top: 18px;
 }
 
-/* 修改提示 toast：任一设置被修改时浮出，带保存按钮 */
+/* 自动保存 toast：任一设置被修改或保存时浮出 */
 .settings-save-toast {
   position: absolute;
   left: 50%;

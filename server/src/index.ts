@@ -10,6 +10,7 @@ import {
   getQueue,
   setComfyBaseUrl,
   uploadFile,
+  viewUrl,
 } from './comfyui.js';
 import {
   readSettings,
@@ -386,6 +387,7 @@ app.post('/api/sessions/:id/messages/last', (req, res) => {
       responseBlocks: Array.isArray(body.responseBlocks) ? body.responseBlocks : undefined,
       responseProtocolActive: body.responseProtocolActive === true ? true : undefined,
       jobId: typeof body.jobId === 'string' ? body.jobId : undefined,
+      assets: Array.isArray(body.assets) ? body.assets : undefined,
     };
     updateLastMessage(SESSIONS_FILE, req.params.id, msg);
     res.json({ ok: true });
@@ -800,6 +802,20 @@ interface UploadPayload {
   dataUrl?: string;
 }
 
+function parseDataUrl(dataUrl: string): { mime: string; data: Buffer } | null {
+  const match = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl);
+  if (!match) return null;
+  return { mime: match[1] ?? 'application/octet-stream', data: Buffer.from(match[2] ?? '', 'base64') };
+}
+
+function extensionForMime(mime: string): string {
+  const normalized = mime.toLowerCase().split(';', 1)[0];
+  if (normalized === 'image/jpeg') return 'jpg';
+  if (normalized === 'image/webp') return 'webp';
+  if (normalized === 'image/gif') return 'gif';
+  return 'png';
+}
+
 /** 生成回复：thinking 日志 + 任务卡（实时进度走 SSE） */
 async function generateReply(
   message: string,
@@ -931,6 +947,30 @@ async function generateReply(
   }
 }
 
+/** 立即上传输入框粘贴/拖入的图片，供会话引用。 */
+app.post('/api/assets/image', async (req, res) => {
+  const dataUrl = typeof req.body?.dataUrl === 'string' ? req.body.dataUrl : '';
+  const parsed = parseDataUrl(dataUrl);
+  if (!parsed || !parsed.mime.toLowerCase().startsWith('image/')) {
+    res.status(400).json({ error: 'image dataUrl is required' });
+    return;
+  }
+  try {
+    const uploaded = await uploadFile('image', `reference-${Date.now()}.${extensionForMime(parsed.mime)}`, parsed.data);
+    const filename = uploaded.subfolder ? `${uploaded.subfolder}/${uploaded.name}` : uploaded.name;
+    res.json({
+      kind: 'image',
+      name: typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name.trim() : undefined,
+      filename,
+      subfolder: uploaded.subfolder,
+      type: uploaded.type,
+      url: viewUrl(uploaded.name, uploaded.subfolder, 'input'),
+    });
+  } catch (error) {
+    res.status(502).json({ error: (error as Error).message });
+  }
+});
+
 app.post('/api/chat', async (req, res) => {
   const message = typeof req.body?.message === 'string' ? req.body.message : '';
   if (!message.trim()) {
@@ -969,7 +1009,11 @@ app.post('/api/chat', async (req, res) => {
   }
 
   // 1. 用户消息落库（会话不存在时自动创建）
-  const append = appendMessage(SESSIONS_FILE, sessionId, { role: 'user', content: message.trim() });
+  const append = appendMessage(SESSIONS_FILE, sessionId, {
+    role: 'user',
+    content: message.trim(),
+    assets: Array.isArray(req.body?.assets) ? req.body.assets : undefined,
+  });
   const sid = append.sessionId;
 
   // 会话首条消息时，后台用 LLM 生成对话标题（不阻塞主流程；失败保留截断标题）

@@ -28,6 +28,7 @@ export interface StoredMessage {
     result: 'outside-bubble';
   };
   jobId?: string;
+  assets?: unknown[];
 }
 
 export interface ChatSession {

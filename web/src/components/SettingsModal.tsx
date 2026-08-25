@@ -158,6 +158,7 @@ export default function SettingsModal({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [savingAll, setSavingAll] = useState(false);
   const [toastFlash, setToastFlash] = useState<'saved' | 'failed' | null>(null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pluginsError, setPluginsError] = useState<string | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -181,6 +182,10 @@ export default function SettingsModal({
     setSettingsLoaded(false);
     setToastFlash(null);
     setSavingAll(false);
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
 
     fetchAppSettings()
       .then(s => {
@@ -377,6 +382,22 @@ export default function SettingsModal({
     flashToast(ok ? 'saved' : 'failed');
   };
 
+  // 设置变更后自动保存，避免重复请求并保留统一 toast 反馈。
+  useEffect(() => {
+    if (!open || !settingsLoaded || !isDirty || savingAll) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRef.current = null;
+      void handleSaveAll();
+    }, 500);
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    };
+  }, [open, settingsLoaded, isDirty, savingAll, baseUrl, agentModel, agentThinking, agentPoll, agentFabricatedEnabled, agentFabricated, outputDir, pluginDraft]);
+
   // Esc 关闭；卸载时清理重连定时器
   useEffect(() => {
     if (!open) return;
@@ -393,6 +414,10 @@ export default function SettingsModal({
       if (flashTimerRef.current) {
         clearTimeout(flashTimerRef.current);
         flashTimerRef.current = null;
+      }
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
       }
     };
   }, [open, onClose]);
@@ -806,7 +831,7 @@ export default function SettingsModal({
 
           </div>
         </div>
-        {(isDirty || toastFlash) && (
+        {(isDirty || savingAll || toastFlash) && (
           <div className="settings-save-toast" role="status">
             <span className="settings-save-toast-msg">
               {savingAll
@@ -817,11 +842,6 @@ export default function SettingsModal({
                     ? t('common.saveFailedToast')
                     : t('common.unsavedPrompt')}
             </span>
-            {!savingAll && toastFlash !== 'saved' && (
-              <button className="settings-btn primary" onClick={handleSaveAll}>
-                {t('common.save')}
-              </button>
-            )}
           </div>
         )}
       </div>

@@ -77,6 +77,7 @@ const en: DeepStringify<typeof zh> = {
     mentionVideo: 'Video',
     stop: 'Stop',
     stopTitle: 'Stop generation',
+    uploadFailed: 'Image upload failed, please try again',
   },
   statusbar: {
     runningCount: '{{count}} active running',

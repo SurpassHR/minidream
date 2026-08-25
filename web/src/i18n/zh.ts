@@ -70,6 +70,7 @@ const zh = {
     mentionVideo: '视频',
     stop: '停止',
     stopTitle: '停止生成',
+    uploadFailed: '图片上传失败，请重试',
   },
   statusbar: {
     runningCount: '{{count}} 项活动运行中',

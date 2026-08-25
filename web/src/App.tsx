@@ -278,7 +278,8 @@ export default function App() {
   const [workflows, setWorkflows] = useState<WorkflowSpec[]>([]);
   const [comfyStatus, setComfyStatus] = useState<ComfyStatus | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const sessionAssets = useMemo(() => extractSessionAssets(messages), [messages]);
+  const [pendingAssets, setPendingAssets] = useState<SessionAsset[]>([]);
+  const sessionAssets = useMemo(() => [...extractSessionAssets(messages), ...pendingAssets], [messages, pendingAssets]);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme');
     const t: 'light' | 'dark' =
@@ -421,10 +422,12 @@ export default function App() {
   const handleSend = async (text?: string, opts?: ComposerSubmitOpts, replaceMessageIndex?: number) => {
     const content = (text ?? input).trim();
     if (!content || sending) return;
-    const userMsg: ChatMessage = { role: 'user', content };
+    const assets = opts?.assets?.length ? opts.assets : pendingAssets;
+    const userMsg: ChatMessage = { role: 'user', content, assets: assets.length ? assets : undefined };
     setMessages(prev => replaceMessageIndex === undefined
       ? [...prev, userMsg]
       : [...prev.slice(0, replaceMessageIndex), userMsg]);
+    setPendingAssets([]);
     setInput('');
     setSending(true);
     setAgentReplyDone(false);
@@ -446,6 +449,7 @@ export default function App() {
         {
           ...opts,
           sessionId: activeConv,
+          assets,
           replaceMessageIndex,
         },
         event => {
@@ -697,6 +701,7 @@ export default function App() {
       videos: uploaded
         .filter(item => item.asset.kind === 'video' && item.dataUrl)
         .map(item => ({ name: item.asset.name, dataUrl: item.dataUrl! })),
+      assets: mentioned,
     };
   };
 
@@ -787,6 +792,7 @@ export default function App() {
       setActiveConv(r.activeId);
       setLoadedConv(null);
       setMessages([]);
+      setPendingAssets([]);
       setInput('');
     } catch {
       /* ignore */
@@ -980,9 +986,11 @@ export default function App() {
           {activeNav === 'generate' && <div className="composer-wrap">
             <Composer
               composer={data.composer}
+              sessionId={activeConv}
               sessionAssets={sessionAssets}
               value={input}
               onChange={setInput}
+              onAssetUploaded={asset => setPendingAssets(prev => [...prev, asset])}
               onSubmit={opts => handleSend(undefined, opts)}
               onStop={handleStopConversation}
               disabled={sending}

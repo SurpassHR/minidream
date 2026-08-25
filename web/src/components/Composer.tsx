@@ -1,9 +1,9 @@
-import { forwardRef, useRef, useState } from 'react';
+import { forwardRef, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import type { GenerateData } from '../api';
+import { uploadImageAsset, type GenerateData } from '../api';
 import { computeResolution } from '../resolution';
-import { findMentionedSessionAssets, type SessionAsset } from '../sessionAssets';
+import { findMentionedSessionAssets, insertAssetMention, nextSessionAssetName, type SessionAsset } from '../sessionAssets';
 import ImageLightbox from './ImageLightbox';
 import VideoLightbox from './VideoLightbox';
 import { MentionText } from '../mentionText';
@@ -23,6 +23,7 @@ export interface ComposerSubmitOpts {
   ratio?: string;
   /** 生成尺寸（MP，如 1 / 1.5 / 8） */
   size?: number;
+  assets?: SessionAsset[];
 }
 
 /** 尺寸显示：1 → 1MP，1.5 → 1.5MP */
@@ -36,10 +37,14 @@ const Composer = forwardRef<ComposerHandle, {
   value: string;
   onChange: (v: string) => void;
   onSubmit: (opts: ComposerSubmitOpts) => void;
+  sessionId?: string | null;
   sessionAssets: SessionAsset[];
+  onAssetUploaded?: (asset: SessionAsset) => void;
   onStop?: () => void;
   disabled?: boolean;
-}>(function Composer({ composer, value, onChange, onSubmit, sessionAssets, onStop, disabled }, ref) {
+}>(function Composer({ composer, value, onChange,  onSubmit,
+  sessionId,
+  sessionAssets, onAssetUploaded, onStop, disabled }, ref) {
   const { t } = useTranslation();
   const [focused, setFocused] = useState(false);
   const [openPanel, setOpenPanel] = useState<PanelId>(null);
@@ -49,8 +54,16 @@ const Composer = forwardRef<ComposerHandle, {
   /** @ 提及弹窗：query 为 @ 后已输入的内容，index 为当前选中项 */
   const [mention, setMention] = useState<{ query: string; index: number } | null>(null);
   const [previewAsset, setPreviewAsset] = useState<SessionAsset | null>(null);
+  const [draggingImage, setDraggingImage] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const uploadedAssetsRef = useRef<SessionAsset[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    uploadedAssetsRef.current = [];
+    setUploadError(null);
+  }, [sessionId]);
 
   const canSend = value.trim().length > 0 && !disabled;
 
@@ -77,6 +90,58 @@ const Composer = forwardRef<ComposerHandle, {
     }
   };
 
+  const fileToDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read image'));
+    reader.readAsDataURL(file);
+  });
+
+  const uploadImages = async (files: File[]) => {
+    if (disabled || files.length === 0) return;
+    const imageFiles = files.filter(file => file.type.startsWith('image/'));
+    if (imageFiles.length === 0) return;
+    setUploadError(null);
+    for (const file of imageFiles) {
+      try {
+        const allAssets = [...sessionAssets, ...uploadedAssetsRef.current];
+        const name = nextSessionAssetName('image', allAssets);
+        const uploaded = await uploadImageAsset(await fileToDataUrl(file), name);
+        const asset: SessionAsset = { ...uploaded, name };
+        uploadedAssetsRef.current = [...uploadedAssetsRef.current, asset];
+        onAssetUploaded?.(asset);
+        const textarea = taRef.current;
+        if (textarea) {
+          const caret = textarea.selectionStart ?? value.length;
+          const inserted = insertAssetMention(textarea.value, caret, name);
+          onChange(inserted.text);
+          requestAnimationFrame(() => {
+            textarea.focus();
+            textarea.setSelectionRange(inserted.caret, inserted.caret);
+          });
+        } else {
+          const inserted = insertAssetMention(value, value.length, name);
+          onChange(inserted.text);
+        }
+      } catch {
+        setUploadError(t('composer.uploadFailed'));
+      }
+    }
+  };
+
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/'));
+    const itemFiles = files.length > 0
+      ? files
+      : Array.from(event.clipboardData.items)
+          .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
+          .map(item => item.getAsFile())
+          .filter((file): file is File => file !== null);
+    if (itemFiles.length === 0) return;
+    event.preventDefault();
+    void uploadImages(itemFiles);
+  };
+
   const submit = async () => {
     if (!canSend) return;
     const mentioned = findMentionedSessionAssets(value, sessionAssets);
@@ -91,9 +156,11 @@ const Composer = forwardRef<ComposerHandle, {
       videos: uploaded
         .filter(item => item.asset.kind === 'video' && item.dataUrl)
         .map(item => ({ name: item.asset.name, dataUrl: item.dataUrl! })),
+      assets: [...uploadedAssetsRef.current],
       ratio,
       size,
     });
+    uploadedAssetsRef.current = [];
   };
 
   const toggle = (p: Exclude<PanelId, null>) => {
@@ -177,7 +244,26 @@ const Composer = forwardRef<ComposerHandle, {
             ))}
           </div>
         )}
-        <div className="composer-rich-input">
+        {uploadError && <div className="composer-drop-error">{uploadError}</div>}
+        <div
+          className={`composer-rich-input${draggingImage ? ' is-dragging-image' : ''}`}
+          onDragEnter={event => {
+            if (Array.from(event.dataTransfer.items).some(item => item.kind === 'file' && item.type.startsWith('image/'))) setDraggingImage(true);
+          }}
+          onDragOver={event => {
+            if (Array.from(event.dataTransfer.items).some(item => item.kind === 'file' && item.type.startsWith('image/'))) event.preventDefault();
+          }}
+          onDragLeave={event => {
+            if (event.currentTarget === event.target) setDraggingImage(false);
+          }}
+          onDrop={event => {
+            const files = Array.from(event.dataTransfer.files).filter(file => file.type.startsWith('image/'));
+            if (files.length === 0) return;
+            event.preventDefault();
+            setDraggingImage(false);
+            void uploadImages(files);
+          }}
+        >
           <div
             ref={highlightRef}
             className="composer-input-highlight"
@@ -197,6 +283,7 @@ const Composer = forwardRef<ComposerHandle, {
           placeholder={t('composer.placeholder')}
           value={value}
           onChange={onInputChange}
+          onPaste={handlePaste}
           onScroll={event => {
             if (highlightRef.current) {
               highlightRef.current.scrollTop = event.currentTarget.scrollTop;

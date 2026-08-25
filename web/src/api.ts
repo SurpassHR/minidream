@@ -239,6 +239,14 @@ export interface ChatMessage {
   stages?: ChatStage[];
   jobId?: string;
   taskId?: string;
+  assets?: Array<{
+    kind: 'image' | 'video';
+    url: string;
+    name: string;
+    filename?: string;
+    subfolder?: string;
+    type?: string;
+  }>;
 }
 
 export interface ChatReply {
@@ -766,6 +774,14 @@ export interface SendChatOptions {
   params?: Record<string, unknown>;
   images?: { name?: string; dataUrl: string }[];
   videos?: { name?: string; dataUrl: string }[];
+  assets?: Array<{
+    kind: 'image' | 'video';
+    url: string;
+    name: string;
+    filename?: string;
+    subfolder?: string;
+    type?: string;
+  }>;
   sessionId?: string | null;
   agentModel?: string;
   thinking?: AgentThinking;
@@ -780,6 +796,21 @@ export interface SendChatOptions {
 export interface ChatReplyWithSession extends ChatReply {
   /** 本次消息所属会话 id（无会话时后端自动创建） */
   sessionId?: string;
+}
+
+export async function uploadImageAsset(dataUrl: string, name: string): Promise<{
+  kind: 'image';
+  name?: string;
+  filename: string;
+  subfolder?: string;
+  type?: string;
+  url: string;
+}> {
+  return http('/api/assets/image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataUrl, name }),
+  });
 }
 
 export async function sendChat(message: string, opts: SendChatOptions = {}): Promise<ChatReplyWithSession> {
