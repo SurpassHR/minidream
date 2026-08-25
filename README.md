@@ -8,7 +8,9 @@
 
 **Minidream** 的名字，是 *Mini* 与 *Dream* 的合体：*Mini* 取自 **MiniMax**——我们站在这个巨人开源的肩膀上（MiniMax H3 等模型生态就是它的生成底座）；*Dream* 则致敬 **Seedream** 式「对话即生成」的愿景——像聊天一样，把想法自然地说成一张图、一段视频。
 
-这是一个本地优先、开源免费的一站式 AI 创作平台，把生成能力封装成一个**真正会对话的创作 Agent**：你不需要学习 ComfyUI、不需要理解节点图，只要像跟朋友聊天一样说出想法，或 `@` 一张参考图，Agent 就会理解你的意图，自动选择、编排并提交合适的生成工作流（文生图 / 图生图 / 图像放大 / 文生视频 / 图生视频），实时反馈生成进度，并把每一次产物沉淀为会话素材与草稿——让灵感在对话中有来有回、自然延续。
+这是一个本地优先、开源免费的一站式 AI 创作平台，把生成能力封装成一个**真正会对话的创作 Agent**：Agent 理解 ComfyUI 节点图，把工作流变成对话式生成的一部分——你不需要学习 ComfyUI，只要像跟朋友聊天一样说出想法，或 `@` 一张参考图，Agent 就会理解你的意图，自动选择、编排并提交合适的生成工作流（文生图 / 图生图 / 图像放大 / 文生视频 / 图生视频），实时反馈生成进度，并把每一次产物沉淀为会话素材与草稿——让灵感在对话中有来有回、自然延续。
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Q3L225HIJW)
 
 </div>
 
@@ -303,3 +305,8 @@ cd web && pnpm build
 - 🚧 单图参考生图（Krea2-Edit）
 - 🚧 多图参考生图（Krea2-Edit）
 - 🚧 参考图像生视频（MiniMax H3）
+
+## 🙏 致谢
+
+- [ComfyUI](https://github.com/Comfy-Org/ComfyUI) — 强大、可扩展的节点式生成工作流引擎，本项目的生成底座
+- [custom-first-control-prompt](https://github.com/WM-CODER/custom-first-control-prompt) — 提示词前置注入 / 虚构对话历史的实现参考
