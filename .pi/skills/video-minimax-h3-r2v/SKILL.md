@@ -1,6 +1,6 @@
 ---
 name: video-minimax-h3-r2v
-description: 工作流插件 video-minimax-h3-r2v
+description: 参考图生成视频工作流
 ---
 
 # video-minimax-h3-r2v
@@ -9,7 +9,7 @@ description: 工作流插件 video-minimax-h3-r2v
 
 ## 用途
 
-工作流插件 video-minimax-h3-r2v
+参考图生成视频工作流
 
 ## 输入
 

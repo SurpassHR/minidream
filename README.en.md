@@ -10,7 +10,7 @@ The name **Minidream** pairs *Mini* with *Dream*: *Mini* comes from **MiniMax** 
 
 Minidream is a local-first, free & open-source, all-in-one AI creation platform that packages generation into an Agent that **actually converses**: the Agent understands ComfyUI node graphs and turns workflows into part of conversational generation — no need to learn ComfyUI, just say what you have in mind like you're talking to a friend, or `@` a reference image. The Agent understands your intent, automatically selects, orchestrates, and submits the right generation workflow (text-to-image / image-to-image / upscaling / text-to-video / image-to-video), streams real-time progress, and turns every artifact into session assets and drafts — so inspiration flows back and forth, conversation after conversation.
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Q3L225HIJW)
+<a href='https://ko-fi.com/Q3L225HIJW' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi6.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
 </div>
 

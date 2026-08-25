@@ -10,7 +10,7 @@
 
 这是一个本地优先、开源免费的一站式 AI 创作平台，把生成能力封装成一个**真正会对话的创作 Agent**：Agent 理解 ComfyUI 节点图，把工作流变成对话式生成的一部分——你不需要学习 ComfyUI，只要像跟朋友聊天一样说出想法，或 `@` 一张参考图，Agent 就会理解你的意图，自动选择、编排并提交合适的生成工作流（文生图 / 图生图 / 图像放大 / 文生视频 / 图生视频），实时反馈生成进度，并把每一次产物沉淀为会话素材与草稿——让灵感在对话中有来有回、自然延续。
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Q3L225HIJW)
+<a href='https://ko-fi.com/Q3L225HIJW' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi6.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
 </div>
 
