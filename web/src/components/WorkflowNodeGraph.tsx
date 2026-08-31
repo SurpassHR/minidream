@@ -14,6 +14,7 @@ interface Props {
   onChangeParamDefault: (field: WorkflowGraphField, value: unknown) => void;
   onRemoveParam?: (field: WorkflowGraphField) => void;
   onChangeNodePosition?: (nodeId: string, position: WorkflowNodePosition) => void;
+  onOpenParamSettings?: (paramId: string) => void;
   onRetry?: () => void;
   onFullscreen?: () => void;
   fullscreen?: boolean;
@@ -56,7 +57,7 @@ function fieldKey(nodeId: string, field: string): string {
   return `${nodeId}:${field}`;
 }
 
-export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam, onChangeParamDefault, onRemoveParam, onChangeNodePosition, onRetry, onFullscreen, fullscreen }: Props) {
+export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam, onChangeParamDefault, onRemoveParam, onChangeNodePosition, onOpenParamSettings, onRetry, onFullscreen, fullscreen }: Props) {
   const { t } = useTranslation();
   const [scale, setScale] = useState(0.72);
   const [pan, setPan] = useState({ x: 24, y: 24 });
@@ -241,6 +242,16 @@ export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam
                           <span className="workflow-graph-field-name">{field.field}</span>
                           <span className="workflow-graph-field-type">{field.type}</span>
                           <span className="workflow-graph-field-value" title={linkedTo || displayValue(field.value)}>{linkedTo || displayValue(field.value)}</span>
+                          {field.selected && field.paramId && (
+                            <button
+                              type="button"
+                              className="workflow-graph-field-settings"
+                              title={t('nodeGraph.settings')}
+                              aria-label={t('nodeGraph.settingsAria', { node: node.nodeId, field: field.field })}
+                              onPointerDown={event => event.stopPropagation()}
+                              onClick={() => onOpenParamSettings?.(field.paramId!)}
+                            >⚙</button>
+                          )}
                           {field.selectable && field.type === 'COMBO' && field.options?.length && (
                             <div className="workflow-graph-combo-control" onPointerDown={event => event.stopPropagation()}>
                               {field.multiple ? (

@@ -4,6 +4,10 @@ import type { WorkflowGraphField, WorkflowManifest, WorkflowParam } from '../api
  * 节点视图勾选 = 加入 LLM 上下文。仅固定值（llm:false）的参数不算勾选。
  * 未勾选但存在 llm:false 参数的 combo 字段仍可在节点视图直接配置并参与运行时注入。
  */
+export function workflowInterfaceParams(manifest: WorkflowManifest): WorkflowParam[] {
+  return manifest.params.filter(param => param.llm !== false && param.hidden !== true && param.bypass !== true);
+}
+
 export function isParamSelected(manifest: WorkflowManifest, field: WorkflowGraphField): boolean {
   const param = paramForField(manifest, field);
   return Boolean(param && param.llm !== false);

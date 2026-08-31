@@ -21,7 +21,7 @@ import {
   type WorkflowParam,
 } from '../api';
 import WorkflowNodeGraph from './WorkflowNodeGraph';
-import { isParamSelected, paramForField, removeParam, addParamFromField, addBypassParam, ensureBypassParams, pinComboValue, setParamExposed } from './workflowMappingDraft';
+import { isParamSelected, paramForField, removeParam, addParamFromField, addBypassParam, ensureBypassParams, pinComboValue, setParamExposed, workflowInterfaceParams } from './workflowMappingDraft';
 import './WorkflowMappingModal.css';
 
 interface Props {
@@ -71,6 +71,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   const [toast, setToast] = useState<null | 'saving' | 'saved' | 'failed'>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [view, setView] = useState<'node' | 'form' | 'skill' | 'response'>('node');
+  const [editingParamId, setEditingParamId] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [graph, setGraph] = useState<WorkflowGraph | null>(null);
   const [graphLoading, setGraphLoading] = useState(true);
@@ -372,6 +373,14 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     }
     return map;
   }, [draft.params]);
+  const editingParam = editingParamId ? draft.params.find(param => param.id === editingParamId) : undefined;
+  const editingBypass = editingParam?.bypass === true
+    ? undefined
+    : editingParam ? bypassByNodeId.get(editingParam.nodeId) : undefined;
+  const updateEditingParam = (patch: Partial<WorkflowParam>) => {
+    if (!editingParam) return;
+    updateParam(draft.params.indexOf(editingParam), patch);
+  };
   const responseSources = useMemo<ResponseSourceOption[]>(() => [
     { source: 'generation.prompt', label: t('mapping.source.finalPrompt'), group: t('mapping.group.generation') },
     ...(draft.params.some(item => !item.hidden && item.llm !== false && /负面|反面|negative/i.test(`${item.label} ${item.description ?? ''}`)) ? [{ source: 'generation.negativePrompt', label: t('mapping.source.finalNegativePrompt'), group: t('mapping.group.generation') }] : []),
@@ -555,7 +564,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
         </div>
         <div className="workflow-mapping-body">
           {view === 'node' ? (
-            <WorkflowNodeGraph graph={displayGraph} loading={graphLoading} error={graphError} onRetry={() => void loadGraph(draft.id)} onToggleParam={toggleField} onChangeParamDefault={updateParamDefault} onRemoveParam={removePinnedParam} onChangeNodePosition={updateNodePosition} onFullscreen={() => setFullscreen(value => !value)} fullscreen={fullscreen} />
+            <WorkflowNodeGraph graph={displayGraph} loading={graphLoading} error={graphError} onRetry={() => void loadGraph(draft.id)} onToggleParam={toggleField} onChangeParamDefault={updateParamDefault} onRemoveParam={removePinnedParam} onChangeNodePosition={updateNodePosition} onOpenParamSettings={setEditingParamId} onFullscreen={() => setFullscreen(value => !value)} fullscreen={fullscreen} />
           ) : view === 'skill' ? (
             <section className="workflow-mapping-section workflow-skill-view">
               <div className="workflow-mapping-section-head">
@@ -687,36 +696,24 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
               )}
             </section>
           ) : (
-            <section className="workflow-mapping-section workflow-parameter-form">
-              <div className="workflow-mapping-section-head">
-                <div>
-                  <h3>{t('mapping.form.title')}</h3>
-                  <p>{t('mapping.form.desc')}</p>
-                </div>
-              </div>
-              {exposedParams.length > 0 ? (
-                exposedParams.map((item, index) => (
-                  <ParamRow
-                    key={item.id || index}
-                    item={item}
-                    bypass={bypassByNodeId.get(item.nodeId)}
-                    onChange={patch => updateParam(draft.params.indexOf(item), patch)}
-                    onBypassChange={bypass => {
-                      const target = bypassByNodeId.get(item.nodeId);
-                      if (target) updateParam(draft.params.indexOf(target), { default: bypass });
-                    }}
-                  />
-                ))
-              ) : (
-                <div className="workflow-form-empty">
-                  <strong>{t('mapping.form.emptyTitle')}</strong>
-                  <span>{t('mapping.form.emptyDesc')}</span>
-                  <button className="settings-btn" onClick={() => setView('node')}>{t('mapping.form.goNode')}</button>
-                </div>
-              )}
-            </section>
+            <WorkflowInterfaceView
+              manifest={draft}
+              params={workflowInterfaceParams(draft)}
+              onOpenParamSettings={setEditingParamId}
+            />
           )}
         </div>
+        {editingParam && (
+          <ParamSettingsModal
+            item={editingParam}
+            bypass={editingBypass}
+            onChange={updateEditingParam}
+            onBypassChange={enabled => {
+              if (editingBypass) updateParam(draft.params.indexOf(editingBypass), { default: enabled });
+            }}
+            onClose={() => setEditingParamId(null)}
+          />
+        )}
         {(analysis || analysisLoading || analysisError) && (
           <div className="workflow-mapping-suggest" role="status">
             <div className="workflow-mapping-suggest-head">
@@ -823,6 +820,122 @@ function Field({ label, wide, children }: { label: string; wide?: boolean; child
       <span className="workflow-mapping-field-label">{label}</span>
       {children}
     </label>
+  );
+}
+
+function compactValue(value: unknown): string {
+  if (value === undefined) return '—';
+  if (typeof value === 'string') return value.length > 48 ? `${value.slice(0, 48)}…` : value;
+  try {
+    const text = JSON.stringify(value);
+    return text.length > 48 ? `${text.slice(0, 48)}…` : text;
+  } catch {
+    return String(value);
+  }
+}
+
+function WorkflowInterfaceView({ manifest, params, onOpenParamSettings }: {
+  manifest: WorkflowManifest;
+  params: WorkflowParam[];
+  onOpenParamSettings: (paramId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const visibleInputs = manifest.inputs.filter(item => !item.hidden);
+  const visibleOutputs = manifest.outputs.filter(item => !item.hidden);
+
+  return (
+    <section className="workflow-mapping-section workflow-interface-view">
+      <div className="workflow-mapping-section-head">
+        <div>
+          <h3>{t('mapping.interface.title')}</h3>
+          <p>{t('mapping.interface.desc')}</p>
+        </div>
+      </div>
+      {visibleInputs.length === 0 && params.length === 0 && visibleOutputs.length === 0 ? (
+        <div className="workflow-interface-empty">{t('mapping.interface.empty')}</div>
+      ) : (
+        <div className="workflow-interface-groups">
+          {visibleInputs.length > 0 && (
+            <section className="workflow-interface-group">
+              <h4>{t('mapping.interface.inputs')}</h4>
+              {visibleInputs.map(item => (
+                <div className="workflow-interface-card" key={item.id}>
+                  <div><strong>{item.label}</strong><span>{item.kind}</span></div>
+                  <small>{item.description || t('mapping.interface.noDescription')}</small>
+                </div>
+              ))}
+            </section>
+          )}
+          {params.length > 0 && (
+            <section className="workflow-interface-group">
+              <h4>{t('mapping.interface.params')}</h4>
+              {params.map(item => (
+                <div className="workflow-interface-card" key={item.id}>
+                  <div className="workflow-interface-card-main">
+                    <div><strong>{item.label}</strong><span>{item.type}</span></div>
+                    <button
+                      type="button"
+                      className="workflow-interface-settings"
+                      title={t('mapping.interface.openSettings')}
+                      aria-label={`${t('mapping.interface.openSettings')}: ${item.label}`}
+                      onClick={() => onOpenParamSettings(item.id)}
+                    >⚙</button>
+                  </div>
+                  <small>{item.description || t('mapping.interface.noDescription')}</small>
+                  <em>{compactValue(item.default)}</em>
+                </div>
+              ))}
+            </section>
+          )}
+          {visibleOutputs.length > 0 && (
+            <section className="workflow-interface-group">
+              <h4>{t('mapping.interface.outputs')}</h4>
+              {visibleOutputs.map(item => (
+                <div className="workflow-interface-card" key={item.id}>
+                  <div><strong>{item.label}</strong><span>{item.kind}</span></div>
+                  <small>{item.description || t('mapping.interface.noDescription')}</small>
+                </div>
+              ))}
+            </section>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ParamSettingsModal({ item, bypass, onChange, onBypassChange, onClose }: {
+  item: WorkflowParam;
+  bypass?: WorkflowParam;
+  onChange: (patch: Partial<WorkflowParam>) => void;
+  onBypassChange: (enabled: boolean) => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="workflow-param-settings-overlay" onClick={onClose}>
+      <div
+        className="workflow-param-settings-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${t('mapping.param.title')}: ${item.label}`}
+        onClick={event => event.stopPropagation()}
+      >
+        <header className="workflow-param-settings-head">
+          <div>
+            <span className="settings-section-kicker">{t('mapping.param.title')}</span>
+            <h3>{item.label}</h3>
+          </div>
+          <button className="settings-close" onClick={onClose} aria-label={t('common.close')}>×</button>
+        </header>
+        <div className="workflow-param-settings-body">
+          <ParamRow item={item} bypass={bypass} onChange={onChange} onBypassChange={onBypassChange} />
+        </div>
+        <footer className="workflow-param-settings-foot">
+          <button className="settings-btn" onClick={onClose}>{t('common.close')}</button>
+        </footer>
+      </div>
+    </div>
   );
 }
 

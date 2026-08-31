@@ -137,7 +137,7 @@
 .workflow-graph-field {
   position: relative;
   display: grid;
-  grid-template-columns: 10px 18px minmax(64px, auto) auto minmax(0, 1fr);
+  grid-template-columns: 10px 18px minmax(64px, auto) auto minmax(0, 1fr) 24px;
   align-items: center;
   gap: 5px;
   min-height: 34px;
@@ -201,6 +201,24 @@
   color: var(--graph-node-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workflow-graph-field-settings {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--brand-deep);
+  background: var(--bg-hover);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.workflow-graph-field-settings:hover {
+  border-color: var(--brand-deep);
+  background: var(--brand-soft);
 }
 
 .workflow-graph-param-mark {
