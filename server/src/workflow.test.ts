@@ -609,6 +609,31 @@ describe('workflow 引擎（通用自动适配）', () => {
     vi.unstubAllGlobals();
   });
 
+  it('buildPrompt 注入用户定义的数字和布尔输入接口', async () => {
+    const json = {
+      '1': { class_type: 'CustomInput', inputs: { count: 1, enabled: false } },
+      '2': { class_type: 'SaveImage', inputs: { images: ['1', 0] } },
+    };
+    const spec: WorkflowSpec = {
+      id: 'generic-input', name: 'Generic input',
+      inputs: [
+        { id: 'count-1', kind: 'number', type: 'INT', label: '数量', nodeId: '1', field: 'count', classType: 'CustomInput' },
+        { id: 'enabled-1', kind: 'boolean', type: 'BOOLEAN', label: '启用', nodeId: '1', field: 'enabled', classType: 'CustomInput' },
+      ],
+      params: [],
+      outputs: [{ id: 'image-2', kind: 'image', label: '图片', nodeId: '2', classType: 'SaveImage' }],
+    };
+    const prompt = await workflow.buildPrompt(spec, json, {
+      objectInfoData: {
+        CustomInput: { input: { required: { count: ['INT'], enabled: ['BOOLEAN'] } } },
+        SaveImage: { input: { required: { images: ['IMAGE'] } } },
+      },
+      prompt: '测试',
+      inputValues: { 'count-1': '7', 'enabled-1': 'true' },
+    });
+    expect(prompt['1'].inputs).toMatchObject({ count: 7, enabled: true });
+  });
+
   it('按输出映射过滤 history 产物节点', () => {
     const spec = {
       id: 'demo', name: 'Demo', inputs: [], params: [],
@@ -1168,6 +1193,18 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(prompt['1'].inputs.text).toBe('LLM 生成的正面提示词');
     // 负面提示词：作为参数注入到 #2 节点
     expect(prompt['2'].inputs.text).toBe('(anime:-1), (watermark:-1)');
+  });
+
+  it('构建 API prompt 时忽略节点视图布局元数据', async () => {
+    const workflowWithLayout = {
+      ...h3T2vJson,
+      _minidream_node_positions: { '140': { x: 640, y: 360 } },
+    };
+    const spec = await workflow.introspectWorkflow(workflowWithLayout, OBJECT_INFO);
+    const prompt = await workflow.buildPrompt(spec, workflowWithLayout, { prompt: 'layout metadata test' });
+
+    expect(prompt._minidream_node_positions).toBeUndefined();
+    expect(prompt['92']).toBeDefined();
   });
 
   it('分离式采样链（KSamplerSelect/BasicScheduler）暴露采样器与调度器并可注入', async () => {

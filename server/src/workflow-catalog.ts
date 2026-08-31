@@ -73,6 +73,15 @@ function withCatalogMetadata(spec: WorkflowSpec, source: WorkflowCatalogSource, 
   };
 }
 
+/** 未配置工作流的自动识别结果只作为候选，不默认暴露给 Agent。 */
+function hideDetectedInterfaces(spec: WorkflowSpec): WorkflowSpec {
+  return {
+    ...spec,
+    inputs: (spec.inputs ?? []).map(input => ({ ...input, hidden: true })),
+    outputs: (spec.outputs ?? []).map(output => ({ ...output, hidden: true })),
+  };
+}
+
 export async function buildCatalogSpecs(options: WorkflowCatalogOptions): Promise<WorkflowSpec[]> {
   const specs: WorkflowSpec[] = [];
   for (const source of listCatalogSources(options)) {
@@ -83,7 +92,7 @@ export async function buildCatalogSpecs(options: WorkflowCatalogOptions): Promis
       continue;
     }
     if (source.source.type === 'imported') continue; // 无有效 manifest 的导入工作流不可用
-    const detected = await options.introspect(source.json);
+    const detected = hideDetectedInterfaces(await options.introspect(source.json));
     specs.push(withCatalogMetadata(detected, source, false, manifest.status === 'invalid' ? manifest.error : undefined));
   }
   return specs.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
@@ -113,6 +122,10 @@ export function mergeRedetectedSpec(previous: WorkflowSpec, detected: WorkflowSp
     const fresh = inputByKey.get(`${previousItem.nodeId}:${previousItem.field}`);
     return fresh ? preserve({ ...fresh, id: previousItem.id, nodeId: previousItem.nodeId, field: previousItem.field, classType: previousItem.classType, kind: previousItem.kind }, previousItem) : previousItem;
   });
+  const previousInputKeys = new Set(previous.inputs.map(item => `${item.nodeId}:${item.field}`));
+  for (const fresh of detected.inputs) {
+    if (!previousInputKeys.has(`${fresh.nodeId}:${fresh.field}`)) inputs.push({ ...fresh, hidden: true });
+  }
   const params = previous.params.map(previousItem => {
     const fresh = paramByKey.get(`${previousItem.nodeId}:${previousItem.field}`);
     if (!fresh) return previousItem;
@@ -130,6 +143,10 @@ export function mergeRedetectedSpec(previous: WorkflowSpec, detected: WorkflowSp
     const fresh = outputByKey.get(previousItem.nodeId);
     return fresh ? preserve({ ...fresh, id: previousItem.id, nodeId: previousItem.nodeId, classType: previousItem.classType, kind: previousItem.kind }, previousItem) : previousItem;
   });
+  const previousOutputKeys = new Set(previous.outputs.map(item => item.nodeId));
+  for (const fresh of detected.outputs) {
+    if (!previousOutputKeys.has(fresh.nodeId)) outputs.push({ ...fresh, hidden: true });
+  }
   return {
     ...detected,
     id: previous.id || detected.id,

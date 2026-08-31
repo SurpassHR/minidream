@@ -1,7 +1,7 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
-import zh from './zh';
-import en from './en';
+import zh from './zh.js';
+import en from './en.js';
 
 /** localStorage 持久化 key */
 export const LANGUAGE_KEY = 'app.language';

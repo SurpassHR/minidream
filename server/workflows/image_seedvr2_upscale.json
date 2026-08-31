@@ -256,5 +256,15 @@
   "_meta": {
     "name": "SeedVR2 图像放大",
     "description": "本地运行：SeedVR2 扩散模型图像高清放大（4K 级）。需安装 numz/ComfyUI-SeedVR2_VideoUpscaler 与 TTPlanetPig/Comfyui_TTP_Toolset 自定义节点，模型权重首次使用自动下载到 models/SEEDVR2。"
+  },
+  "_minidream_node_positions": {
+    "6": {
+      "x": 32.413607897314805,
+      "y": 646.4416379966015
+    },
+    "17": {
+      "x": 29.88493914973003,
+      "y": 503.1026380197575
+    }
   }
 }

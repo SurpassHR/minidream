@@ -97,6 +97,10 @@ const MCP_TOOLS: McpToolDescriptor[] = [
           type: 'object',
           description: '可选的参数覆盖项，键为 workflow.list 返回的参数 id。除数值参数（steps/cfg/seed 等）外，文本类参数（如负面提示词、风格 tag）也通过这里传入，键如 text-551，值为字符串。',
         },
+        inputs: {
+          type: 'object',
+          description: '可选的用户定义输入接口值，键为 workflow.skill/workflow.list 中的输入 id；用于 STRING、INT、FLOAT、BOOLEAN 等通用输入。主提示词仍必须使用 prompt。',
+        },
         sessionId: {
           type: 'string',
           description: '关联的对话会话 ID，用于向当前对话展示实际工作流路由',
@@ -258,6 +262,7 @@ export function createMcpServer(options: McpServerOptions): McpServerInstance {
           images: Array.isArray(args.images) ? args.images.map(v => resolveAssetLabel(String(v))) : undefined,
           videos: Array.isArray(args.videos) ? args.videos.map(v => resolveAssetLabel(String(v))) : undefined,
           params: args.params && typeof args.params === 'object' ? args.params : undefined,
+          inputValues: args.inputs && typeof args.inputs === 'object' ? args.inputs : undefined,
           sessionId: args.sessionId ? String(args.sessionId) : undefined,
         });
         console.log(`[generation.submit] 已入队 taskId=${task.id} status=${task.status}`);

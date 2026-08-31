@@ -23,15 +23,16 @@ describe('workflow manifest structural contract', () => {
     expect(validateManifestStructure(previous, next)).toBeNull();
   });
 
-  it('固定输入输出数量但允许 params 增删', () => {
+  it('允许用户移除或隐藏输入输出候选，并继续允许 params 增删', () => {
     const previous = baseSpec();
-    const addedInput = structuredClone(previous);
-    addedInput.inputs.push({ id: 'extra', kind: 'image', label: '额外', nodeId: '5', field: 'image', classType: 'LoadImage' });
-    expect(validateManifestStructure(previous, addedInput)).toMatch(/inputs.*数量/);
 
     const removedOutput = structuredClone(previous);
     removedOutput.outputs = [];
-    expect(validateManifestStructure(previous, removedOutput)).toMatch(/outputs.*数量/);
+    expect(validateManifestStructure(previous, removedOutput)).toBeNull();
+
+    const hiddenInput = structuredClone(previous);
+    hiddenInput.inputs[0]!.hidden = true;
+    expect(validateManifestStructure(previous, hiddenInput)).toBeNull();
 
     const removedParam = structuredClone(previous);
     removedParam.params = [];
@@ -64,7 +65,8 @@ describe('workflow manifest structural contract', () => {
     detected.params[0]!.default = 42;
 
     const merged = mergeRedetectedSpec(previous, detected);
-    expect(merged.inputs).toHaveLength(previous.inputs.length);
+    expect(merged.inputs).toHaveLength(previous.inputs.length + 1);
+    expect(merged.inputs.at(-1)).toMatchObject({ nodeId: '5', hidden: true });
     expect(merged.params).toHaveLength(previous.params.length);
     expect(merged.inputs[0]).toMatchObject({ id: 'prompt', nodeId: '1', field: 'text' });
     expect(merged.params[0]).toMatchObject({ id: 'steps', nodeId: '2', field: 'steps', default: 28, min: 1, max: 80, description: '用户说明' });

@@ -1,5 +1,5 @@
 import type { ChatMessage, GenerationOutput } from './api.js';
-import { resolveMediaKind } from './mediaKind';
+import { resolveMediaKind } from './mediaKind.js';
 
 export interface SessionAsset {
   kind: 'image' | 'video';
@@ -41,6 +41,8 @@ function outputsFromMessage(message: ChatMessage): GenerationOutput[] {
         kind: resolveMediaKind(output.kind, output.filename, output.url),
         url: output.url,
         filename: output.filename,
+        text: output.text,
+        value: output.value,
         generation: output.generation,
       });
     }

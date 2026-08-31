@@ -83,6 +83,11 @@
   opacity: 0.9;
 }
 
+.workflow-graph-edge.bypassed {
+  opacity: 0.25;
+  stroke-dasharray: 5 4;
+}
+
 .workflow-graph-nodes {
   position: absolute;
   inset: 0;
@@ -96,11 +101,21 @@
   color: var(--graph-node-text);
   background: var(--bg-card);
   box-shadow: 0 5px 16px rgba(0, 0, 0, 0.12);
+  transition: opacity 140ms ease, filter 140ms ease;
+}
+
+.workflow-graph-node.bypassed {
+  opacity: 0.48;
+  filter: saturate(0.35) brightness(0.72);
+}
+
+.workflow-graph-node.bypassed .workflow-graph-node-head {
+  background: var(--bg-active);
 }
 
 .workflow-graph-node-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto 28px;
   gap: 2px 8px;
   min-height: 58px;
   padding: 9px 10px 8px;
@@ -121,6 +136,26 @@
 .workflow-graph-node-head small {
   color: var(--graph-node-muted);
   font-size: 10px;
+}
+
+.workflow-graph-node-bypass {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.workflow-graph-node-bypass:hover,
+.workflow-graph-node-bypass[aria-pressed='true'] {
+  color: var(--error-fg);
+  border-color: var(--error-fg);
+  background: var(--bg-page);
 }
 
 .workflow-graph-node-head small {

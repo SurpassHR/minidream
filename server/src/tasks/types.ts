@@ -24,10 +24,12 @@ export interface TaskMediaUpload {
 }
 
 export interface TaskOutput {
-  kind: 'image' | 'video' | 'text';
+  kind: 'image' | 'video' | 'text' | 'number' | 'boolean';
+  label?: string;
   url: string;
   filename: string;
   text?: string;
+  value?: string | number | boolean;
   subfolder?: string;
   type?: string;
   /** 生成产物对应的非敏感元数据，供预览面板展示 */
@@ -59,6 +61,8 @@ export interface TaskItem {
   imageUploads?: TaskMediaUpload[];
   videoUploads?: TaskMediaUpload[];
   params?: Record<string, unknown>;
+  /** 用户定义的通用输入接口值，键为 WorkflowInput.id */
+  inputValues?: Record<string, unknown>;
   /** 工作流实际执行后解析出的有效参数，供产物预览展示 */
   generationParams?: Record<string, unknown>;
   sessionId?: string;
@@ -83,6 +87,8 @@ export interface TaskSubmitInput {
   imageUploads?: TaskMediaUpload[];
   videoUploads?: TaskMediaUpload[];
   params?: Record<string, unknown>;
+  /** 用户定义的通用输入接口值，键为 WorkflowInput.id */
+  inputValues?: Record<string, unknown>;
   sessionId?: string;
   promptGraph?: Record<string, unknown>;
   /** 生成比例（如 16:9 / 智能），用于计算目标分辨率 */

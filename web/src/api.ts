@@ -1,4 +1,4 @@
-import i18n from './i18n';
+import i18n from './i18n/index.js';
 
 export interface RailItem {
   id: string;
@@ -44,13 +44,14 @@ export interface ChatStage {
 }
 
 export interface GenerationOutput {
-  kind: 'image' | 'video' | 'text';
+  kind: 'image' | 'video' | 'text' | 'number' | 'boolean';
   label?: string;
   url?: string;
   filename?: string;
   subfolder?: string;
   type?: string;
   text?: string;
+  value?: string | number | boolean;
   generation?: {
     taskId: string;
     workflowId: string;
@@ -73,9 +74,12 @@ export interface TaskStage {
 }
 
 export interface TaskOutput {
-  kind: 'image' | 'video' | 'text';
+  kind: 'image' | 'video' | 'text' | 'number' | 'boolean';
+  label?: string;
   url: string;
   filename: string;
+  text?: string;
+  value?: string | number | boolean;
   subfolder?: string;
   type?: string;
   generation?: {
@@ -210,9 +214,12 @@ export type StreamChatEvent =
   | {
       type: 'task:artifact';
       taskId: string;
-      kind: 'image' | 'video' | 'text';
+      kind: 'image' | 'video' | 'text' | 'number' | 'boolean';
       url: string;
       filename?: string;
+      label?: string;
+      text?: string;
+      value?: string | number | boolean;
     }
   | { type: 'task:completed'; taskId: string; task?: TaskItem }
   | { type: 'task:failed'; taskId: string; error?: string; task?: TaskItem }
@@ -261,13 +268,15 @@ export interface ChatReply {
 
 export interface WorkflowInput {
   id: string;
-  kind: 'text' | 'image' | 'video';
+  kind: 'text' | 'image' | 'video' | 'number' | 'boolean';
+  /** ComfyUI 输入端口的原始类型 */
+  type?: string;
   label: string;
   description?: string;
   nodeId: string;
   field: string;
   classType: string;
-  defaultValue?: string;
+  defaultValue?: unknown;
   /** 是否必须由用户提供（素材缺失或工作流强依赖） */
   required?: boolean;
   /** 工作流显式标记的提示词注入目标（_meta.promptPlaceholder） */
@@ -301,12 +310,41 @@ export interface WorkflowParam {
 
 export interface WorkflowOutput {
   id: string;
-  kind: 'image' | 'video' | 'text';
+  kind: 'image' | 'video' | 'text' | 'number' | 'boolean';
+  /** ComfyUI 输出端口索引和原始类型；旧版自动识别映射可不带这两个字段 */
+  slot?: number;
+  type?: string;
   label: string;
   nodeId: string;
   classType: string;
   description?: string;
   hidden?: boolean;
+}
+
+export interface WorkflowInterfaceInputCandidate {
+  id: string;
+  nodeId: string;
+  field: string;
+  classType: string;
+  label: string;
+  title?: string;
+  type: string;
+  kind: 'text' | 'image' | 'video' | 'number' | 'boolean';
+}
+
+export interface WorkflowInterfaceOutputCandidate {
+  id: string;
+  nodeId: string;
+  classType: string;
+  title: string;
+  slot: number;
+  type: string;
+  kind: 'image' | 'video' | 'text' | 'number' | 'boolean';
+}
+
+export interface WorkflowInterfaceCandidates {
+  inputs: WorkflowInterfaceInputCandidate[];
+  outputs: WorkflowInterfaceOutputCandidate[];
 }
 
 export interface WorkflowSpec {
@@ -426,6 +464,8 @@ export interface WorkflowGraphNode {
   title: string;
   x: number;
   y: number;
+  /** 节点是否已被工作流清单标记为 bypass；旧服务端响应可能不带此字段。 */
+  bypassed?: boolean;
   fields: WorkflowGraphField[];
 }
 
@@ -447,6 +487,7 @@ export interface WorkflowGraphEdge {
 export interface WorkflowGraph {
   nodes: WorkflowGraphNode[];
   edges: WorkflowGraphEdge[];
+  interfaceCandidates?: WorkflowInterfaceCandidates;
   manifestError?: string;
 }
 
@@ -549,7 +590,7 @@ export async function analyzePluginConfig(id: string): Promise<{ ok: boolean; an
 export async function configureWorkflowPlugin(
   id: string,
   manifest: WorkflowManifest,
-  flags: { overwriteSkill?: boolean; overwriteResponse?: boolean; nodePositions?: WorkflowNodePositions } = {},
+  flags: { overwriteSkill?: boolean; overwriteResponse?: boolean; nodePositions?: WorkflowNodePositions; positionsOnly?: boolean } = {},
 ): Promise<{ ok: boolean; plugin: WorkflowPluginRecord }> {
   return http(`/api/plugins/${encodeURIComponent(id)}/configure`, {
     method: 'POST',
@@ -943,6 +984,9 @@ export async function sendChatStream(
             kind: parsed.kind,
             url: parsed.url,
             filename: parsed.filename,
+            label: parsed.label,
+            text: parsed.text,
+            value: parsed.value,
           });
         } else if (eventType === 'task:completed') {
           onEvent({

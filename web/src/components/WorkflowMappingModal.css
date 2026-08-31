@@ -155,16 +155,6 @@
   margin-top: 10px;
 }
 
-.workflow-mapping-bypass {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--accent, #0070f3);
-  font-size: 12px;
-  cursor: pointer;
-  user-select: none;
-}
-
 .workflow-mapping-bool-default {
   display: flex;
   align-items: center;
@@ -275,6 +265,62 @@
   letter-spacing: 0.04em;
 }
 
+.workflow-interface-candidate-hint {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.workflow-interface-add-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: min(520px, 48%);
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-page);
+}
+
+.workflow-interface-add-toolbar label {
+  display: flex;
+  flex: 1 1 210px;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.workflow-interface-add-toolbar select {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.workflow-interface-add-toolbar select:focus {
+  border-color: var(--brand-deep);
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand-deep) 15%, transparent);
+}
+
+.workflow-interface-add-toolbar select option {
+  color: var(--text-primary);
+  background: var(--bg-card);
+}
+
 .workflow-interface-card {
   display: flex;
   flex-direction: column;
@@ -285,12 +331,55 @@
   background: var(--bg-page);
 }
 
+.workflow-interface-card.hidden {
+  opacity: 0.58;
+  border-style: dashed;
+}
+
 .workflow-interface-card-main,
 .workflow-interface-card > div {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.workflow-interface-card-title {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.workflow-interface-label-input,
+.workflow-interface-description-input {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-primary);
+  background: transparent;
+  font: inherit;
+}
+
+.workflow-interface-label-input {
+  width: 180px;
+  padding: 2px 4px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.workflow-interface-description-input {
+  width: 100%;
+  padding: 3px 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.workflow-interface-label-input:focus,
+.workflow-interface-description-input:focus {
+  border-color: var(--border-strong);
+  outline: none;
+  background: var(--bg-card);
 }
 
 .workflow-interface-card strong {
@@ -332,6 +421,40 @@
 .workflow-interface-settings:hover {
   border-color: var(--brand-deep);
   background: var(--brand-soft);
+}
+
+.workflow-interface-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.workflow-interface-visibility {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.workflow-interface-remove {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.workflow-interface-remove:hover {
+  color: var(--error-fg);
+  border-color: var(--error-border);
+  background: var(--error-bg);
 }
 
 .workflow-interface-empty {
@@ -550,6 +673,22 @@
   .workflow-mapping-body {
     padding-left: 10px;
     padding-right: 10px;
+  }
+
+  .workflow-mapping-section-head {
+    flex-direction: column;
+  }
+
+  .workflow-interface-add-toolbar {
+    width: 100%;
+    min-width: 0;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .workflow-interface-add-toolbar label {
+    flex-basis: 100%;
   }
 
   .workflow-mapping-grid {

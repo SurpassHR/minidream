@@ -14,6 +14,9 @@ import {
   type PluginResponseProtocol,
   type WorkflowGraph,
   type WorkflowGraphField,
+  type WorkflowInterfaceCandidates,
+  type WorkflowInterfaceInputCandidate,
+  type WorkflowInterfaceOutputCandidate,
   type WorkflowManifest,
   type WorkflowNodePosition,
   type WorkflowNodePositions,
@@ -21,7 +24,7 @@ import {
   type WorkflowParam,
 } from '../api';
 import WorkflowNodeGraph from './WorkflowNodeGraph';
-import { isParamSelected, paramForField, removeParam, addParamFromField, addBypassParam, ensureBypassParams, pinComboValue, setParamExposed, workflowInterfaceParams } from './workflowMappingDraft';
+import { isParamSelected, paramForField, removeParam, addParamFromField, pinComboValue, setNodeBypass, setParamExposed, validateWorkflowDraft, workflowInterfaceParams } from './workflowMappingDraft';
 import './WorkflowMappingModal.css';
 
 interface Props {
@@ -29,7 +32,7 @@ interface Props {
   saving?: boolean;
   error?: string | null;
   /** 返回是否保存成功（成功时不自动关闭，由弹窗闪现“已保存”反馈） */
-  onSave: (manifest: WorkflowManifest, nodePositions?: WorkflowNodePositions) => Promise<boolean>;
+  onSave: (manifest: WorkflowManifest, nodePositions?: WorkflowNodePositions, positionsOnly?: boolean) => Promise<boolean>;
   onRedetect: () => void;
   onClose: () => void;
 }
@@ -56,18 +59,16 @@ function deepEqual(a: unknown, b: unknown): boolean {
 
 function copyManifest(manifest: WorkflowManifest): WorkflowManifest {
   const copy = JSON.parse(JSON.stringify(manifest)) as WorkflowManifest;
-  // 未保存的自动识别结果只作为节点图候选，参数必须由用户在节点视图中显式勾选；
-  // 节点屏蔽（bypass）参数不来自节点字段，保留以便在表单视图直接配置。
-  if (!manifest.hasManifest) copy.params = copy.params.filter(item => item.bypass === true);
+  // 未保存的自动识别结果只作为节点图候选，参数必须由用户在节点视图中显式勾选。
+  if (!manifest.hasManifest) copy.params = [];
   return copy;
 }
 
 export default function WorkflowMappingModal({ manifest, saving, error, onSave, onRedetect, onClose }: Props) {
   const { t } = useTranslation();
-  // 打开即补齐所有已暴露参数的 bypass 开关（含 bypass 能力引入前已勾选的参数）
-  const [draft, setDraft] = useState(() => ensureBypassParams(copyManifest(manifest)));
+  const [draft, setDraft] = useState(() => copyManifest(manifest));
   // 保存基准快照 + 保存反馈 toast：继承设置弹窗的「脏状态 toast + 确认保存按钮 + 已保存/失败闪现」模式
-  const [savedSnapshot, setSavedSnapshot] = useState<WorkflowManifest | null>(() => structuredClone(ensureBypassParams(copyManifest(manifest))));
+  const [savedSnapshot, setSavedSnapshot] = useState<WorkflowManifest | null>(() => structuredClone(copyManifest(manifest)));
   const [toast, setToast] = useState<null | 'saving' | 'saved' | 'failed'>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [view, setView] = useState<'node' | 'form' | 'skill' | 'response'>('node');
@@ -187,7 +188,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
         if (!field.selectable || field.connected) continue;
         if (item.exposure === 'llm' || (item.exposure === 'review' && confirmedReview.has(`${field.nodeId}:${field.field}`))) {
           if (!paramForField(next, field)) next = addParamFromField(next, field);
-          next = addBypassParam(setParamExposed(next, field, true), field.nodeId, nodeTitle(field.nodeId));
+          next = setParamExposed(next, field, true);
           continue;
         }
         const index = next.params.findIndex(param => param.nodeId === field.nodeId && param.field === field.field);
@@ -252,7 +253,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   };
 
   useEffect(() => {
-    const base = ensureBypassParams(copyManifest(manifest));
+    const base = copyManifest(manifest);
     setDraft(base);
     setSavedSnapshot(structuredClone(base));
     setToast(null);
@@ -288,6 +289,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
       ...graph,
       nodes: graph.nodes.map(node => ({
         ...node,
+        bypassed: draft.params.some(param => param.bypass === true && param.nodeId === node.nodeId && param.default === true),
         fields: node.fields.map(field => {
           const selected = isParamSelected(draft, field);
           const param = paramForField(draft, field);
@@ -301,27 +303,6 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
       })),
     };
   }, [graph, draft]);
-
-  // 图加载后把自动补齐的 bypass 开关标签换成节点标题（如“跳过Last Frame”），仅改默认标签；
-  // 同时同步保存基准快照，避免纯标签替换被误判为“有未保存更改”
-  useEffect(() => {
-    if (!graph) return;
-    const renamed = (current: WorkflowManifest) => {
-      let changed = false;
-      const params = current.params.map(param => {
-        if (param.bypass !== true) return param;
-        const title = graph.nodes.find(node => node.nodeId === param.nodeId)?.title?.trim();
-        if (!title || !param.label || param.label === `跳过节点 ${param.nodeId}`) {
-          changed = true;
-          return { ...param, label: `跳过${title ?? param.nodeId}` };
-        }
-        return param;
-      });
-      return changed ? { ...current, params } : current;
-    };
-    setDraft(current => renamed(current));
-    setSavedSnapshot(current => current ? renamed(current) : current);
-  }, [graph]);
 
   /** 直接在节点视图配置 combo 值：无参数时生成一个不加入 LLM 上下文的固定参数 */
   const updateParamDefault = (field: WorkflowGraphField, value: unknown) => {
@@ -337,8 +318,35 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     setDraft(current => removeParam(current, field));
   };
 
-  /** 节点标题（用于 bypass 开关的标签），无图数据时回退到节点号 */
-  const nodeTitle = (nodeId: string) => displayGraph?.nodes.find(node => node.nodeId === nodeId)?.title;
+  const addInputCandidate = (candidate: WorkflowInterfaceInputCandidate) => {
+    if (draft.inputs.some(item => item.nodeId === candidate.nodeId && item.field === candidate.field)) return;
+    update({
+      inputs: [...draft.inputs, {
+        id: candidate.id,
+        kind: candidate.kind,
+        type: candidate.type,
+        label: candidate.label,
+        nodeId: candidate.nodeId,
+        field: candidate.field,
+        classType: candidate.classType,
+      }],
+    });
+  };
+
+  const addOutputCandidate = (candidate: WorkflowInterfaceOutputCandidate) => {
+    if (draft.outputs.some(item => item.nodeId === candidate.nodeId && item.slot === candidate.slot)) return;
+    update({
+      outputs: [...draft.outputs, {
+        id: candidate.id,
+        kind: candidate.kind,
+        type: candidate.type,
+        slot: candidate.slot,
+        label: candidate.title,
+        nodeId: candidate.nodeId,
+        classType: candidate.classType,
+      }],
+    });
+  };
 
   const toggleField = (field: WorkflowGraphField) => {
     if (!field.selectable || field.connected) return;
@@ -355,28 +363,17 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
         setDraft(current => removeParam(current, field));
         return;
       }
-      // 已固定的 combo → 勾选加入 LLM 上下文（同时为其节点补充 bypass 能力）
-      setDraft(current => addBypassParam(setParamExposed(current, field, true), field.nodeId, nodeTitle(field.nodeId)));
+      // 已固定的 combo → 勾选加入 LLM 上下文。
+      setDraft(current => setParamExposed(current, field, true));
       return;
     }
-    // 新勾选：加入 LLM 上下文 + 为该节点补充 bypass 能力（所有节点通用）
-    setDraft(current => addBypassParam(addParamFromField(current, field), field.nodeId, nodeTitle(field.nodeId)));
+    // 新勾选：加入 LLM 上下文。
+    setDraft(current => addParamFromField(current, field));
   };
 
-  // 表单视图与节点视图一一对应：普通参数渲染为行；bypass 开关不单独成行，
-  // 内嵌到它所属节点（同 nodeId）的参数行上（如末帧参考图行的“跳过Last Frame”）。
+  // 工作流接口只展示对外暴露的普通参数；bypass 是节点视图的内部状态。
   const exposedParams = useMemo(() => draft.params.filter(item => item.llm !== false && item.bypass !== true), [draft.params]);
-  const bypassByNodeId = useMemo(() => {
-    const map = new Map<string, WorkflowParam>();
-    for (const item of draft.params) {
-      if (item.bypass === true && item.llm !== false) map.set(item.nodeId, item);
-    }
-    return map;
-  }, [draft.params]);
-  const editingParam = editingParamId ? draft.params.find(param => param.id === editingParamId) : undefined;
-  const editingBypass = editingParam?.bypass === true
-    ? undefined
-    : editingParam ? bypassByNodeId.get(editingParam.nodeId) : undefined;
+  const editingParam = editingParamId ? draft.params.find(param => param.id === editingParamId && param.bypass !== true) : undefined;
   const updateEditingParam = (patch: Partial<WorkflowParam>) => {
     if (!editingParam) return;
     updateParam(draft.params.indexOf(editingParam), patch);
@@ -449,20 +446,21 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   const groupLabel = (group: string) => t(({ 输入: 'mapping.groupInput', 参数: 'mapping.groupParam', 输出: 'mapping.groupOutput' }[group] ?? 'mapping.groupInput') as 'mapping.groupInput');
 
   const validate = (): string | null => {
-    if (!draft.name.trim()) return t('mapping.validate.nameRequired');
-    if (!draft.outputs.some(output => !output.hidden)) return t('mapping.validate.outputRequired');
-    for (const [group, items] of [['输入', draft.inputs], ['参数', draft.params], ['输出', draft.outputs]] as const) {
-      const ids = new Set<string>();
-      for (const item of items) {
-        if (!item.id.trim()) return t('mapping.validate.idRequired', { group: groupLabel(group) });
-        if (ids.has(item.id)) return t('mapping.validate.idDuplicate', { group: groupLabel(group), id: item.id });
-        ids.add(item.id);
-        if (!item.nodeId) return t('mapping.validate.nodeRequired', { group: groupLabel(group), id: item.id });
-        // 节点屏蔽（bypass）参数没有真实字段，跳过字段校验
-        if ('field' in item && !item.field && !('bypass' in item && item.bypass)) return t('mapping.validate.fieldRequired', { group: groupLabel(group), id: item.id });
-      }
-    }
-    return null;
+    const validation = validateWorkflowDraft(draft);
+    if (!validation) return null;
+    const group = validation.group === 'inputs'
+      ? '输入'
+      : validation.group === 'params'
+        ? '参数'
+        : validation.group === 'outputs'
+          ? '输出'
+          : undefined;
+    if (validation.code === 'nameRequired') return t('mapping.validate.nameRequired');
+    if (validation.code === 'outputRequired') return t('mapping.validate.outputRequired');
+    if (validation.code === 'idRequired') return t('mapping.validate.idRequired', { group: group ? groupLabel(group) : '' });
+    if (validation.code === 'idDuplicate') return t('mapping.validate.idDuplicate', { group: group ? groupLabel(group) : '', id: validation.id ?? '' });
+    if (validation.code === 'nodeRequired') return t('mapping.validate.nodeRequired', { group: group ? groupLabel(group) : '', id: validation.id ?? '' });
+    return t('mapping.validate.fieldRequired', { group: group ? groupLabel(group) : '', id: validation.id ?? '' });
   };
 
   /** 相对保存基准是否有未提交修改（结构性比较，忽略对象引用） */
@@ -522,7 +520,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     let ok = true;
     if (mappingDirty || nodePositionDirty) {
       try {
-        ok = await onSave(draft, changedNodePositions);
+        ok = await onSave(draft, changedNodePositions, !mappingDirty && nodePositionDirty);
       } catch (e) {
         setResponseError((e as Error).message);
         ok = false;
@@ -564,7 +562,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
         </div>
         <div className="workflow-mapping-body">
           {view === 'node' ? (
-            <WorkflowNodeGraph graph={displayGraph} loading={graphLoading} error={graphError} onRetry={() => void loadGraph(draft.id)} onToggleParam={toggleField} onChangeParamDefault={updateParamDefault} onRemoveParam={removePinnedParam} onChangeNodePosition={updateNodePosition} onOpenParamSettings={setEditingParamId} onFullscreen={() => setFullscreen(value => !value)} fullscreen={fullscreen} />
+            <WorkflowNodeGraph graph={displayGraph} loading={graphLoading} error={graphError} onRetry={() => void loadGraph(draft.id)}            onToggleParam={toggleField} onChangeParamDefault={updateParamDefault} onRemoveParam={removePinnedParam} onChangeNodePosition={updateNodePosition} onToggleNodeBypass={node => setDraft(current => setNodeBypass(current, node.nodeId, !node.bypassed, node.title))} onOpenParamSettings={setEditingParamId} onFullscreen={() => setFullscreen(value => !value)} fullscreen={fullscreen} />
           ) : view === 'skill' ? (
             <section className="workflow-mapping-section workflow-skill-view">
               <div className="workflow-mapping-section-head">
@@ -699,18 +697,23 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
             <WorkflowInterfaceView
               manifest={draft}
               params={workflowInterfaceParams(draft)}
+              candidates={graph?.interfaceCandidates}
+              onAddInput={addInputCandidate}
+              onAddOutput={addOutputCandidate}
               onOpenParamSettings={setEditingParamId}
+              onToggleInput={id => update({ inputs: draft.inputs.map(item => item.id === id ? { ...item, hidden: !item.hidden } : item) })}
+              onToggleOutput={id => update({ outputs: draft.outputs.map(item => item.id === id ? { ...item, hidden: !item.hidden } : item) })}
+              onUpdateInput={(id, patch) => update({ inputs: draft.inputs.map(item => item.id === id ? { ...item, ...patch } : item) })}
+              onUpdateOutput={(id, patch) => update({ outputs: draft.outputs.map(item => item.id === id ? { ...item, ...patch } : item) })}
+              onRemoveInput={id => update({ inputs: draft.inputs.filter(item => item.id !== id) })}
+              onRemoveOutput={id => update({ outputs: draft.outputs.filter(item => item.id !== id) })}
             />
           )}
         </div>
         {editingParam && (
           <ParamSettingsModal
             item={editingParam}
-            bypass={editingBypass}
             onChange={updateEditingParam}
-            onBypassChange={enabled => {
-              if (editingBypass) updateParam(draft.params.indexOf(editingBypass), { default: enabled });
-            }}
             onClose={() => setEditingParamId(null)}
           />
         )}
@@ -834,14 +837,25 @@ function compactValue(value: unknown): string {
   }
 }
 
-function WorkflowInterfaceView({ manifest, params, onOpenParamSettings }: {
+function WorkflowInterfaceView({ manifest, params, candidates, onAddInput, onAddOutput, onOpenParamSettings, onToggleInput, onToggleOutput, onUpdateInput, onUpdateOutput, onRemoveInput, onRemoveOutput }: {
   manifest: WorkflowManifest;
   params: WorkflowParam[];
+  candidates?: WorkflowInterfaceCandidates;
+  onAddInput: (candidate: WorkflowInterfaceInputCandidate) => void;
+  onAddOutput: (candidate: WorkflowInterfaceOutputCandidate) => void;
   onOpenParamSettings: (paramId: string) => void;
+  onToggleInput: (id: string) => void;
+  onToggleOutput: (id: string) => void;
+  onUpdateInput: (id: string, patch: { label?: string; description?: string }) => void;
+  onUpdateOutput: (id: string, patch: { label?: string; description?: string }) => void;
+  onRemoveInput: (id: string) => void;
+  onRemoveOutput: (id: string) => void;
 }) {
   const { t } = useTranslation();
-  const visibleInputs = manifest.inputs.filter(item => !item.hidden);
-  const visibleOutputs = manifest.outputs.filter(item => !item.hidden);
+  const visibleInputs = manifest.inputs;
+  const visibleOutputs = manifest.outputs;
+  const availableInputs = (candidates?.inputs ?? []).filter(candidate => !manifest.inputs.some(item => item.nodeId === candidate.nodeId && item.field === candidate.field));
+  const availableOutputs = (candidates?.outputs ?? []).filter(candidate => !manifest.outputs.some(item => item.nodeId === candidate.nodeId && item.slot === candidate.slot));
 
   return (
     <section className="workflow-mapping-section workflow-interface-view">
@@ -849,6 +863,29 @@ function WorkflowInterfaceView({ manifest, params, onOpenParamSettings }: {
         <div>
           <h3>{t('mapping.interface.title')}</h3>
           <p>{t('mapping.interface.desc')}</p>
+          <small className="workflow-interface-candidate-hint">{t('mapping.interface.candidateHint')}</small>
+        </div>
+        <div className="workflow-interface-add-toolbar">
+          <label>
+            <span>{t('mapping.interface.addInput')}</span>
+            <select value="" onChange={event => {
+              const candidate = availableInputs.find(item => item.id === event.target.value);
+              if (candidate) onAddInput(candidate);
+            }} aria-label={t('mapping.interface.addInput')}>
+              <option value="">{t('mapping.interface.selectInput')}</option>
+              {availableInputs.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.title ?? candidate.classType} · {candidate.label} · {candidate.nodeId}.{candidate.field} · {candidate.type}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>{t('mapping.interface.addOutput')}</span>
+            <select value="" onChange={event => {
+              const candidate = availableOutputs.find(item => item.id === event.target.value);
+              if (candidate) onAddOutput(candidate);
+            }} aria-label={t('mapping.interface.addOutput')}>
+              <option value="">{t('mapping.interface.selectOutput')}</option>
+              {availableOutputs.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.title} · {candidate.nodeId}.{candidate.slot} · {candidate.type}</option>)}
+            </select>
+          </label>
         </div>
       </div>
       {visibleInputs.length === 0 && params.length === 0 && visibleOutputs.length === 0 ? (
@@ -859,9 +896,22 @@ function WorkflowInterfaceView({ manifest, params, onOpenParamSettings }: {
             <section className="workflow-interface-group">
               <h4>{t('mapping.interface.inputs')}</h4>
               {visibleInputs.map(item => (
-                <div className="workflow-interface-card" key={item.id}>
-                  <div><strong>{item.label}</strong><span>{item.kind}</span></div>
-                  <small>{item.description || t('mapping.interface.noDescription')}</small>
+                <div className={`workflow-interface-card${item.hidden ? ' hidden' : ''}`} key={item.id}>
+                  <div className="workflow-interface-card-main">
+                    <div className="workflow-interface-card-title">
+                      <input className="workflow-interface-label-input" value={item.label} onChange={event => onUpdateInput(item.id, { label: event.target.value })} aria-label={`${t('mapping.interface.name')}: ${item.label}`} />
+                      <span>{item.kind}</span>
+                    </div>
+                    <div className="workflow-interface-card-actions">
+                      <label className="workflow-interface-visibility">
+                        <input type="checkbox" checked={!item.hidden} onChange={() => onToggleInput(item.id)} aria-label={`${t('mapping.interface.toggleExposure')}: ${item.label}`} />
+                        {item.hidden ? t('mapping.interface.hidden') : t('mapping.interface.exposed')}
+                      </label>
+                      <button type="button" className="workflow-interface-remove" onClick={() => onRemoveInput(item.id)} aria-label={`${t('mapping.interface.remove')}: ${item.label}`} title={t('mapping.interface.remove')}>×</button>
+                    </div>
+                  </div>
+                  <input className="workflow-interface-description-input" value={item.description ?? ''} onChange={event => onUpdateInput(item.id, { description: event.target.value })} placeholder={t('mapping.interface.descriptionPlaceholder')} aria-label={`${t('mapping.interface.description')}: ${item.label}`} />
+                  <em>{item.nodeId}.{item.field}</em>
                 </div>
               ))}
             </section>
@@ -891,9 +941,22 @@ function WorkflowInterfaceView({ manifest, params, onOpenParamSettings }: {
             <section className="workflow-interface-group">
               <h4>{t('mapping.interface.outputs')}</h4>
               {visibleOutputs.map(item => (
-                <div className="workflow-interface-card" key={item.id}>
-                  <div><strong>{item.label}</strong><span>{item.kind}</span></div>
-                  <small>{item.description || t('mapping.interface.noDescription')}</small>
+                <div className={`workflow-interface-card${item.hidden ? ' hidden' : ''}`} key={item.id}>
+                  <div className="workflow-interface-card-main">
+                    <div className="workflow-interface-card-title">
+                      <input className="workflow-interface-label-input" value={item.label} onChange={event => onUpdateOutput(item.id, { label: event.target.value })} aria-label={`${t('mapping.interface.name')}: ${item.label}`} />
+                      <span>{item.kind}</span>
+                    </div>
+                    <div className="workflow-interface-card-actions">
+                      <label className="workflow-interface-visibility">
+                        <input type="checkbox" checked={!item.hidden} onChange={() => onToggleOutput(item.id)} aria-label={`${t('mapping.interface.toggleExposure')}: ${item.label}`} />
+                        {item.hidden ? t('mapping.interface.hidden') : t('mapping.interface.exposed')}
+                      </label>
+                      <button type="button" className="workflow-interface-remove" onClick={() => onRemoveOutput(item.id)} aria-label={`${t('mapping.interface.remove')}: ${item.label}`} title={t('mapping.interface.remove')}>×</button>
+                    </div>
+                  </div>
+                  <input className="workflow-interface-description-input" value={item.description ?? ''} onChange={event => onUpdateOutput(item.id, { description: event.target.value })} placeholder={t('mapping.interface.descriptionPlaceholder')} aria-label={`${t('mapping.interface.description')}: ${item.label}`} />
+                  <em>{item.nodeId}{item.slot !== undefined ? `.${item.slot}` : ''}</em>
                 </div>
               ))}
             </section>
@@ -904,11 +967,9 @@ function WorkflowInterfaceView({ manifest, params, onOpenParamSettings }: {
   );
 }
 
-function ParamSettingsModal({ item, bypass, onChange, onBypassChange, onClose }: {
+function ParamSettingsModal({ item, onChange, onClose }: {
   item: WorkflowParam;
-  bypass?: WorkflowParam;
   onChange: (patch: Partial<WorkflowParam>) => void;
-  onBypassChange: (enabled: boolean) => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -929,7 +990,7 @@ function ParamSettingsModal({ item, bypass, onChange, onBypassChange, onClose }:
           <button className="settings-close" onClick={onClose} aria-label={t('common.close')}>×</button>
         </header>
         <div className="workflow-param-settings-body">
-          <ParamRow item={item} bypass={bypass} onChange={onChange} onBypassChange={onBypassChange} />
+          <ParamRow item={item} onChange={onChange} />
         </div>
         <footer className="workflow-param-settings-foot">
           <button className="settings-btn" onClick={onClose}>{t('common.close')}</button>
@@ -939,11 +1000,9 @@ function ParamSettingsModal({ item, bypass, onChange, onBypassChange, onClose }:
   );
 }
 
-function ParamRow({ item, bypass, onChange, onBypassChange }: {
+function ParamRow({ item, onChange }: {
   item: WorkflowParam;
-  bypass?: WorkflowParam;
   onChange: (patch: Partial<WorkflowParam>) => void;
-  onBypassChange: (enabled: boolean) => void;
 }) {
   const { t } = useTranslation();
   const isNumeric = item.type === 'INT' || item.type === 'FLOAT';
@@ -984,12 +1043,6 @@ function ParamRow({ item, bypass, onChange, onBypassChange }: {
         {isCombo && comboOptions.length === 0 && <Field label={t('mapping.param.comboOptions')} wide><input className="wide" value={item.options?.join(', ') ?? ''} readOnly aria-label={t('mapping.param.comboOptions')} placeholder={t('mapping.param.comboOptionsPlaceholder')} /></Field>}
       </div>
       <div className="workflow-mapping-row-foot">
-        {bypass && (
-          <label className="workflow-mapping-bypass" title={bypass.description}>
-            <input type="checkbox" checked={bypass.default === true} onChange={e => onBypassChange(e.target.checked)} />
-            <span>{bypass.label || t('mapping.param.bypass')}</span>
-          </label>
-        )}
         <label className="workflow-mapping-hidden"><input type="checkbox" checked={item.hidden ?? false} onChange={e => onChange({ hidden: e.target.checked })} /> {t('mapping.param.hidden')}</label>
       </div>
     </div>

@@ -100,13 +100,15 @@ const PARAM_LABELS: Record<string, string> = {
 
 export interface WorkflowInput {
   id: string; // 'text-6'
-  kind: 'text' | 'image' | 'video';
+  kind: 'text' | 'image' | 'video' | 'number' | 'boolean';
+  /** ComfyUI 输入端口的原始类型（如 STRING、INT、FLOAT、BOOLEAN、IMAGE、VIDEO） */
+  type?: string;
   label: string; // 提示词 / 参考图 / 输入视频
   nodeId: string;
   field: string; // 节点上的输入字段名
   classType: string;
   /** 当前 workflow 文件里该字段的默认值（注入前的占位） */
-  defaultValue?: string;
+  defaultValue?: unknown;
   /** 是否必须由用户提供（素材缺失或工作流强依赖） */
   required?: boolean;
   /** 工作流显式标记的提示词注入目标（_meta.promptPlaceholder），注入时优先于启发式 */
@@ -146,7 +148,10 @@ export interface WorkflowParam {
 
 export interface WorkflowOutput {
   id: string; // 'images-9'
-  kind: 'image' | 'video' | 'text';
+  kind: 'image' | 'video' | 'text' | 'number' | 'boolean';
+  /** ComfyUI 输出端口索引和原始类型；旧版自动识别映射可不带这两个字段 */
+  slot?: number;
+  type?: string;
   label: string;
   nodeId: string;
   classType: string;
@@ -841,11 +846,12 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
         inputs.push({
           id: `text-${nodeId}`,
           kind: 'text',
+          type: 'STRING',
           label: '提示词',
           nodeId,
           field: markedField,
           classType: cls,
-          defaultValue: nodeInputs[markedField] as string,
+          defaultValue: nodeInputs[markedField],
           primary: true,
         });
         continue;
@@ -857,6 +863,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
       inputs.push({
         id: `text-${nodeId}`,
         kind: 'text',
+        type: 'STRING',
         label: '提示词',
         nodeId,
         field: 'text',
@@ -875,6 +882,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
       inputs.push({
         id: `text-${nodeId}`,
         kind: 'text',
+        type: 'STRING',
         label: '提示词',
         nodeId,
         field: 'value',
@@ -888,6 +896,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
       inputs.push({
         id: `image-${nodeId}`,
         kind: 'image',
+        type: 'IMAGE',
         label: '参考图',
         nodeId,
         field: 'image',
@@ -902,6 +911,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
       inputs.push({
         id: `video-${nodeId}`,
         kind: 'video',
+        type: 'VIDEO',
         label: '输入视频',
         nodeId,
         field,
@@ -1093,9 +1103,8 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
     if (!p.bypass && !p.multiple && (fieldCount.get(p.field) ?? 0) > 1) p.label = `${p.label} · 节点 ${p.nodeId}`;
   }
 
-  // 节点屏蔽（bypass）不再在此自动识别：它是所有节点通用的能力，
-  // 由前端在节点视图勾选任意 widget 时为其节点补充 bypass 参数（见 addBypassParam），
-  // 运行时由 buildPrompt 的 applyNodeBypass 应用，LLM 可通过 params 的 `bypass-<nodeId>` 控制。
+  // 节点屏蔽（bypass）不在自动识别阶段生成；它是节点视图中的内部状态，
+  // 由用户在节点标题栏切换后写入 manifest，运行时由 buildPrompt 的 applyNodeBypass 应用。
 
   return {
     id: '',
@@ -1182,8 +1191,8 @@ export async function buildSpecs(): Promise<WorkflowSpec[]> {
     // 探测素材占位文件：清单和自动识别结果都应得到相同的 required 语义。
     for (const input of spec.inputs) {
       if (input.kind === 'text' || input.hidden) continue;
-      const def = input.defaultValue;
-      if (!def?.trim()) {
+      const def = String(input.defaultValue ?? '');
+      if (!def.trim()) {
         input.required = true;
         continue;
       }
@@ -1230,9 +1239,13 @@ export function getWorkflowJson(id: string): Record<string, any> | null {
 /* ---------- prompt 构建（值注入） ---------- */
 
 export interface BuildValues {
+  /** 保存配置时复用路由层已获取的 object_info，避免重复请求并便于测试注入。 */
+  objectInfoData?: Record<string, any>;
   prompt?: string;
   /** image/video 输入 → 已上传到 ComfyUI 的文件名 */
   uploaded?: Record<string, string>; // { [inputId]: filename }
+  /** 用户定义的通用输入接口值，键为 WorkflowInput.id */
+  inputValues?: Record<string, unknown>;
   params?: Record<string, unknown>;
   settings?: ImageGenSettings;
   /** 生成比例 + 尺寸算出的目标宽高（null 时不注入，沿用工作流默认） */
@@ -1437,7 +1450,7 @@ export async function buildPrompt(
   json: Record<string, any>,
   values: BuildValues,
 ): Promise<Record<string, any>> {
-  const oi = await objectInfo().catch(() => undefined);
+  const oi = values.objectInfoData ?? await objectInfo().catch(() => undefined);
   // UI 格式模板 → 先转成 API 格式（widget 默认值来自模板本身）
   const explicitOutputNodeIds = spec.outputs.filter(output => !output.hidden).map(output => output.nodeId);
   let prompt = pruneDeadNodes(
@@ -1446,6 +1459,7 @@ export async function buildPrompt(
       : (() => {
           const copy = JSON.parse(JSON.stringify(json)) as Record<string, any>;
           delete copy._meta; // API 格式顶层 _meta 是工作流元信息，不是节点
+          delete copy._minidream_node_positions; // 节点图布局元数据不属于 ComfyUI prompt
           return copy;
         })(),
     explicitOutputNodeIds,
@@ -1466,13 +1480,36 @@ export async function buildPrompt(
     prompt = pruneDeadNodes(bypassed, explicitOutputNodeIds);
   }
 
+  // 通用输入接口注入：数值、布尔以及非主提示词文本字段直接写入对应节点。
+  // 图像/视频仍由 uploaded 文件名注入，避免把原始用户值误当成 ComfyUI 文件。
+  const injectedFieldKeys = new Set<string>();
+  for (const input of spec.inputs) {
+    if (input.hidden || input.kind === 'image' || input.kind === 'video') continue;
+    const value = values.inputValues?.[input.id];
+    // 没有显式传值的文字输入继续由统一 prompt 注入逻辑处理；
+    // 一旦用户通过通用 inputs 传值，则优先写入它自己的节点字段。
+    if (value === undefined || !prompt[input.nodeId]?.inputs) continue;
+    let normalized: unknown = value;
+    if (input.kind === 'number') {
+      normalized = typeof value === 'number' ? value : Number(value);
+      if (typeof normalized !== 'number' || !Number.isFinite(normalized)) throw new ComfyUIError(`输入接口「${input.label}」必须是有效数字`);
+      if (input.type === 'INT') normalized = Math.trunc(normalized);
+    } else if (input.kind === 'boolean') {
+      if (typeof value === 'string' && /^(true|false)$/i.test(value)) normalized = value.toLowerCase() === 'true';
+      if (typeof normalized !== 'boolean') throw new ComfyUIError(`输入接口「${input.label}」必须是布尔值`);
+    } else {
+      normalized = String(value);
+    }
+    prompt[input.nodeId].inputs[input.field] = normalized;
+    injectedFieldKeys.add(`${input.nodeId}:${input.field}`);
+  }
+
   // 文字输入注入
-  const textInputs = spec.inputs.filter(i => i.kind === 'text' && !i.hidden);
+  const textInputs = spec.inputs.filter(i => i.kind === 'text' && !i.hidden && values.inputValues?.[i.id] === undefined);
   // 已由提示词注入写入的节点字段：参数循环不得再用默认值覆盖（如 Text Multiline 的 text）
   const promptInjectedKeys = new Set<string>();
-  if (textInputs.length > 0) {
-    const text = values.prompt?.trim();
-    if (!text) throw new ComfyUIError('请输入提示词后再生成');
+  if (textInputs.length > 0) {      const text = values.prompt?.trim();
+      if (!text) throw new ComfyUIError('请输入提示词后再生成');
     // 工作流显式标记的提示词占位节点（如 Krea2 #555）：直接写入该节点，
     // 让前缀/后缀/风格管线继续生效（正向 CLIPTextEncode 的 text 保持链接不被替换）。
     const primary = textInputs.find(i => i.primary && prompt[i.nodeId]?.inputs);
@@ -1517,7 +1554,6 @@ export async function buildPrompt(
   }
 
   // 上传素材注入
-  const injectedFieldKeys = new Set<string>();
   for (const input of spec.inputs) {
     if (input.kind === 'text') continue;
     const filename = values.uploaded?.[input.id];

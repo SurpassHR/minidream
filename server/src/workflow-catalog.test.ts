@@ -91,8 +91,8 @@ describe('workflow catalog', () => {
 
     const merged = mergeRedetectedSpec(previous, detected);
     expect(merged.inputs[0]).toMatchObject({ description: '手写描述', label: '自定义提示词', hidden: true });
-    expect(merged.inputs).toHaveLength(1);
-    expect(merged.inputs.some(input => input.nodeId === '4')).toBe(false);
+    expect(merged.inputs).toHaveLength(2);
+    expect(merged.inputs.some(input => input.nodeId === '4' && input.hidden)).toBe(true);
     expect(previous.inputs).toHaveLength(1);
   });
 });

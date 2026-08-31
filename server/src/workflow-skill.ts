@@ -103,7 +103,7 @@ function formatDefault(value: unknown): string {
 }
 
 function paramLines(params: WorkflowSpec['params']): string {
-  const visible = params.filter(p => !p.hidden && p.llm !== false);
+  const visible = params.filter(p => !p.hidden && p.llm !== false && !p.bypass);
   if (visible.length === 0) return '无（该工作流的 widget 由模板固定，不可由 LLM 调整）';
   return visible.map(p => {
     const bits: string[] = [`id \`${p.id}\``, `类型 ${TYPE_LABEL[p.type] ?? p.type}`];

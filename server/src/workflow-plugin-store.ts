@@ -95,7 +95,10 @@ export interface WorkflowNodePosition {
   y: number;
 }
 
-/** 原子更新 UI 格式源 JSON 中指定节点的位置；API 格式没有标准位置字段时不写入。 */
+/**
+ * 原子更新源 JSON 中指定节点的位置。
+ * UI 格式写入原生 nodes[].pos；API 格式写入应用专用元数据，避免污染 ComfyUI 节点映射。
+ */
 export function updateWorkflowNodePositions(file: string, positions: Record<string, WorkflowNodePosition>): boolean {
   if (!fs.existsSync(file)) return false;
   let workflow: Record<string, any>;
@@ -104,21 +107,39 @@ export function updateWorkflowNodePositions(file: string, positions: Record<stri
   } catch {
     return false;
   }
-  if (!Array.isArray(workflow.nodes)) return false;
 
+  if (Array.isArray(workflow.nodes)) {
+    let changed = false;
+    for (const node of workflow.nodes) {
+      if (!node || typeof node !== 'object') continue;
+      const position = positions[String(node.id)];
+      if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) continue;
+      const next = [position.x, position.y];
+      if (!Array.isArray(node.pos) || node.pos[0] !== next[0] || node.pos[1] !== next[1]) {
+        node.pos = next;
+        changed = true;
+      }
+    }
+    if (changed) atomicWriteJson(file, workflow);
+    return changed;
+  }
+
+  const current = workflow._minidream_node_positions && typeof workflow._minidream_node_positions === 'object'
+    ? workflow._minidream_node_positions as Record<string, WorkflowNodePosition>
+    : {};
+  const nextPositions = { ...current };
   let changed = false;
-  for (const node of workflow.nodes) {
-    if (!node || typeof node !== 'object') continue;
-    const position = positions[String(node.id)];
-    if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) continue;
-    const next = [position.x, position.y];
-    if (!Array.isArray(node.pos) || node.pos[0] !== next[0] || node.pos[1] !== next[1]) {
-      node.pos = next;
+  for (const [nodeId, position] of Object.entries(positions)) {
+    if (!Number.isFinite(position.x) || !Number.isFinite(position.y)) continue;
+    if (current[nodeId]?.x !== position.x || current[nodeId]?.y !== position.y) {
+      nextPositions[nodeId] = { x: position.x, y: position.y };
       changed = true;
     }
   }
-  if (changed) atomicWriteJson(file, workflow);
-  return changed;
+  if (!changed) return false;
+  workflow._minidream_node_positions = nextPositions;
+  atomicWriteJson(file, workflow);
+  return true;
 }
 
 export function deleteImportedWorkflow(root: string = WORKFLOW_PLUGIN_DATA_DIR, id: string): void {

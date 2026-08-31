@@ -242,7 +242,7 @@ function mergeStreamEvent(
       if (task.id !== event.taskId) return task;
       const outputs = [...(task.outputs || [])];
       if (!outputs.some(output => output.url === event.url)) {
-        outputs.push({ kind: event.kind, url: event.url, filename: event.filename || 'output' });
+        outputs.push({ kind: event.kind, url: event.url, filename: event.filename || 'output', label: event.label, text: event.text, value: event.value });
       }
       return { ...task, outputs };
     });
@@ -611,6 +611,9 @@ export default function App() {
                         kind: event.kind,
                         url: event.url,
                         filename: event.filename || 'output',
+                        label: event.label,
+                        text: event.text,
+                        value: event.value,
                       });
                     }
                     return { ...t, outputs };

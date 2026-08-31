@@ -411,6 +411,7 @@ function GenerationOutputsView({
   const images = outputs.filter(o => o.kind === 'image');
   const videos = outputs.filter(o => o.kind === 'video');
   const texts = outputs.filter(o => o.kind === 'text');
+  const scalars = outputs.filter(o => o.kind === 'number' || o.kind === 'boolean');
 
   return (
     <div className="generation-results">
@@ -473,7 +474,17 @@ function GenerationOutputsView({
       {texts.length > 0 && (
         <div className="result-texts">
           {texts.map((t, i) => (
-            <pre key={i} className="result-text">{t.text}</pre>
+            <pre key={i} className="result-text">{t.text ?? t.value}</pre>
+          ))}
+        </div>
+      )}
+      {scalars.length > 0 && (
+        <div className="result-scalars">
+          {scalars.map((output, index) => (
+            <div className="result-scalar" key={`${output.filename ?? output.kind}-${index}`}>
+              {output.label && <span className="result-scalar-label">{output.label}</span>}
+              <code>{output.text ?? String(output.value ?? '')}</code>
+            </div>
           ))}
         </div>
       )}
@@ -603,6 +614,8 @@ function extractOutputs(message: ChatMessage): GenerationOutput[] {
             kind: resolveMediaKind(out.kind, out.filename, out.url),
             url: out.url,
             filename: out.filename,
+            text: out.text,
+            value: out.value,
             generation: out.generation,
           });
         }

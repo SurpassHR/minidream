@@ -59,7 +59,7 @@ export interface ChatStage {
 
 /** 生成结果条目 */
 export interface GenerationOutput {
-  kind: 'image' | 'video' | 'text';
+  kind: 'image' | 'video' | 'text' | 'number' | 'boolean';
   label?: string;
   /** 图片/视频经服务端代理的访问地址 */
   url?: string;

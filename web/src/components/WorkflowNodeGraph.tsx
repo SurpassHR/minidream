@@ -14,6 +14,7 @@ interface Props {
   onChangeParamDefault: (field: WorkflowGraphField, value: unknown) => void;
   onRemoveParam?: (field: WorkflowGraphField) => void;
   onChangeNodePosition?: (nodeId: string, position: WorkflowNodePosition) => void;
+  onToggleNodeBypass?: (node: WorkflowGraphNode) => void;
   onOpenParamSettings?: (paramId: string) => void;
   onRetry?: () => void;
   onFullscreen?: () => void;
@@ -57,7 +58,7 @@ function fieldKey(nodeId: string, field: string): string {
   return `${nodeId}:${field}`;
 }
 
-export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam, onChangeParamDefault, onRemoveParam, onChangeNodePosition, onOpenParamSettings, onRetry, onFullscreen, fullscreen }: Props) {
+export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam, onChangeParamDefault, onRemoveParam, onChangeNodePosition, onToggleNodeBypass, onOpenParamSettings, onRetry, onFullscreen, fullscreen }: Props) {
   const { t } = useTranslation();
   const [scale, setScale] = useState(0.72);
   const [pan, setPan] = useState({ x: 24, y: 24 });
@@ -203,10 +204,11 @@ export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam
               const target = pointFor(edge.targetNode, edge.targetField, 'target');
               if (!source || !target) return null;
               const distance = Math.max(50, Math.abs(target.x - source.x) * 0.45);
+              const edgeBypassed = nodeById.get(edge.sourceNode)?.bypassed || nodeById.get(edge.targetNode)?.bypassed;
               return (
                 <path
                   key={`${edge.sourceNode}:${edge.sourceField}->${edge.targetNode}:${edge.targetField}`}
-                  className="workflow-graph-edge"
+                  className={`workflow-graph-edge${edgeBypassed ? ' bypassed' : ''}`}
                   d={`M ${source.x} ${source.y} C ${source.x + distance} ${source.y}, ${target.x - distance} ${target.y}, ${target.x} ${target.y}`}
                 />
               );
@@ -216,10 +218,19 @@ export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam
             {graph.nodes.map(node => {
               const position = positionOf(node);
               return (
-                <article key={node.nodeId} data-node-id={node.nodeId} className="workflow-graph-node" style={{ left: position.x, top: position.y, width: NODE_WIDTH }}>
+                <article key={node.nodeId} data-node-id={node.nodeId} className={`workflow-graph-node${node.bypassed ? ' bypassed' : ''}`} style={{ left: position.x, top: position.y, width: NODE_WIDTH }}>
                   <header className="workflow-graph-node-head" onContextMenu={event => event.preventDefault()} title={t('nodeGraph.dragHint')}>
                     <strong>{node.title || node.classType}</strong>
                     <span>#{node.nodeId}</span>
+                    <button
+                      type="button"
+                      className="workflow-graph-node-bypass"
+                      aria-pressed={node.bypassed}
+                      aria-label={t('nodeGraph.bypassAria', { node: node.nodeId })}
+                      title={node.bypassed ? t('nodeGraph.bypassOff') : t('nodeGraph.bypassOn')}
+                      onPointerDown={event => event.stopPropagation()}
+                      onClick={() => onToggleNodeBypass?.(node)}
+                    >{node.bypassed ? '▶' : '⏭'}</button>
                     <small>{node.classType}</small>
                   </header>
                   <div className="workflow-graph-node-fields">

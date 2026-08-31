@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from 'express';
 import path from 'node:path';
-import { convertUiToApi, getWorkflowJson, isUiFormat, introspectWorkflow, pruneDeadNodes, type WorkflowSpec } from './workflow.js';
+import { buildPrompt, convertUiToApi, getWorkflowJson, isUiFormat, introspectWorkflow, pruneDeadNodes, type WorkflowSpec } from './workflow.js';
 import {
   deleteImportedWorkflow,
   deleteManifest,
@@ -22,7 +22,7 @@ import {
 } from './workflow-catalog.js';
 import { getObjectInfo } from './comfyui.js';
 import { applyPluginSuggestions, buildPluginAnalysis, serializeAnalysisForLlm, type PluginAnalysis, type PluginCreatorSuggestions } from './plugin-creator.js';
-import { buildWorkflowGraph, createParamFromGraphField, type WorkflowGraph, type WorkflowGraphField } from './workflow-graph.js';
+import { buildWorkflowGraph, createParamFromGraphField, listWorkflowInterfaceCandidates, type WorkflowGraph, type WorkflowGraphField, type WorkflowInterfaceCandidates } from './workflow-graph.js';
 import { PLUGIN_SKILLS_DIR, deletePluginSkill, generatePluginSkill, readPluginSkill, syncPluginSkill, writeCustomSkill, writePluginSkill } from './workflow-skill.js';
 import { defaultPluginResponseProtocol, deletePluginResponseProtocol, readPluginResponseProtocol, syncPluginResponseProtocol, validatePluginResponseProtocol, writePluginResponseProtocol, resolvePluginResponseProtocol, type PluginResponseProtocol } from './workflow-response.js';
 import type { PluginSkillChatMessage, PluginSkillChatResult } from './agent/bridge.js';
@@ -84,6 +84,36 @@ function sourceWorkflowPath(options: WorkflowPluginApiOptions, source: WorkflowC
     : path.join(options.catalog.bundledDir, path.basename(source.source.workflowFile));
 }
 
+async function validateConfiguredWorkflow(
+  spec: WorkflowSpec,
+  json: Record<string, any>,
+  objectInfoData: Record<string, any>,
+): Promise<void> {
+  const normalizedSpec: WorkflowSpec = {
+    ...spec,
+    inputs: spec.inputs ?? [],
+    params: spec.params ?? [],
+    outputs: spec.outputs ?? [],
+  };
+  const inputs = normalizedSpec.inputs;
+  const params = Object.fromEntries(normalizedSpec.params.map(param => [param.id, param.default]));
+  const uploaded = Object.fromEntries(
+    inputs
+      .filter(input => input.kind !== 'text' && !input.hidden && typeof input.defaultValue === 'string' && input.defaultValue.trim())
+      .map(input => [input.id, String(input.defaultValue).trim()]),
+  );
+  const text = String(inputs.find(input => input.kind === 'text' && !input.hidden)?.defaultValue ?? '').trim() || 'workflow validation prompt';
+  const prompt = await buildPrompt(normalizedSpec, json, {
+    objectInfoData,
+    prompt: text,
+    uploaded,
+    params,
+  });
+  for (const output of normalizedSpec.outputs.filter(item => !item.hidden)) {
+    if (!prompt[output.nodeId]) throw new Error(`输出映射 ${output.id} 指向的节点不在提交图中：${output.nodeId}`);
+  }
+}
+
 function validNodePositions(value: unknown): Record<string, WorkflowNodePosition> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).flatMap(([nodeId, position]) => {
@@ -128,14 +158,14 @@ function nodeFields(json: Record<string, any>, objectInfoData: Record<string, an
 
 export function validateManifestStructure(previous: WorkflowSpec, next: WorkflowSpec): string | null {
   const groups = [
-    ['inputs', previous.inputs, next.inputs, ['id', 'kind', 'nodeId', 'field', 'classType']],
-    ['outputs', previous.outputs, next.outputs, ['id', 'kind', 'nodeId', 'classType']],
+    ['inputs', previous.inputs ?? [], next.inputs ?? [], ['id', 'kind', 'nodeId', 'field', 'classType']],
+    ['outputs', previous.outputs ?? [], next.outputs ?? [], ['id', 'kind', 'nodeId', 'classType']],
   ] as const;
   for (const [name, before, after, structural] of groups) {
-    if (before.length !== after.length) return `${name} 映射数量不可改变`;
-    for (let index = 0; index < before.length; index++) {
-      const previousItem = before[index]!;
-      const nextItem = after[index]!;
+    const previousById = new Map(before.map(item => [item.id, item]));
+    for (const nextItem of after) {
+      const previousItem = previousById.get(nextItem.id);
+      if (!previousItem) continue; // 新增候选由 validateWorkflowManifest 校验实际节点结构
       for (const key of structural) {
         if (JSON.stringify((previousItem as any)[key]) !== JSON.stringify((nextItem as any)[key])) {
           return `${name} 映射结构不可修改：${key}`;
@@ -160,11 +190,18 @@ export async function validateWorkflowManifest(
     ids.add(`${group}:${id}`);
     return null;
   };
+  const candidates = listWorkflowInterfaceCandidates(json, objectInfoData);
+  const inputCandidates = new Map(candidates.inputs.map(candidate => [`${candidate.nodeId}:${candidate.field}`, candidate]));
+  const outputCandidates = new Map(candidates.outputs.map(candidate => [`${candidate.nodeId}:${candidate.slot}`, candidate]));
   for (const input of manifest.inputs ?? []) {
     const idError = addId('inputs', input.id);
     if (idError) return idError;
     if (!fields.has(input.nodeId)) return `inputs 映射 ${input.id} 指向不存在节点：${input.nodeId}`;
     if (!fields.get(input.nodeId)!.has(input.field)) return `inputs 映射 ${input.id} 指向不存在字段：${input.nodeId}.${input.field}`;
+    const candidate = inputCandidates.get(`${input.nodeId}:${input.field}`);
+    if (!candidate) return `inputs 映射 ${input.id} 必须指向未连接且可注入的输入字段`;
+    if (input.type && input.type !== candidate.type) return `inputs 映射 ${input.id} 的端口类型与节点定义不匹配`;
+    if (input.kind !== candidate.kind) return `inputs 映射 ${input.id} 的类型与节点字段不匹配`;
   }
   for (const param of manifest.params ?? []) {
     const idError = addId('params', param.id);
@@ -177,17 +214,34 @@ export async function validateWorkflowManifest(
     }
   }
   for (const input of manifest.inputs ?? []) {
-    if (!['text', 'image', 'video'].includes(input.kind)) return `inputs 映射 ${input.id} 的类型无效`;
+    if (!['text', 'image', 'video', 'number', 'boolean'].includes(input.kind)) return `inputs 映射 ${input.id} 的类型无效`;
+    if (input.type && !['STRING', 'IMAGE', 'VIDEO', 'INT', 'FLOAT', 'NUMBER', 'BOOLEAN', 'COMBO'].includes(input.type)) return `inputs 映射 ${input.id} 的端口类型无效：${input.type}`;
   }
   for (const param of manifest.params ?? []) {
     if (!['INT', 'FLOAT', 'BOOLEAN', 'STRING', 'SEED', 'combo'].includes(param.type)) return `params 映射 ${param.id} 的类型无效`;
   }
   for (const output of manifest.outputs ?? []) {
-    if (!['image', 'video', 'text'].includes(output.kind)) return `outputs 映射 ${output.id} 的类型无效`;
+    if (!['image', 'video', 'text', 'number', 'boolean'].includes(output.kind)) return `outputs 映射 ${output.id} 的类型无效`;
+    if (output.type && !['IMAGE', 'VIDEO', 'STRING', 'INT', 'FLOAT', 'NUMBER', 'BOOLEAN'].includes(output.type)) return `outputs 映射 ${output.id} 的端口类型不允许返回：${output.type}`;
+    if (output.kind === 'number' && output.type && !['INT', 'FLOAT', 'NUMBER'].includes(output.type)) return `outputs 映射 ${output.id} 的类型与端口不匹配`;
+    if (output.kind === 'boolean' && output.type !== 'BOOLEAN') return `outputs 映射 ${output.id} 的类型与端口不匹配`;
+    if (output.kind === 'image' && output.type && output.type !== 'IMAGE') return `outputs 映射 ${output.id} 的类型与端口不匹配`;
+    if (output.kind === 'video' && output.type && output.type !== 'VIDEO') return `outputs 映射 ${output.id} 的类型与端口不匹配`;
+    if (output.kind === 'text' && output.type && output.type !== 'STRING') return `outputs 映射 ${output.id} 的类型与端口不匹配`;
 
     const idError = addId('outputs', output.id);
     if (idError) return idError;
     if (!fields.has(output.nodeId)) return `outputs 映射 ${output.id} 指向不存在节点：${output.nodeId}`;
+    if (output.slot !== undefined) {
+      const candidate = outputCandidates.get(`${output.nodeId}:${output.slot}`);
+      if (!candidate) return `outputs 映射 ${output.id} 指向不存在或不可返回的输出端口：${output.nodeId}.${output.slot}`;
+      if (output.classType !== candidate.classType) return `outputs 映射 ${output.id} 的节点类型与源工作流不匹配`;
+      if (output.type && output.type !== candidate.type) return `outputs 映射 ${output.id} 的端口类型与节点定义不匹配`;
+      if (output.kind !== candidate.kind) return `outputs 映射 ${output.id} 的类型与输出端口不匹配`;
+    } else if (!candidates.outputs.some(candidate => candidate.nodeId === output.nodeId)) {
+      return `outputs 映射 ${output.id} 指向的节点没有可返回的输出端口`;
+    }
+    if (output.type && !['IMAGE', 'VIDEO', 'STRING', 'INT', 'FLOAT', 'NUMBER', 'BOOLEAN'].includes(output.type)) return `outputs 映射 ${output.id} 的输出类型不允许返回：${output.type}`;
   }
   if (requireOutput && !manifest.outputs?.some(output => !output.hidden)) return '至少保留一个可用输出映射';
   return null;
@@ -272,7 +326,7 @@ function llmSpec(spec: WorkflowSpec): Record<string, any> {
     ...item,
     ...(defaultValue !== undefined ? { defaultValue } : {}),
   }));
-  const params = spec.params.filter(item => !item.hidden && item.llm !== false).map(({ nodeId: _nodeId, field: _field, applyTo: _applyTo, multiple, strengthable, options, llm: _llm, ...item }) => ({
+  const params = spec.params.filter(item => !item.hidden && item.llm !== false && !item.bypass).map(({ nodeId: _nodeId, field: _field, applyTo: _applyTo, multiple, strengthable, options, llm: _llm, bypass: _bypass, ...item }) => ({
     ...item,
     ...(multiple !== undefined ? { multiple } : {}),
     ...(strengthable !== undefined ? { strengthable } : {}),
@@ -306,7 +360,7 @@ export function summarizeWorkflowsForLlm(specs: WorkflowSpec[]): Record<string, 
       label: item.label,
       ...(item.description?.trim() ? { description: item.description } : {}),
     })),
-    params: (spec.params ?? []).filter(item => !item.hidden && item.llm !== false).map(item => ({
+    params: (spec.params ?? []).filter(item => !item.hidden && item.llm !== false && !item.bypass).map(item => ({
       id: item.id,
       label: item.label,
       type: item.type,
@@ -359,7 +413,10 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
         const detected = await introspectWorkflow(raw, oi);
         const manifest: WorkflowManifestRecord = {
           ...detected,
-          // 导入只创建输入/输出契约；参数由节点视图显式勾选，避免表单默认暴露全部自动识别参数。
+          // 自动识别结果只作为接口候选，默认不暴露；用户在“工作流接口”中显式启用。
+          inputs: detected.inputs.map(input => ({ ...input, hidden: true })),
+          outputs: detected.outputs.map(output => ({ ...output, hidden: true })),
+          // 参数由节点视图显式勾选，避免表单默认暴露全部自动识别参数。
           params: [],
           id,
           name: typeof body.name === 'string' && body.name.trim() ? body.name.trim() : detected.name || id,
@@ -367,8 +424,8 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           source: source.source,
           hasManifest: true,
           editable: true,
-        };
-        const validationError = await validateWorkflowManifest(manifest, raw, oi);
+        };          // 初次导入只建立自动识别候选，输入/输出默认隐藏；用户完成接口选择后再要求至少一个输出。
+          const validationError = await validateWorkflowManifest(manifest, raw, oi, false);
         if (validationError) {
           jsonError(res, 400, validationError);
           return;
@@ -492,7 +549,7 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
         }
       }
 
-      const match = req.path.match(/^\/api\/plugins\/([^/]+)(?:\/(nodes|graph|redetect|analyze|configure))?$/);
+      const match = req.path.match(/^\/api\/plugins\/([^/]+)(?:\/(nodes|graph|interface-candidates|redetect|analyze|configure))?$/);
       if (match) {
         const id = decodeURIComponent(match[1]!);
         const action = match[2];
@@ -503,6 +560,12 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
         }
         if (req.method === 'GET' && action === 'nodes') {
           res.json({ nodes: await nodeCandidates(options, source) });
+          return;
+        }
+        if (req.method === 'GET' && action === 'interface-candidates') {
+          const objectInfoData = await objectInfoOf(options);
+          const candidates: WorkflowInterfaceCandidates = listWorkflowInterfaceCandidates(source.json, objectInfoData);
+          res.json({ candidates });
           return;
         }
         if (req.method === 'GET' && action === 'graph') {
@@ -546,6 +609,7 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
             overwriteSkill?: boolean;
             overwriteResponse?: boolean;
             nodePositions?: Record<string, WorkflowNodePosition>;
+            positionsOnly?: boolean;
           };
           const manifest = body.manifest;
           if (!manifest || typeof manifest !== 'object' || manifest.id !== id) {
@@ -554,6 +618,16 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           }
           const objectInfoData = await objectInfoOf(options);
           const previous = readManifest(options.catalog.manifestDir, id);
+          const validPositions = validNodePositions(body.nodePositions);
+          // 布局保存也必须验证当前工作流结构仍可执行；该校验只在本地构建 prompt，
+          // 不会向 ComfyUI 提交任务或触发生成。
+          if (previous.status === 'valid' && body.positionsOnly === true && Object.keys(validPositions).length > 0) {
+            await validateConfiguredWorkflow(previous.manifest, source.json, objectInfoData);
+            updateWorkflowNodePositions(sourceWorkflowPath(options, source), validPositions);
+            options.invalidate();
+            res.json({ ok: true, plugin: previous.manifest });
+            return;
+          }
           const previousSpec = previous.status === 'valid'
             ? previous.manifest
             : await introspectWorkflow(source.json, objectInfoData);
@@ -568,12 +642,14 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
             jsonError(res, 400, paramError);
             return;
           }
-          const manifestError = await validateWorkflowManifest(manifest, source.json, objectInfoData);
+          const requireOutput = previous.status === 'valid' && previous.manifest.outputs.some(output => !output.hidden);
+          const manifestError = await validateWorkflowManifest(manifest, source.json, objectInfoData, requireOutput);
           if (manifestError) {
             jsonError(res, 400, manifestError);
             return;
           }
           const normalized: WorkflowManifestRecord = { ...manifest, source: sourceFor(source), hasManifest: true, editable: true };
+          await validateConfiguredWorkflow(normalized, source.json, objectInfoData);
 
           // 预生成阶段：LLM Skill 或默认协议的任何失败都发生在写盘之前
           let skillContent: string | null = null;
@@ -593,9 +669,7 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           }
 
           writeManifest(options.catalog.manifestDir, normalized);
-          if (isUiFormat(source.json)) {
-            updateWorkflowNodePositions(sourceWorkflowPath(options, source), validNodePositions(body.nodePositions));
-          }
+          updateWorkflowNodePositions(sourceWorkflowPath(options, source), validPositions);
           try {
             if (body.overwriteSkill === true && skillContent !== null) {
               writeCustomSkill(id, skillContent, skillsDir);
@@ -644,12 +718,14 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
             jsonError(res, 400, paramError);
             return;
           }
-          const error = await validateWorkflowManifest(manifest, source.json, objectInfoData);
+          const requireOutput = previous.status === 'valid' && previous.manifest.outputs.some(output => !output.hidden);
+          const error = await validateWorkflowManifest(manifest, source.json, objectInfoData, requireOutput);
           if (error) {
             jsonError(res, 400, error);
             return;
           }
           const normalized = { ...manifest, source: sourceFor(source), hasManifest: true, editable: true };
+          await validateConfiguredWorkflow(normalized, source.json, objectInfoData);
           writeManifest(options.catalog.manifestDir, normalized);
           if (isUiFormat(source.json)) {
             updateWorkflowNodePositions(sourceWorkflowPath(options, source), validNodePositions(nodePositions));

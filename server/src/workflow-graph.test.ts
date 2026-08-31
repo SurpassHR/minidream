@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorkflowGraph, createParamFromGraphField } from './workflow-graph.js';
+import { buildWorkflowGraph, createParamFromGraphField, listWorkflowInterfaceCandidates } from './workflow-graph.js';
 
 const apiWorkflow = {
   '1': { class_type: 'LoadImage', inputs: { image: 'input.png' }, _meta: { title: '参考图' } },
@@ -9,6 +9,9 @@ const apiWorkflow = {
 };
 
 const objectInfo = {
+  LoadImage: {
+    input: { required: { image: [['a.png', 'b.png'], {}] } },
+  },
   KSampler: {
     input: {
       required: {
@@ -80,9 +83,28 @@ describe('workflow graph', () => {
     const uiGraph = buildWorkflowGraph(uiWorkflow, objectInfo);
     expect(uiGraph.nodes.find(node => node.nodeId === '10')).toMatchObject({ x: 300, y: 120 });
 
+    const compactUiWorkflow = {
+      nodes: [
+        { id: 10, type: 'KSampler', pos: [300, 120], widgets_values: [20, 7, 1], inputs: [] },
+        { id: 11, type: 'SaveImage', pos: [500, 80], widgets_values: [], inputs: [{ name: 'images', link: 1 }] },
+      ],
+      links: [[1, 10, 0, 11, 0, 'IMAGE']],
+    };
+    const compactUiGraph = buildWorkflowGraph(compactUiWorkflow, objectInfo);
+    expect(compactUiGraph.nodes.find(node => node.nodeId === '10')).toMatchObject({ x: 300, y: 120 });
+    expect(compactUiGraph.nodes.find(node => node.nodeId === '11')).toMatchObject({ x: 500, y: 80 });
+
     const first = buildWorkflowGraph(apiWorkflow, objectInfo);
     const second = buildWorkflowGraph(apiWorkflow, objectInfo);
     expect(first.nodes.map(node => [node.nodeId, node.x, node.y])).toEqual(second.nodes.map(node => [node.nodeId, node.x, node.y]));
+  });
+
+  it('restores node bypass state from the manifest', () => {
+    const graph = buildWorkflowGraph(apiWorkflow, objectInfo, {
+      params: [{ id: 'bypass-2', label: '跳过采样', nodeId: '2', field: '', type: 'BOOLEAN', default: true, bypass: true }],
+    });
+    expect(graph.nodes.find(node => node.nodeId === '2')).toMatchObject({ bypassed: true });
+    expect(graph.nodes.find(node => node.nodeId === '3')).toMatchObject({ bypassed: false });
   });
 
   it('creates a fresh parameter from a selectable field', () => {
@@ -109,6 +131,69 @@ describe('workflow graph', () => {
     const graph = buildWorkflowGraph(workflow, objectInfo);
     const field = graph.nodes.find(node => node.nodeId === '2')!.fields.find(item => item.field === 'cfg')!;
     expect(createParamFromGraphField(field).applyTo).toEqual(['5']);
+  });
+
+  it('lists arbitrary valid input fields and final output ports, excluding internal types', () => {
+    const workflow = {
+      '1': { class_type: 'CustomSource', inputs: { text: 'hello', count: 3 } },
+      '2': { class_type: 'CustomResult', inputs: { source: ['1', 0] } },
+    };
+    const info = {
+      CustomSource: { input: { required: { text: ['STRING'], count: ['INT'] } }, output: ['STRING', 'INT'] },
+      CustomResult: { input: { required: { source: ['STRING'] } }, output: ['STRING', 'MODEL'] },
+    };
+    const candidates = listWorkflowInterfaceCandidates(workflow, info);
+    expect(candidates.inputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: '1', field: 'text', kind: 'text' }),
+      expect.objectContaining({ nodeId: '1', field: 'count', kind: 'number' }),
+    ]));
+    expect(candidates.outputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: '1', slot: 0, kind: 'text' }),
+      expect.objectContaining({ nodeId: '1', slot: 1, kind: 'number' }),
+    ]));
+    expect(candidates.outputs).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: '2', slot: 1 }),
+    ]));
+  });
+
+  it('classifies LoadImage.image as an image input even when object_info declares a combo', () => {
+    const candidates = listWorkflowInterfaceCandidates(apiWorkflow, objectInfo);
+    expect(candidates.inputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: '1', field: 'image', kind: 'image', type: 'COMBO' }),
+    ]));
+  });
+
+  it('does not expose LoadImage as an output interface candidate', () => {
+    const candidates = listWorkflowInterfaceCandidates(apiWorkflow, {
+      ...objectInfo,
+      LoadImage: {
+        input: { required: { image: [['a.png', 'b.png'], {}] } },
+        output: ['IMAGE'],
+      },
+    });
+    expect(candidates.outputs).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: '1', classType: 'LoadImage' }),
+    ]));
+  });
+
+  it('exposes only unconnected public input fields as interface candidates', () => {
+    const workflow = {
+      '1': { class_type: 'CustomSource', inputs: { text: 'hello', count: 3 } },
+      '2': { class_type: 'CustomResult', inputs: { source: ['1', 0] } },
+    };
+    const info = {
+      CustomSource: { input: { required: { text: ['STRING'], count: ['INT'] } }, output: ['STRING'] },
+      CustomResult: { input: { required: { source: ['STRING'], extra: ['STRING'] } }, output: ['IMAGE'] },
+    };
+    const candidates = listWorkflowInterfaceCandidates(workflow, info);
+    expect(candidates.inputs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: '1', field: 'text' }),
+      expect.objectContaining({ nodeId: '1', field: 'count' }),
+      expect.objectContaining({ nodeId: '2', field: 'extra' }),
+    ]));
+    expect(candidates.inputs).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: '2', field: 'source' }),
+    ]));
   });
 
   it('exposes Power Lora Loader as a selectable multi-combo widget', () => {

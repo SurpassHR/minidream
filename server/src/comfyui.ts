@@ -48,7 +48,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ComfyUIError(`ComfyUI ${path} 返回 ${res.status}: ${text.slice(0, 300)}`, res.status, body);
   }
-  return (await res.json()) as T;
+  const text = await res.text();
+  return text.trim() ? (JSON.parse(text) as T) : (undefined as T);
 }
 
 export interface HealthStatus {

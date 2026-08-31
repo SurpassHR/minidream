@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getTaskMediaAspectRatio, getTaskMediaLayoutClass } from '../../web/src/taskMediaRatio';
+import { getTaskMediaAspectRatio, getTaskMediaLayoutClass } from '../../web/src/taskMediaRatio.js';
 
 describe('getTaskMediaAspectRatio', () => {
   it('uses the actual generated width and height when available', () => {

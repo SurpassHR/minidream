@@ -215,6 +215,7 @@ export class TaskQueue extends EventEmitter {
       imageUploads: input.imageUploads,
       videoUploads: input.videoUploads,
       params: input.params,
+      inputValues: input.inputValues,
       sessionId: input.sessionId,
       promptGraph: input.promptGraph,
       ratio: input.ratio,
@@ -583,6 +584,7 @@ export class TaskQueue extends EventEmitter {
     const prompt = task.promptGraph ?? await buildPrompt(spec, workflowJson, {
       prompt: task.prompt,
       uploaded,
+      inputValues: task.inputValues,
       params: { ...defaultParams, ...task.params },
       settings,
       resolution,
@@ -769,6 +771,15 @@ export class TaskQueue extends EventEmitter {
     }
     const local: TaskOutputCandidate[] = [];
     for (const output of outputs) {
+      // 标量接口结果是 data URL + value，不是 ComfyUI 媒体文件；直接保留，
+      // 避免把 `7-1.number` 当成文件再次下载或写入草稿。
+      if (output.kind === 'number' || output.kind === 'boolean') {
+        local.push({
+          ...output,
+          ...(generation ? { generation } : {}),
+        });
+        continue;
+      }
       let data = output.data;
       let mime = output.mime;
       if (!data && output.filename) {

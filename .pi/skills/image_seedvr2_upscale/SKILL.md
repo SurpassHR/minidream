@@ -1,15 +1,15 @@
 ---
 name: image_seedvr2_upscale
-description: 本地运行：SeedVR2 扩散模型图像高清放大（4K 级）。需安装 numz/ComfyUI-SeedVR2_VideoUpscaler 与 TTPlanetPig/Comfyui_TTP_Tools
+description: 工作流插件 image_seedvr2_upscale
 ---
 
-# SeedVR2 图像放大
+# image_seedvr2_upscale
 
 > 本文件由 server/src/workflow-skill.ts 自动生成，勿手工编辑；修改插件 manifest 或重新识别后会自动重新生成。
 
 ## 用途
 
-本地运行：SeedVR2 扩散模型图像高清放大（4K 级）。需安装 numz/ComfyUI-SeedVR2_VideoUpscaler 与 TTPlanetPig/Comfyui_TTP_Toolset 自定义节点，模型权重首次使用自动下载到 models/SEEDVR2。
+工作流插件 image_seedvr2_upscale
 
 ## 输入
 
@@ -19,7 +19,7 @@ description: 本地运行：SeedVR2 扩散模型图像高清放大（4K 级）�
 
 以下参数可由 LLM 通过 `generation.submit` 的 `params` 调整（键为参数 id）：
 
-- **随机种子**（id `seed-14`；类型 整数；默认 42）
+- **image**（id `image-17`；类型 下拉选项；默认 pasted/image (237).png；可选：0.png、01.png、02.png、03.png、04.png、05.png、06.png、07.png…）
 
 ## 输出
 

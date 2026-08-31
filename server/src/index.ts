@@ -240,8 +240,8 @@ app.get('/api/sessions', (_req, res) => {
 
 /** 批量删除会话 */
 app.delete('/api/sessions', (req, res) => {
-  const ids = Array.isArray(req.body?.ids)
-    ? [...new Set(req.body.ids.filter((id: unknown): id is string => typeof id === 'string' && id.trim()))]
+  const ids: string[] = Array.isArray(req.body?.ids)
+    ? Array.from(new Set<string>((req.body.ids as unknown[]).filter((id: unknown): id is string => typeof id === 'string' && Boolean(id.trim()))))
     : [];
   if (ids.length === 0) {
     res.status(400).json({ error: 'ids is required' });
@@ -645,8 +645,12 @@ app.get('/api/drafts', (_req, res) => {
 /** 读取草稿文件 */
 app.get('/api/drafts/:id/file', (req, res) => {
   const draft = draftStore.get(req.params.id);
+  if (!draft) {
+    res.status(404).json({ error: 'draft not found' });
+    return;
+  }
   // 按当前存储目录解析（迁移后索引里的旧绝对路径可能失效，文件位置以 outputDir + filename 为准）
-  const file = draft ? draftStore.filePath(draft.id) : undefined;
+  const file = draftStore.filePath(draft.id);
   if (!file || !existsSync(file)) {
     res.status(404).json({ error: 'draft not found' });
     return;
@@ -881,7 +885,9 @@ async function generateReply(
     );
   }
   if (spec.outputs.length) {
-    const kindLabel = { image: '图片', video: '视频', text: '文本' };
+    const kindLabel: Record<WorkflowSpec['outputs'][number]['kind'], string> = {
+      image: '图片', video: '视频', text: '文本', number: '数值', boolean: '布尔值',
+    };
     logs.push(
       `工作流输出：${spec.outputs.map(o => `${o.label}（${kindLabel[o.kind]}）`).join('、')}`,
     );
@@ -1415,6 +1421,9 @@ app.post('/api/chat', async (req, res) => {
                           kind: out.kind,
                           url: out.url,
                           filename: out.filename,
+                          label: out.label,
+                          text: out.text,
+                          value: out.value,
                         });
                       }
                     }

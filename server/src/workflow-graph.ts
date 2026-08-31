@@ -12,7 +12,37 @@ const FILE_COMBO_FIELDS = new Set([
 ]);
 
 const WIDGET_TYPES = new Set(['INT', 'FLOAT', 'BOOLEAN', 'STRING', 'SEED', 'COMBO']);
+const PUBLIC_OUTPUT_TYPES = new Set(['IMAGE', 'VIDEO', 'STRING', 'INT', 'FLOAT', 'BOOLEAN', 'NUMBER']);
 const SHARED_PARAM_FIELDS = new Set(['seed', 'noise_seed', 'steps', 'cfg', 'denoise', 'lora']);
+
+export type WorkflowInterfaceInputKind = 'text' | 'image' | 'video' | 'number' | 'boolean';
+
+export interface WorkflowInterfaceInputCandidate {
+  id: string;
+  nodeId: string;
+  field: string;
+  classType: string;
+  label: string;
+  title?: string;
+  type: string;
+  kind: WorkflowInterfaceInputKind;
+  defaultValue?: unknown;
+}
+
+export interface WorkflowInterfaceOutputCandidate {
+  id: string;
+  nodeId: string;
+  classType: string;
+  title: string;
+  slot: number;
+  type: string;
+  kind: 'image' | 'video' | 'text' | 'number' | 'boolean';
+}
+
+export interface WorkflowInterfaceCandidates {
+  inputs: WorkflowInterfaceInputCandidate[];
+  outputs: WorkflowInterfaceOutputCandidate[];
+}
 
 export interface WorkflowGraphField {
   nodeId: string;
@@ -39,6 +69,8 @@ export interface WorkflowGraphNode {
   title: string;
   x: number;
   y: number;
+  /** 节点是否已在 manifest 中标记为 bypass */
+  bypassed?: boolean;
   fields: WorkflowGraphField[];
 }
 
@@ -53,6 +85,7 @@ export interface WorkflowGraphEdge {
 export interface WorkflowGraph {
   nodes: WorkflowGraphNode[];
   edges: WorkflowGraphEdge[];
+  interfaceCandidates?: WorkflowInterfaceCandidates;
   manifestError?: string;
 }
 
@@ -124,6 +157,41 @@ function mergeDefinitions(objectInfoData: Record<string, any>, classType: string
   return { ...(input.required ?? {}), ...(input.optional ?? {}) };
 }
 
+function publicInputKind(classType: string, field: string, type: string): WorkflowInterfaceInputKind | null {
+  // LoadImage/LoadVideo 的文件名字段在 object_info 中通常声明为 STRING 或 COMBO，
+  // 但它们的接口语义是媒体输入，必须优先于通用文本/组合框判断。
+  if (classType === 'LoadImage' || classType === 'LoadImageMask' || classType === 'LoadImageSequence') return field === 'image' ? 'image' : null;
+  if (classType === 'LoadVideo' || classType === 'VHS_VideoUpload' || classType === 'LoadVideoPath') return field === 'video' ? 'video' : null;
+  if (type === 'BOOLEAN') return 'boolean';
+  if (type === 'INT' || type === 'FLOAT' || type === 'SEED') return 'number';
+  if (type === 'IMAGE') return 'image';
+  if (type === 'VIDEO') return 'video';
+  if (type === 'STRING' || type === 'COMBO') return 'text';
+  return null;
+}
+
+function publicOutputKind(type: string): WorkflowInterfaceOutputCandidate['kind'] | null {
+  if (type === 'IMAGE') return 'image';
+  if (type === 'VIDEO') return 'video';
+  if (type === 'STRING') return 'text';
+  if (type === 'BOOLEAN') return 'boolean';
+  if (type === 'INT' || type === 'FLOAT' || type === 'NUMBER') return 'number';
+  return null;
+}
+
+function outputTypes(objectInfoData: Record<string, any>, classType: string): Array<{ type: string; slot: number }> {
+  const declared = objectInfoData[classType]?.output;
+  if (Array.isArray(declared)) {
+    return declared
+      .map((type: unknown, slot: number) => ({ type: String(type), slot }))
+      .filter(item => PUBLIC_OUTPUT_TYPES.has(item.type));
+  }
+  if (/SaveImage|PreviewImage|Websocket/i.test(classType)) return [{ type: 'IMAGE', slot: 0 }];
+  if (/SaveVideo|VideoCombine/i.test(classType)) return [{ type: 'VIDEO', slot: 0 }];
+  if (/ShowText|SaveText|PreviewText|TextOutput/i.test(classType)) return [{ type: 'STRING', slot: 0 }];
+  return [];
+}
+
 function installedLoraOptions(objectInfoData: Record<string, any>): string[] {
   for (const classType of ['LoraLoader', 'LoraLoaderModelOnly']) {
     const definition = objectInfoData[classType]?.input?.required?.lora_name;
@@ -169,9 +237,20 @@ function createUiLinkData(json: Record<string, any>): ApiGraphData['uiLinks'] {
 
 function toApiGraphData(json: Record<string, any>, objectInfoData: Record<string, any>): ApiGraphData {
   if (!isUiFormat(json)) {
+    const positions = new Map<string, { x: number; y: number }>();
+    const savedPositions = json._minidream_node_positions;
+    if (savedPositions && typeof savedPositions === 'object' && !Array.isArray(savedPositions)) {
+      for (const [nodeId, position] of Object.entries(savedPositions as Record<string, unknown>)) {
+        if (!position || typeof position !== 'object' || Array.isArray(position)) continue;
+        const { x, y } = position as { x?: unknown; y?: unknown };
+        if (typeof x === 'number' && Number.isFinite(x) && typeof y === 'number' && Number.isFinite(y)) {
+          positions.set(nodeId, { x, y });
+        }
+      }
+    }
     return {
-      api: Object.fromEntries(Object.entries(json).filter(([id]) => id !== '_meta')) as Record<string, ApiNode>,
-      positions: new Map(),
+      api: Object.fromEntries(Object.entries(json).filter(([id]) => id !== '_meta' && id !== '_minidream_node_positions')) as Record<string, ApiNode>,
+      positions,
       uiLinks: [],
     };
   }
@@ -284,6 +363,61 @@ export function createParamFromGraphField(field: WorkflowGraphField): WorkflowPa
   };
 }
 
+export function listWorkflowInterfaceCandidates(
+  json: Record<string, any>,
+  objectInfoData: Record<string, any> = {},
+): WorkflowInterfaceCandidates {
+  const { api } = toApiGraphData(json, objectInfoData);
+  const inputs: WorkflowInterfaceInputCandidate[] = [];
+  const outputs: WorkflowInterfaceOutputCandidate[] = [];
+  for (const [nodeId, node] of Object.entries(api)) {
+    if (!node || typeof node !== 'object') continue;
+    const classType = String(node.class_type ?? '');
+    const definitions = mergeDefinitions(objectInfoData, classType);
+    const fieldNames = new Set([...Object.keys(definitions), ...Object.keys(node.inputs ?? {})]);
+    for (const field of fieldNames) {
+      const value = node.inputs?.[field];
+      if (Array.isArray(value)) continue;
+      const definition = fieldType(definitions[field], value);
+      const kind = publicInputKind(classType, field, definition.type);
+      if (!kind) continue;
+      inputs.push({
+        id: `input-${kind}-${nodeId}-${field}`,
+        nodeId,
+        field,
+        classType,
+        label: field,
+        title: String(node._meta?.title ?? classType),
+        type: definition.type,
+        kind,
+      });
+    }
+    // Load/Upload 节点的输出仅用于向工作流下游提供输入，不能作为最终返回给用户的输出接口。
+    const inputSourceNode = classType === 'LoadImage'
+      || classType === 'LoadImageMask'
+      || classType === 'LoadImageSequence'
+      || classType === 'LoadVideo'
+      || classType === 'VHS_VideoUpload'
+      || classType === 'LoadVideoPath';
+    if (inputSourceNode) continue;
+    const types = outputTypes(objectInfoData, classType);
+    types.forEach(({ type, slot }) => {
+      const kind = publicOutputKind(type);
+      if (!kind) return;
+      outputs.push({
+        id: `output-${kind}-${nodeId}-${slot}`,
+        nodeId,
+        classType,
+        title: String(node._meta?.title ?? classType),
+        slot,
+        type,
+        kind,
+      });
+    });
+  }
+  return { inputs, outputs };
+}
+
 export function buildWorkflowGraph(
   json: Record<string, any>,
   objectInfoData: Record<string, any> = {},
@@ -313,8 +447,13 @@ export function buildWorkflowGraph(
   const layout = buildFallbackLayout(api, edges);
   const initialPositions = new Map<string, { x: number; y: number }>();
   for (const id of Object.keys(api)) initialPositions.set(id, originalPositions.get(id) ?? layout.get(id) ?? { x: 40, y: 40 });
-  const positions = spreadConnectedNodes(initialPositions, edges);
+  // UI 导出的坐标是用户在节点视图中维护的持久化布局，不能再被自动间距调整覆盖。
+  // API 格式没有原生坐标，才使用自动布局保证连线可读性。
+  const positions = isUiFormat(json) ? initialPositions : spreadConnectedNodes(initialPositions, edges);
   const params = manifest?.params ?? [];
+  const bypassedNodeIds = new Set(
+    params.filter(param => param.bypass === true && param.default === true).map(param => param.nodeId),
+  );
   const incomingByField = new Map<string, WorkflowGraphEdge>();
   for (const edge of edges) incomingByField.set(`${edge.targetNode}:${edge.targetField}`, edge);
 
@@ -379,10 +518,11 @@ export function buildWorkflowGraph(
         title: String(node._meta?.title ?? classType),
         x: positions.get(nodeId)!.x,
         y: positions.get(nodeId)!.y,
+        bypassed: bypassedNodeIds.has(nodeId),
         fields,
       } satisfies WorkflowGraphNode;
     })
     .sort((a, b) => numericNodeSort(a.nodeId, b.nodeId));
 
-  return { nodes, edges };
+  return { nodes, edges, interfaceCandidates: listWorkflowInterfaceCandidates(json, objectInfoData) };
 }

@@ -73,7 +73,13 @@ const CATEGORIES: Category[] = [
   },
 ];
 
-const PLUGIN_KIND_LABEL: Record<string, string> = { image: 'common.kindImage', video: 'common.kindVideo', text: 'common.kindText' };
+const PLUGIN_KIND_LABEL: Record<string, string> = {
+  image: 'common.kindImage',
+  video: 'common.kindVideo',
+  text: 'common.kindText',
+  number: 'common.kindNumber',
+  boolean: 'common.kindBoolean',
+};
 const CATEGORY_KEY: Record<string, string> = {
   comfyui: 'settings.catComfyui',
   agent: 'settings.catAgent',
@@ -250,12 +256,12 @@ export default function SettingsModal({
   };
 
   /** 提交映射：成功返回 true 并保持弹窗打开（由弹窗闪现“已保存”反馈），失败返回 false */
-  const handleMappingSave = async (manifest: WorkflowManifest, nodePositions?: WorkflowNodePositions): Promise<boolean> => {
+  const handleMappingSave = async (manifest: WorkflowManifest, nodePositions?: WorkflowNodePositions, positionsOnly?: boolean): Promise<boolean> => {
     setMappingSaving(true);
     setMappingError(null);
     try {
       // 保存走确认事务端点：同一套校验，且默认保留自定义 Skill/回复协议
-      const result = await configureWorkflowPlugin(manifest.id, manifest, { nodePositions });
+      const result = await configureWorkflowPlugin(manifest.id, manifest, { nodePositions, positionsOnly });
       setPluginRecords(records => records.map(record => record.id === result.plugin.id ? result.plugin : record));
       onRefreshWorkflows?.();
       return true;
@@ -587,7 +593,10 @@ export default function SettingsModal({
       ) : (
         <div className="plugin-groups">
           {(['image', 'video'] as const).map(kind => {
-            const list = pluginList.filter(w => kind === 'video' ? w.outputs.some(o => o.kind === 'video') : !w.outputs.some(o => o.kind === 'video'));
+            const list = pluginList.filter(w => {
+              const outputs = w.outputs ?? [];
+              return kind === 'video' ? outputs.some(o => o.kind === 'video') : !outputs.some(o => o.kind === 'video');
+            });
             if (list.length === 0) return null;
             return (
               <div key={kind} className="plugin-group">
@@ -612,8 +621,8 @@ export default function SettingsModal({
                         {record?.manifestError && <div className="settings-error">{t('settings.plugins.manifestError', { error: record.manifestError })}</div>}
                         {record?.source && <div className="plugin-card-source">{record.source.type === 'imported' ? t('settings.plugins.sourceImported') : record.hasManifest ? t('settings.plugins.sourceEdited') : t('settings.plugins.sourceAuto')}</div>}
                         <div className="plugin-card-badges">
-                          {w.inputs.map(i => <em key={i.id} className={`wf-badge in ${i.kind}`}>{i.required ? t('settings.plugins.badgeInRequired', { kind: kindLabel(i.kind) }) : t('settings.plugins.badgeIn', { kind: kindLabel(i.kind) })}</em>)}
-                          {w.outputs.map(o => <em key={o.id} className={`wf-badge out ${o.kind}`}>{t('settings.plugins.badgeOut', { kind: kindLabel(o.kind) })}</em>)}
+                          {(w.inputs ?? []).map(i => <em key={i.id} className={`wf-badge in ${i.kind}`}>{i.required ? t('settings.plugins.badgeInRequired', { kind: kindLabel(i.kind) }) : t('settings.plugins.badgeIn', { kind: kindLabel(i.kind) })}</em>)}
+                          {(w.outputs ?? []).map(o => <em key={o.id} className={`wf-badge out ${o.kind}`}>{t('settings.plugins.badgeOut', { kind: kindLabel(o.kind) })}</em>)}
                         </div>
                       </div>
                     );

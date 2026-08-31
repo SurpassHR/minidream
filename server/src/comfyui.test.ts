@@ -71,4 +71,5 @@ describe('ComfyUI 客户端', () => {
       /未安装的节点「SetNode」（Set_PRMT-）.*自定义节点/,
     );
   });
+
 });

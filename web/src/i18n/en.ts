@@ -1,4 +1,4 @@
-import type zh from './zh';
+import type zh from './zh.js';
 
 /** 递归地把字面量类型放宽为 string，用于保证 en 与 zh 结构一致。 */
 type DeepStringify<T> = {
@@ -33,6 +33,8 @@ const en: DeepStringify<typeof zh> = {
     kindImage: 'Image',
     kindVideo: 'Video',
     kindText: 'Text',
+    kindNumber: 'Number',
+    kindBoolean: 'Boolean',
     enabled: 'Enabled',
     disabled: 'Disabled',
   },
@@ -302,7 +304,6 @@ const en: DeepStringify<typeof zh> = {
     tabResponse: 'Reply protocol',
     redetect: 'Re-detect',
     redetectNotice: 'Re-detected results are loaded; they are only written to the manifest after saving.',
-    saveMapping: 'Save mapping',
     suggest: {
       generate: 'Generate config suggestions',
       title: 'plugin-creator suggestions (preview)',
@@ -351,7 +352,6 @@ const en: DeepStringify<typeof zh> = {
       title: 'Reply protocol',
       desc: 'Choose widget values or generation context as placeholders, and set the container, format, and timing for each. The protocol only takes effect after saving.',
       restore: 'Restore default',
-      save: 'Save protocol',
       thinking: 'Thinking',
       thinkingDesc: 'Agent thinking events',
       show: 'Show',
@@ -410,6 +410,18 @@ const en: DeepStringify<typeof zh> = {
       empty: 'No workflow interfaces are exposed yet',
       noDescription: 'No description',
       openSettings: 'Open parameter settings',
+      toggleExposure: 'Toggle interface exposure',
+      hidden: 'Hidden',
+      exposed: 'Exposed',
+      remove: 'Remove from interface',
+      candidateHint: 'Auto-detected candidate; hiding or removing it does not delete the source workflow node.',
+      name: 'Interface name',
+      description: 'Interface description',
+      descriptionPlaceholder: 'Describe what this input or output is used for',
+      addInput: 'Add input interface',
+      selectInput: 'Select an input field…',
+      addOutput: 'Add output interface',
+      selectOutput: 'Select an output port…',
     },
     param: {
       title: 'Parameter',
@@ -428,7 +440,6 @@ const en: DeepStringify<typeof zh> = {
       comboOptions: 'Combo options',
       comboOptionsPlaceholder: 'Combo options configured in node view',
       hidden: 'Hidden',
-      bypass: 'Bypass node',
     },
   },
   nodeGraph: {
@@ -447,6 +458,9 @@ const en: DeepStringify<typeof zh> = {
     settingsAria: 'Open settings for {{node}}.{{field}}',
     param: 'Param',
     pinned: 'Pinned',
+    bypassAria: 'Toggle bypass for node {{node}}',
+    bypassOn: 'Enable bypass and skip this node',
+    bypassOff: 'Disable bypass and restore this node',
   },
   api: {
     networkError: 'Network request failed',

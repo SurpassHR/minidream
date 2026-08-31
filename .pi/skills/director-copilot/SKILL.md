@@ -30,7 +30,7 @@ description: 导演工作台项目 Skill：解析创作意图、选择工作流�
 ## 提交生成
 
 - 用户明确要求生图/生视频时，流程必须走完：调用 `workflow.list` 选插件 → 调用 `workflow.skill` 读取插件协议 → 调用 `generation.submit` 提交任务。不允许只输出提示词而不提交。
-- `generation.submit` 必填 `workflowId` 和 `prompt`：`workflowId` 填清单中的插件 id，`prompt` 填正面提示词；不要使用 `inputs` 代替 `prompt`。
+- `generation.submit` 必填 `workflowId` 和 `prompt`：`workflowId` 填清单中的插件 id，`prompt` 填正面提示词；不要使用 `inputs` 代替 `prompt`。如果插件定义了用户输入接口，可额外用 `inputs` 按输入 id 传入 STRING、INT、FLOAT、BOOLEAN 等值；`inputs` 不能代替主提示词。
 - 仅使用插件 Skill 中真实存在且允许 LLM 控制的参数，通过 `params` 传入，键为参数 id。
 - 插件 Skill 如果要求负面提示词或其他文本参数，必须根据当前内容生成实际值；不要照抄 description 中的示例。
 - 图生图或图生视频必须传入用户实际 `@imageN` / `@videoN` 提及的素材；文生图或文生视频不要伪造参考图。

@@ -4,9 +4,9 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createWorkflowPluginRouter, validateParamMappings, type WorkflowPluginApiOptions } from './workflow-plugin-api.js';
-import type { WorkflowSpec } from './workflow.js';
-import { readManifest, readWorkflowJson } from './workflow-plugin-store.js';
+import { createWorkflowPluginRouter, validateParamMappings, validateWorkflowManifest, type WorkflowPluginApiOptions } from './workflow-plugin-api.js';
+import type { WorkflowOutput, WorkflowSpec } from './workflow.js';
+import { readManifest, readWorkflowJson, writeManifest, type WorkflowManifestRecord } from './workflow-plugin-store.js';
 import { readPluginSkill } from './workflow-skill.js';
 
 const roots: string[] = [];
@@ -104,8 +104,10 @@ describe('workflow plugin API', () => {
       expect(response.status).toBe(200);
       expect((readManifest(options.catalog.manifestDir, 'demo')).status).toBe('valid');
       expect(readWorkflowJson(options.dataRoot, 'demo')).toEqual(apiFixture);
-      const body = await response.json() as { plugin: { id: string; hasManifest: boolean } };
+      const body = await response.json() as { plugin: WorkflowSpec & { hasManifest: boolean } };
       expect(body.plugin).toMatchObject({ id: 'demo', hasManifest: true });
+      expect(body.plugin.inputs).toEqual([expect.objectContaining({ id: 'text-1', hidden: true })]);
+      expect(body.plugin.outputs).toEqual([expect.objectContaining({ id: 'images-2', hidden: true })]);
     });
   });
 
@@ -135,6 +137,64 @@ describe('workflow plugin API', () => {
         { id: 1, type: 'CLIPTextEncode', pos: [120, 240], widgets_values: ['default prompt'], inputs: [] },
         { id: 2, type: 'SaveImage', pos: [300, 400], widgets_values: ['demo'], inputs: [{ name: 'images', link: 1 }] },
       ]);
+
+      const graphResponse = await fetch(`${baseUrl}/api/plugins/ui-demo/graph`);
+      expect(graphResponse.status).toBe(200);
+      const graph = (await graphResponse.json() as { graph: { nodes: Array<{ nodeId: string; x: number; y: number }> } }).graph;
+      expect(graph.nodes.find(node => node.nodeId === '1')).toMatchObject({ x: 120, y: 240 });
+    });
+  });
+
+  it('保存 API 格式工作流节点位置并在 graph 中恢复', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    await withServer(makeApp(options), async baseUrl => {
+      const importResponse = await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'api-position-demo.json', workflow: apiFixture }),
+      });
+      expect(importResponse.status).toBe(200);
+      const current = (await importResponse.json() as { plugin: WorkflowSpec }).plugin;
+
+      const response = await fetch(`${baseUrl}/api/plugins/api-position-demo/configure`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ manifest: current, nodePositions: { '1': { x: 640, y: 360 } }, positionsOnly: true }),
+      });
+      expect(response.status).toBe(200);
+      expect(readWorkflowJson(options.dataRoot, 'api-position-demo')?._minidream_node_positions).toEqual({ '1': { x: 640, y: 360 } });
+
+      const graphResponse = await fetch(`${baseUrl}/api/plugins/api-position-demo/graph`);
+      const graph = (await graphResponse.json() as { graph: { nodes: Array<{ nodeId: string; x: number; y: number }> } }).graph;
+      expect(graph.nodes.find(node => node.nodeId === '1')).toMatchObject({ x: 640, y: 360 });
+    });
+  });
+
+  it('仅保存节点位置时不被旧的失效参数映射拦截', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    await withServer(makeApp(options), async baseUrl => {
+      const importResponse = await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'stale-manifest.json', workflow: apiFixture }),
+      });
+      expect(importResponse.status).toBe(200);
+      const current = (await importResponse.json() as { plugin: WorkflowSpec }).plugin;
+      const stale = {
+        ...current,
+        params: [{ id: 'strength_model-145', label: 'strength_model', nodeId: '145', field: 'strength_model', type: 'FLOAT', default: 1 }],
+      } as WorkflowManifestRecord;
+      writeManifest(options.catalog.manifestDir, stale);
+
+      const response = await fetch(`${baseUrl}/api/plugins/stale-manifest/configure`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ manifest: stale, nodePositions: { '1': { x: 120, y: 80 } }, positionsOnly: true }),
+      });
+      expect(response.status).toBe(200);
+      expect(readWorkflowJson(options.dataRoot, 'stale-manifest')?._minidream_node_positions).toEqual({ '1': { x: 120, y: 80 } });
     });
   });
 
@@ -151,6 +211,45 @@ describe('workflow plugin API', () => {
       expect((await request({ ...apiFixture, '1': { ...apiFixture['1'], inputs: { text: 'changed' } } })).status).toBe(409);
       expect((await request({ ...apiFixture, '1': { ...apiFixture['1'], inputs: { text: 'changed' } } }, true)).status).toBe(200);
       expect(readWorkflowJson(options.dataRoot, 'demo')?.['1']?.inputs?.text).toBe('changed');
+    });
+  });
+
+  it('允许保存时移除输入输出候选，但必须保留至少一个可用输出', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    await withServer(makeApp(options), async baseUrl => {
+      const importResponse = await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'editable-interface.json', workflow: apiFixture }),
+      });
+      expect(importResponse.status).toBe(200);
+      const current = (await importResponse.json() as { plugin: WorkflowSpec }).plugin;
+
+      const withoutInput = {
+        ...current,
+        inputs: [],
+        outputs: current.outputs.map(output => ({ ...output, hidden: false })),
+      };
+      const removedInput = await fetch(`${baseUrl}/api/plugins/editable-interface`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(withoutInput),
+      });
+      expect(removedInput.status).toBe(200);
+
+      const saved = (readManifest(options.catalog.manifestDir, 'editable-interface') as any).manifest as WorkflowSpec;
+      expect(saved.inputs).toEqual([]);
+      expect(saved.outputs.some(output => !output.hidden)).toBe(true);
+
+      const withoutOutput = { ...saved, outputs: [] };
+      const removedOutput = await fetch(`${baseUrl}/api/plugins/editable-interface`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(withoutOutput),
+      });
+      expect(removedOutput.status).toBe(400);
+      expect((await removedOutput.json() as { error: string }).error).toContain('至少保留一个');
     });
   });
 
@@ -617,6 +716,95 @@ describe('workflow plugin API', () => {
       expect(body.analysis.inputs.length).toBeGreaterThan(0);
       expect(body.warnings.join(' ')).toContain('boom');
     });
+  });
+
+  it('允许广义输入输出接口，并拒绝内部输出类型', async () => {
+    const workflow = {
+      '1': { class_type: 'CustomSource', inputs: { text: 'hello', count: 3, enabled: true } },
+      '2': { class_type: 'CustomSink', inputs: { source: ['1', 0] } },
+    };
+    const info = {
+      CustomSource: { input: { required: { text: ['STRING'], count: ['INT'], enabled: ['BOOLEAN'] } }, output: ['STRING', 'INT', 'BOOLEAN'] },
+      CustomSink: { input: { required: { source: ['STRING'] } }, output: ['MODEL'] },
+    };
+    const valid = {
+      id: 'generic', name: 'Generic', inputs: [
+        { id: 'count', kind: 'number' as const, label: 'Count', nodeId: '1', field: 'count', classType: 'CustomSource' },
+        { id: 'enabled', kind: 'boolean' as const, label: 'Enabled', nodeId: '1', field: 'enabled', classType: 'CustomSource' },
+      ], params: [], outputs: [
+        { id: 'result', kind: 'text' as const, label: 'Result', nodeId: '1', classType: 'CustomSource', slot: 0, type: 'STRING' },
+      ],
+    } satisfies WorkflowSpec;
+    expect(await validateWorkflowManifest(valid, workflow, info, true)).toBeNull();
+    expect(await validateWorkflowManifest({ ...valid, outputs: [{ ...valid.outputs[0]!, kind: 'text', nodeId: '2', slot: 0, type: 'MODEL' }] }, workflow, info, true)).toMatch(/不存在|类型|输出/);
+  });
+
+  it('提供通用输入输出候选，并拒绝已连接输入与错误输出端口', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    const customWorkflow = {
+      '1': { class_type: 'CustomSource', inputs: { text: 'hello', count: 3 } },
+      '2': { class_type: 'CustomSink', inputs: { source: ['1', 0] } },
+    };
+    fs.writeFileSync(path.join(options.catalog.bundledDir, 'custom.json'), JSON.stringify(customWorkflow), 'utf8');
+    options.objectInfo = async () => ({
+      CustomSource: { input: { required: { text: ['STRING'], count: ['INT'] } }, output: ['STRING', 'INT'] },
+      CustomSink: { input: { required: { source: ['STRING'], extra: ['STRING'] } }, output: ['MODEL'] },
+    });
+    await withServer(makeApp(options), async baseUrl => {
+      const response = await fetch(`${baseUrl}/api/plugins/custom/interface-candidates`);
+      expect(response.status).toBe(200);
+      const body = await response.json() as { candidates: { inputs: Array<{ nodeId: string; field: string }>; outputs: Array<{ nodeId: string; slot: number; type: string }> } };
+      expect(body.candidates.inputs).toEqual(expect.arrayContaining([
+        expect.objectContaining({ nodeId: '1', field: 'text' }),
+        expect.objectContaining({ nodeId: '1', field: 'count' }),
+        expect.objectContaining({ nodeId: '2', field: 'extra' }),
+      ]));
+      expect(body.candidates.inputs).not.toEqual(expect.arrayContaining([expect.objectContaining({ nodeId: '2', field: 'source' })]));
+
+      const valid = {
+        id: 'custom', name: 'Custom', inputs: [], params: [],
+        outputs: [{ id: 'result', kind: 'text' as const, label: 'Result', nodeId: '1', classType: 'CustomSource', slot: 0, type: 'STRING' }],
+      } satisfies WorkflowSpec;
+      expect(await validateWorkflowManifest(valid, customWorkflow, await options.objectInfo!(), true)).toBeNull();
+      expect(await validateWorkflowManifest({ ...valid, outputs: [{ ...valid.outputs[0]!, slot: 1 }] }, customWorkflow, await options.objectInfo!(), true)).toMatch(/端口|类型/);
+      expect(await validateWorkflowManifest({ ...valid, inputs: [{ id: 'source', kind: 'text' as const, label: 'Source', nodeId: '2', field: 'source', classType: 'CustomSink' }] }, customWorkflow, await options.objectInfo!(), true)).toMatch(/连接|输入/);
+    });
+  });
+
+  it('保存配置使用非执行校验，不调用 ComfyUI 的 /prompt 或 /queue', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes('/prompt') || url.includes('/queue')) {
+        throw new Error(`保存校验不得调用 ComfyUI 执行接口：${url}`);
+      }
+      return originalFetch(input, init);
+    });
+    try {
+      await withServer(makeApp(options), async baseUrl => {
+        const imported = await fetch(`${baseUrl}/api/plugins/import`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ filename: 'demo.json', workflow: apiFixture }),
+        });
+        const current = (await imported.json() as { plugin: WorkflowSpec }).plugin;
+        const draft = { ...current, name: '非执行校验后的配置' };
+
+        const response = await fetch(`${baseUrl}/api/plugins/demo/configure`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ manifest: draft }),
+        });
+        const responseBody = await response.clone().text();
+        expect(response.status, responseBody).toBe(200);
+        const saved = readManifest(options.catalog.manifestDir, 'demo');
+        expect(saved.status).toBe('valid');
+        if (saved.status === 'valid') expect(saved.manifest.name).toBe('非执行校验后的配置');
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it('configure 校验通过后保存完整配置，并按覆盖标志联动 Skill/response', async () => {

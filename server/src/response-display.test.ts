@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shouldRenderLegacyAssistantContent } from '../../web/src/responseDisplay';
+import { shouldRenderLegacyAssistantContent } from '../../web/src/responseDisplay.js';
 
 describe('shouldRenderLegacyAssistantContent', () => {
   it('hides raw Agent content whenever a response protocol is active', () => {
