@@ -479,6 +479,26 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   const skillDirty = skillContent !== null && (skillSnapshot === null || skillContent !== skillSnapshot);
   const isDirty = mappingDirty || nodePositionDirty || responseDirty || skillDirty;
 
+  const discardChanges = () => {
+    if (savedSnapshot) setDraft(structuredClone(savedSnapshot));
+    if (responseSnapshot) setResponseProtocol(structuredClone(responseSnapshot));
+    else setResponseProtocol(null);
+    if (skillSnapshot !== null) setSkillContent(skillSnapshot);
+    else setSkillContent(null);
+    setNodePositions({});
+    setLocalError(null);
+    setResponseError(null);
+    setSkillError(null);
+    setAnalysis(null);
+    setAnalysisWarnings([]);
+    setAnalysisError(null);
+    if (toastTimer.current) {
+      clearTimeout(toastTimer.current);
+      toastTimer.current = null;
+    }
+    setToast(null);
+  };
+
   const save = async () => {
     if (toast === 'saving') return;
     const validation = validate();
@@ -725,7 +745,6 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
                 <button className="settings-btn" disabled={analysisLoading} onClick={() => void runAnalysis()}>{analysisLoading ? t('mapping.suggest.loading') : t('mapping.suggest.refresh')}</button>
                 {analysis && <button className="settings-btn primary" onClick={applySuggestions}>{t('mapping.suggest.apply')}</button>
                 }
-                {!analysisLoading && <button className="settings-btn" onClick={() => { setAnalysis(null); setAnalysisWarnings([]); setAnalysisError(null); }}>{t('common.cancel')}</button>}
               </div>
             </div>
             {analysisError && <p className="workflow-mapping-error">{analysisError}</p>}
@@ -800,9 +819,14 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
                     : t('common.unsavedPrompt')}
             </span>
             {toast !== 'saving' && toast !== 'saved' && (
-              <button className="settings-btn primary" disabled={saving || skillSaving || responseSaving} onClick={() => void save()}>
-                {t('common.save')}
-              </button>
+              <>
+                <button className="settings-btn primary" disabled={saving || skillSaving || responseSaving} onClick={() => void save()}>
+                  {t('common.save')}
+                </button>
+                <button className="settings-btn" onClick={discardChanges}>
+                  {t('common.cancel')}
+                </button>
+              </>
             )}
           </div>
         )}
@@ -810,7 +834,6 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
           <button className="settings-btn" onClick={() => { setRedetectNotice(true); onRedetect(); }}>{t('mapping.redetect')}</button>
           <button className="settings-btn" disabled={analysisLoading} onClick={() => void runAnalysis()}>{analysisLoading ? t('mapping.suggest.loading') : t('mapping.suggest.generate')}</button>
           <span />
-          <button className="settings-btn" onClick={onClose}>{t('common.cancel')}</button>
         </footer>
       </div>
     </div>
@@ -854,6 +877,15 @@ function WorkflowInterfaceView({ manifest, params, candidates, onAddInput, onAdd
   const { t } = useTranslation();
   const visibleInputs = manifest.inputs;
   const visibleOutputs = manifest.outputs;
+  const nodeTitles = new Map((candidates?.inputs ?? []).map(candidate => [candidate.nodeId, candidate.title ?? candidate.classType]));
+  for (const candidate of candidates?.outputs ?? []) {
+    if (!nodeTitles.has(candidate.nodeId)) nodeTitles.set(candidate.nodeId, candidate.title);
+  }
+  const sourceLabel = (nodeId: string, field?: string, slot?: number, fallback?: string) => {
+    const title = nodeTitles.get(nodeId) ?? fallback ?? nodeId;
+    const port = field ?? (slot !== undefined ? `输出 ${slot}` : '');
+    return `${title}${port ? ` · ${port}` : ''}（${nodeId}）`;
+  };
   const availableInputs = (candidates?.inputs ?? []).filter(candidate => !manifest.inputs.some(item => item.nodeId === candidate.nodeId && item.field === candidate.field));
   const availableOutputs = (candidates?.outputs ?? []).filter(candidate => !manifest.outputs.some(item => item.nodeId === candidate.nodeId && item.slot === candidate.slot));
 
@@ -911,7 +943,7 @@ function WorkflowInterfaceView({ manifest, params, candidates, onAddInput, onAdd
                     </div>
                   </div>
                   <input className="workflow-interface-description-input" value={item.description ?? ''} onChange={event => onUpdateInput(item.id, { description: event.target.value })} placeholder={t('mapping.interface.descriptionPlaceholder')} aria-label={`${t('mapping.interface.description')}: ${item.label}`} />
-                  <em>{item.nodeId}.{item.field}</em>
+                  <em>{sourceLabel(item.nodeId, item.field, undefined, item.classType)}</em>
                 </div>
               ))}
             </section>
@@ -956,7 +988,7 @@ function WorkflowInterfaceView({ manifest, params, candidates, onAddInput, onAdd
                     </div>
                   </div>
                   <input className="workflow-interface-description-input" value={item.description ?? ''} onChange={event => onUpdateOutput(item.id, { description: event.target.value })} placeholder={t('mapping.interface.descriptionPlaceholder')} aria-label={`${t('mapping.interface.description')}: ${item.label}`} />
-                  <em>{item.nodeId}{item.slot !== undefined ? `.${item.slot}` : ''}</em>
+                  <em>{sourceLabel(item.nodeId, undefined, item.slot, item.classType)}</em>
                 </div>
               ))}
             </section>

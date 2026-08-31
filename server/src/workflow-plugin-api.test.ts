@@ -718,6 +718,89 @@ describe('workflow plugin API', () => {
     });
   });
 
+  it('保存时自动移除旧版已连接的 text 输入映射', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    options.objectInfo = async () => ({
+      ...objectInfo,
+      'Text Multiline': { input: { required: { text: ['STRING'] } } },
+      CLIPLoader: { input: { required: { clip_name: ['STRING'] } } },
+    });
+    const connectedWorkflow = {
+      '1': { class_type: 'CLIPTextEncode', inputs: { text: ['5', 0], clip: ['3', 1] } },
+      '2': { class_type: 'SaveImage', inputs: { images: ['4', 0], filename_prefix: 'demo' } },
+      '3': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'model.safetensors' } },
+      '4': { class_type: 'KSampler', inputs: { model: ['3', 0], positive: ['1', 0], steps: 20, cfg: 7 } },
+      '5': { class_type: 'Text Multiline', inputs: { text: 'default prompt' } },
+    };
+    await withServer(makeApp(options), async baseUrl => {
+      const imported = await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'legacy-connected-text.json', workflow: connectedWorkflow }),
+      });
+      expect(imported.status).toBe(200);
+      const current = (await imported.json() as { plugin: WorkflowSpec }).plugin;
+      const stale = {
+        ...current,
+        name: '修复旧配置',
+        inputs: [{ id: 'text-1', kind: 'text' as const, label: '提示词', nodeId: '1', field: 'text', classType: 'CLIPTextEncode' }],
+      } as WorkflowManifestRecord;
+      writeManifest(options.catalog.manifestDir, stale);
+
+      const saved = await fetch(`${baseUrl}/api/plugins/legacy-connected-text`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(stale),
+      });
+      const savedBody = await saved.text();
+      expect(saved.status, savedBody).toBe(200);
+      const persisted = readManifest(options.catalog.manifestDir, 'legacy-connected-text');
+      expect(persisted.status).toBe('valid');
+      if (persisted.status === 'valid') {
+        expect(persisted.manifest.inputs).toEqual([]);
+        expect(persisted.manifest.name).toBe('修复旧配置');
+      }
+    });
+  });
+
+  it('仅保存节点位置时也会清理旧版已连接的 text 输入映射', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    options.objectInfo = async () => ({
+      ...objectInfo,
+      'Text Multiline': { input: { required: { text: ['STRING'] } } },
+      CLIPLoader: { input: { required: { clip_name: ['STRING'] } } },
+    });
+    const connectedWorkflow = {
+      '1': { class_type: 'CLIPTextEncode', inputs: { text: ['5', 0], clip: ['3', 1] } },
+      '2': { class_type: 'SaveImage', inputs: { images: ['4', 0], filename_prefix: 'demo' } },
+      '3': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'model.safetensors' } },
+      '4': { class_type: 'KSampler', inputs: { model: ['3', 0], positive: ['1', 0], steps: 20, cfg: 7 } },
+      '5': { class_type: 'Text Multiline', inputs: { text: 'default prompt' } },
+    };
+    await withServer(makeApp(options), async baseUrl => {
+      const imported = await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'legacy-position-text.json', workflow: connectedWorkflow }),
+      });
+      expect(imported.status).toBe(200);
+      const current = (await imported.json() as { plugin: WorkflowSpec }).plugin;
+      const stale = {
+        ...current,
+        inputs: [{ id: 'text-1', kind: 'text' as const, label: '提示词', nodeId: '1', field: 'text', classType: 'CLIPTextEncode' }],
+      } as WorkflowManifestRecord;
+      writeManifest(options.catalog.manifestDir, stale);
+
+      const saved = await fetch(`${baseUrl}/api/plugins/legacy-position-text/configure`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ manifest: stale, nodePositions: { '1': { x: 200, y: 100 } }, positionsOnly: true }),
+      });
+      const savedBody = await saved.text();
+      expect(saved.status, savedBody).toBe(200);
+      const persisted = readManifest(options.catalog.manifestDir, 'legacy-position-text');
+      expect(persisted.status).toBe('valid');
+      if (persisted.status === 'valid') expect(persisted.manifest.inputs).toEqual([]);
+    });
+  });
+
   it('允许广义输入输出接口，并拒绝内部输出类型', async () => {
     const workflow = {
       '1': { class_type: 'CustomSource', inputs: { text: 'hello', count: 3, enabled: true } },

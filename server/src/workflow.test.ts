@@ -724,6 +724,31 @@ describe('workflow 引擎（通用自动适配）', () => {
     expect(byField.sampler_name?.options).toEqual(['euler', 'dpmpp_2m']);
   });
 
+  it('不会把已连接的 CLIPTextEncode.text 识别为可注入输入', async () => {
+    const connectedTextWorkflow = {
+      '477': {
+        class_type: 'CLIPTextEncode',
+        inputs: { text: ['553', 0], clip: ['487', 1] },
+      },
+      '553': {
+        class_type: 'Text Multiline',
+        inputs: { text: '模板提示词' },
+      },
+      '487': {
+        class_type: 'CLIPLoader',
+        inputs: { clip_name: 'clip.safetensors' },
+      },
+      '5': {
+        class_type: 'SaveImage',
+        inputs: { images: ['477', 0] },
+      },
+    };
+    const spec = await workflow.introspectWorkflow(connectedTextWorkflow, OBJECT_INFO);
+    expect(spec.inputs).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: '477', field: 'text' }),
+    ]));
+  });
+
   it('UI 格式提示词注入正向 CLIPTextEncode 节点', async () => {
     const spec = await workflow.introspectWorkflow(uiFixtureJson, OBJECT_INFO);
     const prompt = await workflow.buildPrompt(spec, uiFixtureJson, { prompt: '赛博朋克城市夜景' });

@@ -842,7 +842,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
       const markedField = Object.keys(nodeInputs).find(
         f => typeof nodeInputs[f] === 'string' && /^(text|prompt|value|string)$/i.test(f),
       );
-      if (markedField) {
+      if (markedField && !Array.isArray(nodeInputs[markedField])) {
         inputs.push({
           id: `text-${nodeId}`,
           kind: 'text',
@@ -860,6 +860,8 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
 
     // 文字输入
     if (TEXT_INPUT_CLASSES.test(cls)) {
+      // CLIPTextEncode 的 text 若来自上游连线，只是内部中间节点，不能作为用户注入入口。
+      if (Array.isArray(nodeInputs.text)) continue;
       inputs.push({
         id: `text-${nodeId}`,
         kind: 'text',

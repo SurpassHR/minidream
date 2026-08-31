@@ -147,8 +147,14 @@ function nodeFields(json: Record<string, any>, objectInfoData: Record<string, an
     const classType = String((node as any).class_type ?? '');
     const info = objectInfoData[classType]?.input ?? {};
     const defs = { ...(info.required ?? {}), ...(info.optional ?? {}) } as Record<string, unknown>;
-    const names = new Set([...Object.keys(defs), ...Object.keys((node as any).inputs ?? {})]);
-    if (classType === 'Power Lora Loader (rgthree)' && Object.keys((node as any).inputs ?? {}).some(field => /^lora_\d+$/.test(field))) {
+    const nodeInputs = (node as any).inputs ?? {};
+    const names = new Set([...Object.keys(defs), ...Object.keys(nodeInputs)]);
+    // Power Lora Loader 的 lora 是节点视图暴露的逻辑字段：
+    // UI 格式通常只有“➕ Add Lora”占位字段，API 格式可能保存为 lora_N 槽位，二者都应映射为 lora。
+    if (classType === 'Power Lora Loader (rgthree)' && (
+      Object.keys(nodeInputs).some(field => /^lora_\d+$/.test(field))
+      || Object.prototype.hasOwnProperty.call(nodeInputs, '➕ Add Lora')
+    )) {
       names.add('lora');
     }
     fields.set(id, names);
@@ -174,6 +180,28 @@ export function validateManifestStructure(previous: WorkflowSpec, next: Workflow
     }
   }
   return null;
+}
+
+function removeLegacyConnectedInputs<T extends WorkflowSpec>(
+  manifest: T,
+  json: Record<string, any>,
+  objectInfoData: Record<string, any>,
+): T {
+  const api = isUiFormat(json)
+    ? convertUiToApi(json, objectInfoData)
+    : Object.fromEntries(Object.entries(json).filter(([id]) => id !== '_meta' && id !== '_minidream_node_positions'));
+  const candidates = new Set(listWorkflowInterfaceCandidates(json, objectInfoData).inputs.map(candidate => `${candidate.nodeId}:${candidate.field}`));
+  const inputs = (manifest.inputs ?? []).filter(input => {
+    const node = api[input.nodeId] as { class_type?: string; inputs?: Record<string, unknown> } | undefined;
+    const value = node?.inputs?.[input.field];
+    const isLegacyConnectedText = input.kind === 'text'
+      && node
+      && input.classType === node.class_type
+      && Array.isArray(value)
+      && !candidates.has(`${input.nodeId}:${input.field}`);
+    return !isLegacyConnectedText;
+  });
+  return inputs.length === (manifest.inputs ?? []).length ? manifest : { ...manifest, inputs } as T;
 }
 
 export async function validateWorkflowManifest(
@@ -263,6 +291,19 @@ export function validateParamMappings(manifest: WorkflowSpec, graph: WorkflowGra
       if (!fields.some(candidate => candidate.nodeId === param.nodeId)) {
         return `params 映射 ${param.id} 指向不存在节点：${param.nodeId}`;
       }
+      continue;
+    }
+    const node = graph.nodes.find(candidate => candidate.nodeId === param.nodeId);
+    const nodeFields = fields.filter(candidate => candidate.nodeId === param.nodeId);
+    // Power Lora Loader 的 `lora` 是节点视图合成的逻辑字段，源 JSON 实际保存为 lora_1、lora_2…。
+    // 保存校验不能把逻辑字段当成普通 widget 字段查找，否则合法的 lora-<nodeId> 会被误报为不存在。
+    if (
+      param.field === 'lora'
+      && param.type === 'combo'
+      && node?.classType === 'Power Lora Loader (rgthree)'
+      && nodeFields.some(candidate => /^lora_\d+$/.test(candidate.field))
+    ) {
+      if (param.id !== `lora-${param.nodeId}`) return `params 映射 ${param.id} 的 ID 不符合字段映射：应为 lora-${param.nodeId}`;
       continue;
     }
     const field = fields.find(candidate => candidate.nodeId === param.nodeId && candidate.field === param.field);
@@ -619,36 +660,38 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           const objectInfoData = await objectInfoOf(options);
           const previous = readManifest(options.catalog.manifestDir, id);
           const validPositions = validNodePositions(body.nodePositions);
-          // 布局保存也必须验证当前工作流结构仍可执行；该校验只在本地构建 prompt，
-          // 不会向 ComfyUI 提交任务或触发生成。
+          // 即使只保存节点位置，也先兼容清理旧版失效输入映射，避免旧 manifest 阻断布局保存。
           if (previous.status === 'valid' && body.positionsOnly === true && Object.keys(validPositions).length > 0) {
-            await validateConfiguredWorkflow(previous.manifest, source.json, objectInfoData);
+            const cleanedPrevious = removeLegacyConnectedInputs(previous.manifest, source.json, objectInfoData);
+            await validateConfiguredWorkflow(cleanedPrevious, source.json, objectInfoData);
+            if (cleanedPrevious !== previous.manifest) writeManifest(options.catalog.manifestDir, cleanedPrevious);
             updateWorkflowNodePositions(sourceWorkflowPath(options, source), validPositions);
             options.invalidate();
-            res.json({ ok: true, plugin: previous.manifest });
+            res.json({ ok: true, plugin: cleanedPrevious });
             return;
           }
           const previousSpec = previous.status === 'valid'
             ? previous.manifest
             : await introspectWorkflow(source.json, objectInfoData);
-          const structureError = validateManifestStructure(previousSpec, manifest);
+          const cleanedManifest = removeLegacyConnectedInputs(manifest, source.json, objectInfoData);
+          const structureError = validateManifestStructure(previousSpec, cleanedManifest);
           if (structureError) {
             jsonError(res, 400, structureError);
             return;
           }
           const graph = buildWorkflowGraph(source.json, objectInfoData, previousSpec);
-          const paramError = validateParamMappings(manifest, graph);
+          const paramError = validateParamMappings(cleanedManifest, graph);
           if (paramError) {
             jsonError(res, 400, paramError);
             return;
           }
           const requireOutput = previous.status === 'valid' && previous.manifest.outputs.some(output => !output.hidden);
-          const manifestError = await validateWorkflowManifest(manifest, source.json, objectInfoData, requireOutput);
+          const manifestError = await validateWorkflowManifest(cleanedManifest, source.json, objectInfoData, requireOutput);
           if (manifestError) {
             jsonError(res, 400, manifestError);
             return;
           }
-          const normalized: WorkflowManifestRecord = { ...manifest, source: sourceFor(source), hasManifest: true, editable: true };
+          const normalized: WorkflowManifestRecord = { ...cleanedManifest, source: sourceFor(source), hasManifest: true, editable: true };
           await validateConfiguredWorkflow(normalized, source.json, objectInfoData);
 
           // 预生成阶段：LLM Skill 或默认协议的任何失败都发生在写盘之前
@@ -706,25 +749,26 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           const previousSpec = previous.status === 'valid'
             ? previous.manifest
             : await introspectWorkflow(source.json, await objectInfoOf(options));
-          const structureError = validateManifestStructure(previousSpec, manifest);
+          const objectInfoData = await objectInfoOf(options);
+          const cleanedManifest = removeLegacyConnectedInputs(manifest, source.json, objectInfoData);
+          const structureError = validateManifestStructure(previousSpec, cleanedManifest);
           if (structureError) {
             jsonError(res, 400, structureError);
             return;
           }
-          const objectInfoData = await objectInfoOf(options);
           const graph = buildWorkflowGraph(source.json, objectInfoData, previousSpec);
-          const paramError = validateParamMappings(manifest, graph);
+          const paramError = validateParamMappings(cleanedManifest, graph);
           if (paramError) {
             jsonError(res, 400, paramError);
             return;
           }
           const requireOutput = previous.status === 'valid' && previous.manifest.outputs.some(output => !output.hidden);
-          const error = await validateWorkflowManifest(manifest, source.json, objectInfoData, requireOutput);
+          const error = await validateWorkflowManifest(cleanedManifest, source.json, objectInfoData, requireOutput);
           if (error) {
             jsonError(res, 400, error);
             return;
           }
-          const normalized = { ...manifest, source: sourceFor(source), hasManifest: true, editable: true };
+          const normalized = { ...cleanedManifest, source: sourceFor(source), hasManifest: true, editable: true };
           await validateConfiguredWorkflow(normalized, source.json, objectInfoData);
           writeManifest(options.catalog.manifestDir, normalized);
           if (isUiFormat(source.json)) {
