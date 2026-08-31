@@ -47,34 +47,6 @@
   gap: 8px;
 }
 
-.workflow-mapping-overlay.fullscreen {
-  padding: 0;
-}
-
-.workflow-mapping-modal.fullscreen {
-  width: 100%;
-  height: 100%;
-  min-height: 100vh;
-  max-height: none;
-  border: 0;
-  border-radius: 0;
-}
-
-.workflow-mapping-modal.fullscreen .workflow-mapping-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 0;
-  overflow: hidden;
-}
-
-.workflow-mapping-modal.fullscreen .workflow-graph-shell {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  border: 0;
-  border-radius: 0;
-}
-
 .workflow-mapping-tabs {
   display: flex;
   gap: 4px;

@@ -9,6 +9,14 @@
   background: var(--graph-canvas);
 }
 
+/* 全屏 canvas modal 内：去掉 shell 边框，占满整个 modal */
+.workflow-graph-fullscreen .workflow-graph-shell {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
 .workflow-graph-toolbar {
   display: flex;
   align-items: center;
@@ -20,6 +28,11 @@
   color: var(--text-secondary);
   background: var(--bg-card);
   font-size: 12px;
+}
+
+/* 全屏 canvas modal 内：给右上角关闭按钮让位 */
+.workflow-graph-fullscreen .workflow-graph-toolbar {
+  padding-right: 48px;
 }
 
 .workflow-graph-toolbar-actions {

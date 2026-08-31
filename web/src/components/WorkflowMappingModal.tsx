@@ -73,7 +73,8 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [view, setView] = useState<'node' | 'form' | 'skill' | 'response'>('node');
   const [editingParamId, setEditingParamId] = useState<string | null>(null);
-  const [fullscreen, setFullscreen] = useState(false);
+  // 节点视图全屏：打开独立的全屏 canvas modal（圆角、约 99% 屏幕、右上角关闭、Esc 关闭）
+  const [graphFullscreen, setGraphFullscreen] = useState(false);
   const [graph, setGraph] = useState<WorkflowGraph | null>(null);
   const [graphLoading, setGraphLoading] = useState(true);
   const [graphError, setGraphError] = useState<string | null>(null);
@@ -560,9 +561,23 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     }
   };
 
+  // 全屏 canvas modal 支持 Esc 关闭；捕获阶段优先处理并阻止冒泡，避免同时关掉底层设置弹窗
+  useEffect(() => {
+    if (!graphFullscreen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopImmediatePropagation();
+        setGraphFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [graphFullscreen]);
+
   return (
-    <div className={`workflow-mapping-overlay${fullscreen ? ' fullscreen' : ''}`} onClick={onClose}>
-      <div className={`workflow-mapping-modal${fullscreen ? ' fullscreen' : ''}`} role="dialog" aria-modal="true" aria-label={t('mapping.ariaLabel')} onClick={event => event.stopPropagation()}>
+    <>
+    <div className="workflow-mapping-overlay" onClick={onClose}>
+      <div className="workflow-mapping-modal" role="dialog" aria-modal="true" aria-label={t('mapping.ariaLabel')} onClick={event => event.stopPropagation()}>
         <header className="workflow-mapping-head">
           <div>
             <span className="settings-section-kicker">WORKFLOW PLUGIN</span>
@@ -570,7 +585,6 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
             <input className="settings-input" value={draft.description ?? ''} onChange={event => update({ description: event.target.value })} placeholder={t('mapping.descPlaceholder')} />
           </div>
           <div className="workflow-mapping-head-actions">
-            {view === 'node' && <button className="settings-btn" onClick={() => setFullscreen(value => !value)}>{fullscreen ? t('common.exitFullscreen') : t('common.fullscreen')}</button>}
             <button className="settings-close" onClick={onClose} aria-label={t('common.close')}>×</button>
           </div>
         </header>
@@ -582,7 +596,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
         </div>
         <div className="workflow-mapping-body">
           {view === 'node' ? (
-            <WorkflowNodeGraph graph={displayGraph} loading={graphLoading} error={graphError} onRetry={() => void loadGraph(draft.id)}            onToggleParam={toggleField} onChangeParamDefault={updateParamDefault} onRemoveParam={removePinnedParam} onChangeNodePosition={updateNodePosition} onToggleNodeBypass={node => setDraft(current => setNodeBypass(current, node.nodeId, !node.bypassed, node.title))} onOpenParamSettings={setEditingParamId} onFullscreen={() => setFullscreen(value => !value)} fullscreen={fullscreen} />
+            <WorkflowNodeGraph graph={displayGraph} loading={graphLoading} error={graphError} onRetry={() => void loadGraph(draft.id)}            onToggleParam={toggleField} onChangeParamDefault={updateParamDefault} onRemoveParam={removePinnedParam} onChangeNodePosition={updateNodePosition} onToggleNodeBypass={node => setDraft(current => setNodeBypass(current, node.nodeId, !node.bypassed, node.title))} onOpenParamSettings={setEditingParamId} onFullscreen={() => setGraphFullscreen(true)} />
           ) : view === 'skill' ? (
             <section className="workflow-mapping-section workflow-skill-view">
               <div className="workflow-mapping-section-head">
@@ -837,6 +851,26 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
         </footer>
       </div>
     </div>
+    {graphFullscreen && (
+      <div className="workflow-graph-fullscreen-overlay" onClick={() => setGraphFullscreen(false)}>
+        <div className="workflow-graph-fullscreen" role="dialog" aria-modal="true" aria-label={t('mapping.ariaLabel')} onClick={event => event.stopPropagation()}>
+          <button className="workflow-graph-fullscreen-close" onClick={() => setGraphFullscreen(false)} aria-label={t('common.close')}>×</button>
+          <WorkflowNodeGraph
+            graph={displayGraph}
+            loading={graphLoading}
+            error={graphError}
+            onRetry={() => void loadGraph(draft.id)}
+            onToggleParam={toggleField}
+            onChangeParamDefault={updateParamDefault}
+            onRemoveParam={removePinnedParam}
+            onChangeNodePosition={updateNodePosition}
+            onToggleNodeBypass={node => setDraft(current => setNodeBypass(current, node.nodeId, !node.bypassed, node.title))}
+            onOpenParamSettings={setEditingParamId}
+          />
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
