@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { WorkflowSpec } from './workflow.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const WORKFLOW_PLUGIN_DATA_DIR = path.resolve(__dirname, '../data/workflow-plugins');
+import { DATA_ROOT } from './paths.js';
+
+export const WORKFLOW_PLUGIN_DATA_DIR = path.join(DATA_ROOT, 'workflow-plugins');
 export const IMPORTED_WORKFLOWS_DIR = path.join(WORKFLOW_PLUGIN_DATA_DIR, 'workflows');
 export const MANIFESTS_DIR = WORKFLOW_PLUGIN_DATA_DIR;
 

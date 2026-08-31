@@ -14,6 +14,29 @@
 - `POST /api/settings/comfyui` 同时写文件 + 更新内存 + 清缓存 + 健康检查
 - 不要使用 localhost 作为存储配置的手段
 
+## 验证隔离（沙箱运行）
+
+- 运行中的应用把项目文件当作数据库：插件清单在 `server/data/workflow-plugins/`，Skill/response 在 `.pi/skills/`，节点位置会写回 `server/workflows/*.json`，设置/会话在 `server/data/`。**禁止用浏览器（Playwright）对着真实 dev server 点保存/生成后，再用 `git checkout` 整文件还原**——那会丢掉用户提交之外的配置（曾因此反复回退用户配置）。
+- 需要浏览器验证保存/生成流程时，用沙箱根目录起一个隔离的 dev server，验证产物只落在沙箱里：
+  - `MINIDREAM_DATA_ROOT=/tmp/minidream-sandbox/data`（settings/tasks/sessions/drafts/插件 manifest）
+  - `MINIDREAM_SKILLS_ROOT=/tmp/minidream-sandbox/skills`（SKILL.md / response.json）
+  - `MINIDREAM_BUNDLED_WORKFLOWS=/tmp/minidream-sandbox/workflows`（内置工作流源 JSON 与节点位置写入；需先把 `server/workflows/` 拷过去）
+  - 路径解析集中在 `server/src/paths.ts`（`resolveRuntimeRoot`），未设置环境变量时与旧行为完全一致。
+- 起沙箱的具体命令（后端 `PORT` 环境变量、前端 `API_PROXY_TARGET` 覆盖 vite proxy，见 `web/vite.config.ts`）：
+  ```bash
+  rm -rf /tmp/minidream-sandbox && mkdir -p /tmp/minidream-sandbox
+  cp -r server/workflows /tmp/minidream-sandbox/workflows
+  cp -r server/data /tmp/minidream-sandbox/data
+  cp -r .pi/skills /tmp/minidream-sandbox/skills
+  PORT=4778 MINIDREAM_DATA_ROOT=/tmp/minidream-sandbox/data \
+    MINIDREAM_SKILLS_ROOT=/tmp/minidream-sandbox/skills \
+    MINIDREAM_BUNDLED_WORKFLOWS=/tmp/minidream-sandbox/workflows \
+    pnpm --filter server exec tsx src/index.ts   # 沙箱后端 :4778
+  API_PROXY_TARGET=http://127.0.0.1:4778 pnpm --filter web exec vite --port 5174   # 沙箱前端 :5174
+  # Playwright 连 http://localhost:5174 做验证；验证完直接删 /tmp/minidream-sandbox
+  ```
+- **默认只用沙箱验证，绝不连用户正在运行的真实 dev server（5173/4777）做保存/生成类验证**；万一必须碰真实文件：先按字节备份，验证后 diff 还原，绝不整文件回滚。
+
 ## Director-Copilot Skill 维护
 
 - 项目专属 Agent 约束文件：`.pi/skills/director-copilot/SKILL.md`，由 `server/src/agent/bridge.ts` 通过 `--skill` 注入每次对话

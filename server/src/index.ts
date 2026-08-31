@@ -36,6 +36,7 @@ import type { TaskItem } from './tasks/types.js';
 import { createDirectorMCPServer, type McpServerInstance, type WorkflowRoute } from './mcp/server.js';
 import { createWorkflowPluginRouter } from './workflow-plugin-api.js';
 import { migrateLegacyPluginConfig } from './workflow-plugin-migration.js';
+import { DATA_ROOT, BUNDLED_WORKFLOWS_DIR } from './paths.js';
 import { IMPORTED_WORKFLOWS_DIR, MANIFESTS_DIR, WORKFLOW_PLUGIN_DATA_DIR } from './workflow-plugin-store.js';
 import { ensurePluginSkills, DEFAULT_PLUGIN_RESPONSE_POLICY, filterPluginGenerationArgs, pluginResponseAllows, readPluginResponsePolicy, PLUGIN_SKILLS_DIR, type PluginResponsePolicy } from './workflow-skill.js';
 import { readPluginResponseProtocol, renderResponseBlocks, responseProtocolAllowsPrompt, syncPluginResponseProtocol, validatePluginResponseProtocol, type PluginResponseContext, type PluginResponseProtocol, type RenderedResponseBlock, type ResponseTiming } from './workflow-response.js';
@@ -69,16 +70,16 @@ app.use('/assets', express.static(path.resolve(__dirname, '../assets')));
 
 /* ---------------- 统一任务队列与 MCP Server ---------------- */
 
-const SETTINGS_FILE = path.resolve(__dirname, '../data/settings.json');
-const TASKS_FILE = path.resolve(__dirname, '../data/tasks.json');
-const SESSIONS_FILE = path.resolve(__dirname, '../data/sessions.json');
-const DRAFTS_INDEX_FILE = path.resolve(__dirname, '../data/drafts.json');
+const SETTINGS_FILE = path.join(DATA_ROOT, 'settings.json');
+const TASKS_FILE = path.join(DATA_ROOT, 'tasks.json');
+const SESSIONS_FILE = path.join(DATA_ROOT, 'sessions.json');
+const DRAFTS_INDEX_FILE = path.join(DATA_ROOT, 'drafts.json');
 const initialSettings = readSettings(SETTINGS_FILE);
 
 // 将旧版全局 combo 配置一次性迁移到工作流 manifest；后续由节点视图维护。
 // 在创建任务队列前完成，避免启动早期任务读取到旧配置或未迁移的 manifest。
 await migrateLegacyPluginConfig(SETTINGS_FILE, {
-  bundledDir: path.resolve(__dirname, '../workflows'),
+  bundledDir: BUNDLED_WORKFLOWS_DIR,
   importedDir: IMPORTED_WORKFLOWS_DIR,
   manifestDir: MANIFESTS_DIR,
   introspect: async json => {
@@ -137,7 +138,7 @@ function taskForResponse(task: TaskItem, policy: PluginResponsePolicy): TaskItem
 // 工作流插件导入、映射清单与节点候选 API
 app.use(createWorkflowPluginRouter({
   catalog: {
-    bundledDir: path.resolve(__dirname, '../workflows'),
+    bundledDir: BUNDLED_WORKFLOWS_DIR,
     importedDir: IMPORTED_WORKFLOWS_DIR,
     manifestDir: MANIFESTS_DIR,
     introspect: async (json) => {
