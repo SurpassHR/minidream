@@ -7,6 +7,7 @@ import {
   deleteManifest,
   listManifests,
   readManifest,
+  updateWorkflowNodePositions,
   writeManifest,
   writeWorkflowJson,
   type WorkflowManifestRecord,
@@ -67,6 +68,30 @@ describe('workflow plugin manifest store', () => {
     expect(listManifests(root)).toEqual(['valid_plugin']);
     expect(() => readManifest(root, '../outside')).toThrow(/非法工作流插件 ID/);
     expect(() => writeManifest(root, makeManifest('../outside'))).toThrow(/非法工作流插件 ID/);
+  });
+
+  it('只更新 UI 源 JSON 中被拖动节点的位置并保留其他内容', () => {
+    const root = makeRoot();
+    const file = path.join(root, 'workflow.json');
+    const workflow = {
+      _meta: { name: 'demo' },
+      nodes: [
+        { id: 1, type: 'LoadImage', pos: [10, 20], widgets_values: ['a.png'] },
+        { id: 2, type: 'SaveImage', pos: [300, 400], widgets_values: [], mode: 0 },
+      ],
+      links: [[1, 1, 0, 2, 0, 'IMAGE']],
+    };
+    fs.writeFileSync(file, JSON.stringify(workflow, null, 2), 'utf8');
+
+    updateWorkflowNodePositions(file, { '1': { x: 120, y: 240 }, 'missing': { x: 1, y: 2 } });
+
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as typeof workflow;
+    expect(saved.nodes).toEqual([
+      { id: 1, type: 'LoadImage', pos: [120, 240], widgets_values: ['a.png'] },
+      { id: 2, type: 'SaveImage', pos: [300, 400], widgets_values: [], mode: 0 },
+    ]);
+    expect(saved.links).toEqual(workflow.links);
+    expect(fs.existsSync(`${file}.tmp`)).toBe(false);
   });
 
   it('删除清单和导入工作流时不影响其他插件', () => {

@@ -17,6 +17,7 @@ import {
   type ComfyStatus,
   type FabricatedHistoryMessage,
   type WorkflowManifest,
+  type WorkflowNodePositions,
   type WorkflowParam,
   type WorkflowPluginRecord,
   type WorkflowSpec,
@@ -248,13 +249,13 @@ export default function SettingsModal({
     setMappingTarget(plugin as WorkflowManifest);
   };
 
-  /** 保存映射：成功返回 true 并保持弹窗打开（由弹窗闪现“已保存”反馈），失败返回 false */
-  const handleMappingSave = async (manifest: WorkflowManifest): Promise<boolean> => {
+  /** 提交映射：成功返回 true 并保持弹窗打开（由弹窗闪现“已保存”反馈），失败返回 false */
+  const handleMappingSave = async (manifest: WorkflowManifest, nodePositions?: WorkflowNodePositions): Promise<boolean> => {
     setMappingSaving(true);
     setMappingError(null);
     try {
       // 保存走确认事务端点：同一套校验，且默认保留自定义 Skill/回复协议
-      const result = await configureWorkflowPlugin(manifest.id, manifest);
+      const result = await configureWorkflowPlugin(manifest.id, manifest, { nodePositions });
       setPluginRecords(records => records.map(record => record.id === result.plugin.id ? result.plugin : record));
       onRefreshWorkflows?.();
       return true;

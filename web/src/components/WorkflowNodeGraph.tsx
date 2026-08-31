@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { WorkflowGraph, WorkflowGraphField, WorkflowGraphNode } from '../api';
+import type { WorkflowGraph, WorkflowGraphField, WorkflowGraphNode, WorkflowNodePosition } from '../api';
 import { dragTargetForMouse, moveWorkflowNode, positionsFromGraph, type WorkflowNodePositions } from './workflowNodeLayout';
 import FilterSelect from './FilterSelect';
 import MultiFilterSelect, { type MultiSelectItem } from './MultiFilterSelect';
@@ -13,6 +13,7 @@ interface Props {
   onToggleParam: (field: WorkflowGraphField) => void;
   onChangeParamDefault: (field: WorkflowGraphField, value: unknown) => void;
   onRemoveParam?: (field: WorkflowGraphField) => void;
+  onChangeNodePosition?: (nodeId: string, position: WorkflowNodePosition) => void;
   onRetry?: () => void;
   onFullscreen?: () => void;
   fullscreen?: boolean;
@@ -55,7 +56,7 @@ function fieldKey(nodeId: string, field: string): string {
   return `${nodeId}:${field}`;
 }
 
-export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam, onChangeParamDefault, onRemoveParam, onRetry, onFullscreen, fullscreen }: Props) {
+export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam, onChangeParamDefault, onRemoveParam, onChangeNodePosition, onRetry, onFullscreen, fullscreen }: Props) {
   const { t } = useTranslation();
   const [scale, setScale] = useState(0.72);
   const [pan, setPan] = useState({ x: 24, y: 24 });
@@ -113,7 +114,10 @@ export default function WorkflowNodeGraph({ graph, loading, error, onToggleParam
     const deltaX = clientX - drag.x;
     const deltaY = clientY - drag.y;
     if (drag.target === 'node' && drag.nodeId) {
-      setPositions(moveWorkflowNode(drag.positions, drag.nodeId, deltaX / scale, deltaY / scale));
+      const next = moveWorkflowNode(drag.positions, drag.nodeId, deltaX / scale, deltaY / scale);
+      setPositions(next);
+      const position = next[drag.nodeId];
+      if (position) onChangeNodePosition?.(drag.nodeId, position);
       return;
     }
     setPan({ x: drag.panX + deltaX, y: drag.panY + deltaY });

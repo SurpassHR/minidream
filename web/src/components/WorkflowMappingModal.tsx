@@ -15,6 +15,8 @@ import {
   type WorkflowGraph,
   type WorkflowGraphField,
   type WorkflowManifest,
+  type WorkflowNodePosition,
+  type WorkflowNodePositions,
   type PluginSkillChatMessage,
   type WorkflowParam,
 } from '../api';
@@ -27,7 +29,7 @@ interface Props {
   saving?: boolean;
   error?: string | null;
   /** 返回是否保存成功（成功时不自动关闭，由弹窗闪现“已保存”反馈） */
-  onSave: (manifest: WorkflowManifest) => Promise<boolean>;
+  onSave: (manifest: WorkflowManifest, nodePositions?: WorkflowNodePositions) => Promise<boolean>;
   onRedetect: () => void;
   onClose: () => void;
 }
@@ -73,9 +75,12 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   const [graph, setGraph] = useState<WorkflowGraph | null>(null);
   const [graphLoading, setGraphLoading] = useState(true);
   const [graphError, setGraphError] = useState<string | null>(null);
+  const [nodePositions, setNodePositions] = useState<WorkflowNodePositions>({});
+  const [savedNodePositions, setSavedNodePositions] = useState<WorkflowNodePositions>({});
   const [localError, setLocalError] = useState<string | null>(null);
   const [redetectNotice, setRedetectNotice] = useState(false);
   const [skillContent, setSkillContent] = useState<string | null>(null);
+  const [skillSnapshot, setSkillSnapshot] = useState<string | null>(null);
   const [skillLoading, setSkillLoading] = useState(false);
   const [skillError, setSkillError] = useState<string | null>(null);
   const [skillLoaded, setSkillLoaded] = useState(false);
@@ -85,6 +90,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   const [skillChatInput, setSkillChatInput] = useState('');
   const [skillChatSending, setSkillChatSending] = useState(false);
   const [responseProtocol, setResponseProtocol] = useState<PluginResponseProtocol | null>(null);
+  const [responseSnapshot, setResponseSnapshot] = useState<PluginResponseProtocol | null>(null);
   const [responseLoading, setResponseLoading] = useState(false);
   const [responseSaving, setResponseSaving] = useState(false);
   const [responseError, setResponseError] = useState<string | null>(null);
@@ -103,7 +109,10 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     setGraphError(null);
     try {
       const result = await fetchWorkflowGraph(id);
+      const positions = Object.fromEntries(result.graph.nodes.map(node => [node.nodeId, { x: node.x, y: node.y }])) as WorkflowNodePositions;
       setGraph(result.graph);
+      setSavedNodePositions(positions);
+      setNodePositions({});
     } catch (e) {
       setGraph(null);
       setGraphError((e as Error).message);
@@ -116,7 +125,9 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     setSkillLoading(true);
     setSkillError(null);
     try {
-      setSkillContent(await fetchPluginSkill(id));
+      const content = await fetchPluginSkill(id);
+      setSkillContent(content);
+      setSkillSnapshot(content);
       setSkillLoaded(true);
     } catch (e) {
       setSkillContent(null);
@@ -131,7 +142,9 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     setResponseError(null);
     try {
       const result = await fetchPluginResponse(id);
-      setResponseProtocol(JSON.parse(JSON.stringify(result.protocol)) as PluginResponseProtocol);
+      const protocol = JSON.parse(JSON.stringify(result.protocol)) as PluginResponseProtocol;
+      setResponseProtocol(protocol);
+      setResponseSnapshot(structuredClone(protocol));
     } catch (e) {
       setResponseProtocol(null);
       setResponseError((e as Error).message);
@@ -237,21 +250,6 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     }
   };
 
-  const saveSkill = async (id: string) => {
-    if (skillContent === null) return;
-    setSkillSaving(true);
-    setSkillError(null);
-    try {
-      const result = await savePluginSkill(id, skillContent);
-      setSkillContent(result.content);
-      setSkillLoaded(true);
-    } catch (e) {
-      setSkillError((e as Error).message);
-    } finally {
-      setSkillSaving(false);
-    }
-  };
-
   useEffect(() => {
     const base = ensureBypassParams(copyManifest(manifest));
     setDraft(base);
@@ -261,20 +259,27 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     setLocalError(null);
     setSkillLoaded(false);
     setSkillContent(null);
+    setSkillSnapshot(null);
     setSkillError(null);
     setSkillChatMessages([]);
     setSkillChatInput('');
     setSkillChatSending(false);
     setResponseProtocol(null);
+    setResponseSnapshot(null);
     setResponseError(null);
     setAnalysis(null);
     setAnalysisWarnings([]);
     setAnalysisError(null);
+    setNodePositions({});
+    setSavedNodePositions({});
     void loadGraph(manifest.id);
   }, [manifest]);
 
   const update = (patch: Partial<WorkflowManifest>) => setDraft(current => ({ ...current, ...patch }));
   const updateParam = (index: number, patch: Partial<WorkflowParam>) => setDraft(current => ({ ...current, params: current.params.map((item, i) => i === index ? { ...item, ...patch } : item) }));
+  const updateNodePosition = (nodeId: string, position: WorkflowNodePosition) => {
+    setNodePositions(current => ({ ...current, [nodeId]: position }));
+  };
 
   const displayGraph = useMemo<WorkflowGraph | null>(() => {
     if (!graph) return null;
@@ -419,19 +424,6 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
       return { ...current, blocks };
     });
   };
-  const saveResponse = async (id: string) => {
-    if (!responseProtocol || responseSaving) return;
-    setResponseSaving(true);
-    setResponseError(null);
-    try {
-      const result = await savePluginResponse(id, responseProtocol);
-      setResponseProtocol(result.protocol);
-    } catch (e) {
-      setResponseError((e as Error).message);
-    } finally {
-      setResponseSaving(false);
-    }
-  };
   const regenerateResponse = async (id: string) => {
     setResponseLoading(true);
     setResponseError(null);
@@ -465,7 +457,20 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
   };
 
   /** 相对保存基准是否有未提交修改（结构性比较，忽略对象引用） */
-  const isDirty = useMemo(() => savedSnapshot === null || !deepEqual(draft, savedSnapshot), [draft, savedSnapshot]);
+  const mappingDirty = useMemo(() => savedSnapshot === null || !deepEqual(draft, savedSnapshot), [draft, savedSnapshot]);
+  const changedNodePositions = useMemo<WorkflowNodePositions>(() => Object.fromEntries(
+    Object.entries(nodePositions).filter(([nodeId, position]) => {
+      const saved = savedNodePositions[nodeId];
+      return !saved || saved.x !== position.x || saved.y !== position.y;
+    }),
+  ), [nodePositions, savedNodePositions]);
+  const nodePositionDirty = Object.keys(changedNodePositions).length > 0;
+  const responseDirty = useMemo(
+    () => responseProtocol !== null && (responseSnapshot === null || !deepEqual(responseProtocol, responseSnapshot)),
+    [responseProtocol, responseSnapshot],
+  );
+  const skillDirty = skillContent !== null && (skillSnapshot === null || skillContent !== skillSnapshot);
+  const isDirty = mappingDirty || nodePositionDirty || responseDirty || skillDirty;
 
   const save = async () => {
     if (toast === 'saving') return;
@@ -477,10 +482,26 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
     setLocalError(null);
     setResponseError(null);
     setToast('saving');
-    if (responseProtocol) {
+    if (skillDirty && skillContent !== null) {
+      setSkillSaving(true);
+      try {
+        const result = await savePluginSkill(draft.id, skillContent);
+        setSkillContent(result.content);
+        setSkillSnapshot(result.content);
+      } catch (e) {
+        setSkillError((e as Error).message);
+        setSkillSaving(false);
+        setToast('failed');
+        return;
+      }
+      setSkillSaving(false);
+    }
+    if (responseDirty && responseProtocol) {
       setResponseSaving(true);
       try {
-        await savePluginResponse(draft.id, responseProtocol);
+        const result = await savePluginResponse(draft.id, responseProtocol);
+        setResponseProtocol(result.protocol);
+        setResponseSnapshot(structuredClone(result.protocol));
       } catch (e) {
         setResponseError((e as Error).message);
         setResponseSaving(false);
@@ -489,15 +510,21 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
       }
       setResponseSaving(false);
     }
-    let ok = false;
-    try {
-      ok = await onSave(draft);
-    } catch (e) {
-      setResponseError((e as Error).message);
-      ok = false;
+    let ok = true;
+    if (mappingDirty || nodePositionDirty) {
+      try {
+        ok = await onSave(draft, changedNodePositions);
+      } catch (e) {
+        setResponseError((e as Error).message);
+        ok = false;
+      }
     }
     if (ok) {
-      setSavedSnapshot(structuredClone(draft));
+      if (mappingDirty) setSavedSnapshot(structuredClone(draft));
+      if (nodePositionDirty) {
+        setSavedNodePositions(current => ({ ...current, ...changedNodePositions }));
+        setNodePositions({});
+      }
       setToast('saved');
       if (toastTimer.current) clearTimeout(toastTimer.current);
       toastTimer.current = setTimeout(() => setToast(null), 2200);
@@ -528,7 +555,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
         </div>
         <div className="workflow-mapping-body">
           {view === 'node' ? (
-            <WorkflowNodeGraph graph={displayGraph} loading={graphLoading} error={graphError} onRetry={() => void loadGraph(draft.id)} onToggleParam={toggleField} onChangeParamDefault={updateParamDefault} onRemoveParam={removePinnedParam} onFullscreen={() => setFullscreen(value => !value)} fullscreen={fullscreen} />
+            <WorkflowNodeGraph graph={displayGraph} loading={graphLoading} error={graphError} onRetry={() => void loadGraph(draft.id)} onToggleParam={toggleField} onChangeParamDefault={updateParamDefault} onRemoveParam={removePinnedParam} onChangeNodePosition={updateNodePosition} onFullscreen={() => setFullscreen(value => !value)} fullscreen={fullscreen} />
           ) : view === 'skill' ? (
             <section className="workflow-mapping-section workflow-skill-view">
               <div className="workflow-mapping-section-head">
@@ -539,7 +566,6 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
                 <div className="workflow-skill-actions">
                   {skillError && <button className="settings-btn" onClick={() => void loadSkill(draft.id)}>{t('common.retry')}</button>}
                   <button className="settings-btn" disabled={skillLoading || skillGenerating} onClick={() => void generateSkill(draft.id)}>{skillGenerating ? t('mapping.skill.generating') : t('mapping.skill.generate')}</button>
-                  <button className="settings-btn primary" disabled={skillLoading || skillSaving || skillContent === null} onClick={() => void saveSkill(draft.id)}>{skillSaving ? t('common.saving') : t('common.save')}</button>
                 </div>
               </div>
               {skillLoading && <p className="workflow-skill-hint">{t('common.loading')}</p>}
@@ -595,7 +621,6 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
                 </div>
                 <div className="workflow-skill-actions">
                   <button className="settings-btn" disabled={responseLoading} onClick={() => void regenerateResponse(draft.id)}>{t('mapping.response.restore')}</button>
-                  <button className="settings-btn primary" disabled={responseLoading || responseSaving || responseProtocol === null} onClick={() => void saveResponse(draft.id)}>{responseSaving ? t('common.saving') : t('mapping.response.save')}</button>
                 </div>
               </div>
               {responseLoading && <p className="workflow-skill-hint">{t('common.loading')}</p>}
@@ -775,7 +800,7 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
                     : t('common.unsavedPrompt')}
             </span>
             {toast !== 'saving' && toast !== 'saved' && (
-              <button className="settings-btn primary" onClick={() => void save()}>
+              <button className="settings-btn primary" disabled={saving || skillSaving || responseSaving} onClick={() => void save()}>
                 {t('common.save')}
               </button>
             )}
@@ -786,7 +811,6 @@ export default function WorkflowMappingModal({ manifest, saving, error, onSave, 
           <button className="settings-btn" disabled={analysisLoading} onClick={() => void runAnalysis()}>{analysisLoading ? t('mapping.suggest.loading') : t('mapping.suggest.generate')}</button>
           <span />
           <button className="settings-btn" onClick={onClose}>{t('common.cancel')}</button>
-          <button className="settings-btn primary" disabled={saving || responseSaving} onClick={() => void save()}>{saving || responseSaving ? t('common.saving') : t('mapping.saveMapping')}</button>
         </footer>
       </div>
     </div>

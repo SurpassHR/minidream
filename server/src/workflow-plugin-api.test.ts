@@ -25,6 +25,14 @@ const objectInfo = {
   SaveImage: { input: { required: { images: ['IMAGE', {}], filename_prefix: ['STRING', {}] } } },
 };
 
+const uiFixture = {
+  nodes: [
+    { id: 1, type: 'CLIPTextEncode', pos: [10, 20], widgets_values: ['default prompt'], inputs: [] },
+    { id: 2, type: 'SaveImage', pos: [300, 400], widgets_values: ['demo'], inputs: [{ name: 'images', link: 1 }] },
+  ],
+  links: [[1, 1, 0, 2, 0, 'IMAGE']],
+};
+
 const apiFixture = {
   '1': { class_type: 'CLIPTextEncode', inputs: { text: 'default prompt' } },
   '3': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'model.safetensors' } },
@@ -98,6 +106,35 @@ describe('workflow plugin API', () => {
       expect(readWorkflowJson(options.dataRoot, 'demo')).toEqual(apiFixture);
       const body = await response.json() as { plugin: { id: string; hasManifest: boolean } };
       expect(body.plugin).toMatchObject({ id: 'demo', hasManifest: true });
+    });
+  });
+
+  it('保存节点位置时同步更新 imported UI 源 JSON', async () => {
+    const root = makeRoot();
+    const options = makeOptions(root);
+    await withServer(makeApp(options), async baseUrl => {
+      const imported = await fetch(`${baseUrl}/api/plugins/import`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: 'ui-demo.json', workflow: uiFixture }),
+      });
+      const importedBody = await imported.text();
+      expect(imported.status, importedBody).toBe(200);
+      const current = (JSON.parse(importedBody) as { plugin: WorkflowSpec }).plugin;
+
+      const response = await fetch(`${baseUrl}/api/plugins/ui-demo/configure`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          manifest: current,
+          nodePositions: { '1': { x: 120, y: 240 } },
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(readWorkflowJson(options.dataRoot, 'ui-demo')?.nodes).toEqual([
+        { id: 1, type: 'CLIPTextEncode', pos: [120, 240], widgets_values: ['default prompt'], inputs: [] },
+        { id: 2, type: 'SaveImage', pos: [300, 400], widgets_values: ['demo'], inputs: [{ name: 'images', link: 1 }] },
+      ]);
     });
   });
 

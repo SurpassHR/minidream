@@ -1,13 +1,16 @@
 import type { Express, Request, Response } from 'express';
+import path from 'node:path';
 import { convertUiToApi, getWorkflowJson, isUiFormat, introspectWorkflow, pruneDeadNodes, type WorkflowSpec } from './workflow.js';
 import {
   deleteImportedWorkflow,
   deleteManifest,
   readManifest,
   readWorkflowJson,
+  updateWorkflowNodePositions,
   writeManifest,
   writeWorkflowJson,
   type WorkflowManifestRecord,
+  type WorkflowNodePosition,
 } from './workflow-plugin-store.js';
 import {
   buildCatalogSpecs,
@@ -73,6 +76,23 @@ function sourceFor(source: WorkflowCatalogSource): WorkflowManifestRecord['sourc
     type: source.source.type,
     workflowFile: source.source.type === 'imported' ? `workflows/${source.id}.json` : source.source.workflowFile,
   };
+}
+
+function sourceWorkflowPath(options: WorkflowPluginApiOptions, source: WorkflowCatalogSource): string {
+  return source.source.type === 'imported'
+    ? path.join(options.catalog.importedDir, `${source.id}.json`)
+    : path.join(options.catalog.bundledDir, path.basename(source.source.workflowFile));
+}
+
+function validNodePositions(value: unknown): Record<string, WorkflowNodePosition> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).flatMap(([nodeId, position]) => {
+    if (!position || typeof position !== 'object' || Array.isArray(position)) return [];
+    const { x, y } = position as { x?: unknown; y?: unknown };
+    return typeof x === 'number' && Number.isFinite(x) && typeof y === 'number' && Number.isFinite(y)
+      ? [[nodeId, { x, y }]]
+      : [];
+  }));
 }
 
 function validateWorkflowJson(value: unknown): Record<string, any> {
@@ -525,6 +545,7 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
             manifest?: WorkflowManifestRecord;
             overwriteSkill?: boolean;
             overwriteResponse?: boolean;
+            nodePositions?: Record<string, WorkflowNodePosition>;
           };
           const manifest = body.manifest;
           if (!manifest || typeof manifest !== 'object' || manifest.id !== id) {
@@ -572,6 +593,9 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           }
 
           writeManifest(options.catalog.manifestDir, normalized);
+          if (isUiFormat(source.json)) {
+            updateWorkflowNodePositions(sourceWorkflowPath(options, source), validNodePositions(body.nodePositions));
+          }
           try {
             if (body.overwriteSkill === true && skillContent !== null) {
               writeCustomSkill(id, skillContent, skillsDir);
@@ -598,7 +622,8 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           return;
         }
         if (req.method === 'PUT' && !action) {
-          const manifest = req.body as WorkflowManifestRecord;
+          const body = (req.body ?? {}) as WorkflowManifestRecord & { nodePositions?: Record<string, WorkflowNodePosition> };
+          const { nodePositions, ...manifest } = body;
           if (!manifest || manifest.id !== id) {
             jsonError(res, 400, 'manifest.id 必须与 URL 中的工作流 ID 一致');
             return;
@@ -626,6 +651,9 @@ export function createWorkflowPluginRouter(options: WorkflowPluginApiOptions): (
           }
           const normalized = { ...manifest, source: sourceFor(source), hasManifest: true, editable: true };
           writeManifest(options.catalog.manifestDir, normalized);
+          if (isUiFormat(source.json)) {
+            updateWorkflowNodePositions(sourceWorkflowPath(options, source), validNodePositions(nodePositions));
+          }
           try {
             const spec = await skillSpec(id);
             if (spec) syncPluginResponseProtocol(spec, skillsDir);

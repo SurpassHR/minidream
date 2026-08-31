@@ -429,6 +429,13 @@ export interface WorkflowGraphNode {
   fields: WorkflowGraphField[];
 }
 
+export interface WorkflowNodePosition {
+  x: number;
+  y: number;
+}
+
+export type WorkflowNodePositions = Record<string, WorkflowNodePosition>;
+
 export interface WorkflowGraphEdge {
   sourceNode: string;
   sourceField: string;
@@ -542,7 +549,7 @@ export async function analyzePluginConfig(id: string): Promise<{ ok: boolean; an
 export async function configureWorkflowPlugin(
   id: string,
   manifest: WorkflowManifest,
-  flags: { overwriteSkill?: boolean; overwriteResponse?: boolean } = {},
+  flags: { overwriteSkill?: boolean; overwriteResponse?: boolean; nodePositions?: WorkflowNodePositions } = {},
 ): Promise<{ ok: boolean; plugin: WorkflowPluginRecord }> {
   return http(`/api/plugins/${encodeURIComponent(id)}/configure`, {
     method: 'POST',
