@@ -69,6 +69,31 @@ describe('workflow catalog', () => {
     expect(after.find(spec => spec.id === 'bundled_demo')).toMatchObject({ description: '手工用途', hasManifest: true });
   });
 
+  it('valid manifest 的参数/输入从源 JSON 补充节点标题（不影响用户契约）', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-catalog-'));
+    roots.push(root);
+    const options = makeOptions(root);
+    // 源 JSON 带节点标题（API 格式 _meta.title）
+    fs.writeFileSync(
+      path.join(options.bundledDir, 'bundled_demo.json'),
+      JSON.stringify({
+        '582': { class_type: 'PrimitiveInt', inputs: { value: 1024 }, _meta: { title: 'Width' } },
+        '583': { class_type: 'PrimitiveInt', inputs: { value: 1024 }, _meta: { title: 'Height' } },
+      }),
+      'utf8',
+    );
+    const m = manifest('bundled_demo', { type: 'bundled', workflowFile: 'bundled_demo.json' }, '手工用途');
+    m.params = [
+      { id: 'value-582', label: 'value', nodeId: '582', field: 'value', type: 'INT' as const, default: 1024, llm: true },
+      { id: 'value-583', label: 'value', nodeId: '583', field: 'value', type: 'INT' as const, default: 1024, llm: true },
+    ];
+    writeManifest(options.manifestDir, m);
+
+    const spec = (await buildCatalogSpecs(options)).find(item => item.id === 'bundled_demo')!;
+    expect(spec.params.find(p => p.id === 'value-582')?.nodeTitle).toBe('Width');
+    expect(spec.params.find(p => p.id === 'value-583')?.nodeTitle).toBe('Height');
+  });
+
   it('bundled 清单损坏时回退自动识别，imported 清单损坏时不进入执行 spec', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-catalog-'));
     roots.push(root);

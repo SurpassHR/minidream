@@ -18,16 +18,15 @@
  * - 实际结果提取以 /history 的输出键（images/gifs/videos/text）为准，最权威
  */
 import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { getObjectInfo, fileExists, ComfyUIError } from './comfyui.js';
 import type { ImageGenSettings } from './settings.js';
 import type { Resolution } from './resolution.js';
 import { buildCatalogSpecs, getCatalogWorkflowJson, listCatalogSources, type WorkflowCatalogOptions } from './workflow-catalog.js';
 import { IMPORTED_WORKFLOWS_DIR, MANIFESTS_DIR } from './workflow-plugin-store.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const WORKFLOWS_DIR = path.resolve(__dirname, '../workflows');
+import { BUNDLED_WORKFLOWS_DIR } from './paths.js';
+
+export const WORKFLOWS_DIR = BUNDLED_WORKFLOWS_DIR;
 
 /* ---------- 节点类名 → 输入/输出 kind 映射（稳定节点集合） ---------- */
 
@@ -117,6 +116,8 @@ export interface WorkflowInput {
   description?: string;
   /** 仅供内部注入使用，不显示在普通参数面板或 LLM 契约中 */
   hidden?: boolean;
+  /** 节点标题（_meta.title），用于面向用户/LLM 的可读参数名 */
+  nodeTitle?: string;
 }
 
 export interface WorkflowParam {
@@ -144,6 +145,8 @@ export interface WorkflowParam {
   llm?: boolean;
   /** 节点屏蔽（bypass）：布尔参数，true 时跳过 nodeId 节点的执行（对应 ComfyUI bypass），field 留空 */
   bypass?: boolean;
+  /** 节点标题（_meta.title），用于面向用户/LLM 的可读参数名 */
+  nodeTitle?: string;
 }
 
 export interface WorkflowOutput {
@@ -834,6 +837,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
     };
     if (!cls || !nodeInputs) continue;
     const info = oi?.[cls]?.input;
+    const nodeTitle = String(_meta?.title ?? '').trim() || cls;
 
     // 显式标记的提示词占位节点（_meta.promptPlaceholder = true）：工作流作者声明
     // “LLM 提示词直接写入此节点”（如 Krea2 模板的 #555 Text Multiline），注入后经
@@ -853,6 +857,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
           classType: cls,
           defaultValue: nodeInputs[markedField],
           primary: true,
+          nodeTitle,
         });
         continue;
       }
@@ -871,6 +876,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
         field: 'text',
         classType: cls,
         defaultValue: typeof nodeInputs.text === 'string' ? nodeInputs.text : '',
+        nodeTitle,
       });
       continue;
     }
@@ -890,6 +896,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
         field: 'value',
         classType: cls,
         defaultValue: typeof nodeInputs.value === 'string' ? nodeInputs.value : '',
+        nodeTitle,
       });
       continue;
     }
@@ -904,6 +911,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
         field: 'image',
         classType: cls,
         defaultValue: typeof nodeInputs.image === 'string' ? nodeInputs.image : undefined,
+        nodeTitle,
       });
       continue;
     }
@@ -919,6 +927,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
         field,
         classType: cls,
         defaultValue: typeof nodeInputs[field] === 'string' ? (nodeInputs[field] as string) : undefined,
+        nodeTitle,
       });
       continue;
     }
@@ -974,6 +983,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
         step: 0.05,
         options: optionList.length ? optionList : [...new Set(slots.map(s => s.lora))],
         default: enabled,
+        nodeTitle,
       });
       continue;
     }
@@ -989,6 +999,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
         field,
         classType: cls,
         defaultValue: value,
+        nodeTitle,
       });
     }
     const textFields = new Set(genericTexts.map(t => t.field));
@@ -1073,6 +1084,7 @@ export async function introspectWorkflow(json: Record<string, any>, objectInfoDa
         max,
         step,
         options,
+        nodeTitle,
       });
     }
   }

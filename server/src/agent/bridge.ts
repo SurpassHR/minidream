@@ -284,32 +284,40 @@ function serializeSpecForSkillCreator(spec: WorkflowSpec): string {
     id: spec.id,
     name: spec.name,
     description: spec.description ?? '',
-    inputs: spec.inputs.map(input => ({
+    inputs: spec.inputs
+      .filter(input => !input.hidden)
+      .map(input => ({
       kind: input.kind,
       label: input.label,
+      // 节点标题（如 Positive Prompt/参考图），供模型生成可读参数名
+      title: input.nodeTitle ?? input.label,
       primary: input.primary,
       required: input.required,
       // 过滤过长的 defaultValue（如模板内置提示词），避免混淆模型生成 prompt 而非 SKILL.md
       defaultValue: typeof input.defaultValue === 'string' && input.defaultValue.length > 120 ? '' : input.defaultValue,
       description: input.description,
     })),
-    params: spec.params.map(param => ({
-      id: param.id,
-      label: param.label,
-      type: param.type,
-      default: param.default,
-      min: param.min,
-      max: param.max,
-      step: param.step,
-      options: param.options,
-      multiple: param.multiple,
-      strengthable: param.strengthable,
-      applyTo: param.applyTo,
-      llm: param.llm,
-      hidden: param.hidden,
-      description: param.description,
-    })),
-    outputs: spec.outputs.map(output => ({
+    params: spec.params
+      .filter(param => !param.hidden && param.llm !== false && !param.bypass)
+      .map(param => ({
+        id: param.id,
+        label: param.label,
+        // 节点标题（如 Width/Height），供模型生成可读参数名
+        title: param.nodeTitle ?? param.label,
+        type: param.type,
+        default: param.default,
+        min: param.min,
+        max: param.max,
+        step: param.step,
+        options: param.options,
+        multiple: param.multiple,
+        strengthable: param.strengthable,
+        applyTo: param.applyTo,
+        description: param.description,
+      })),
+    outputs: spec.outputs
+      .filter(output => !output.hidden)
+      .map(output => ({
       kind: output.kind,
       label: output.label,
       description: output.description,
@@ -353,6 +361,127 @@ function looksLikeSkillMd(content: string): boolean {
   if (!/##\s+(可控制参数|输入|用途|输出|使用规则)/.test(trimmed)) return false;
   if (/^response:\s*$/m.test(trimmed) || /^##\s+回复协议\s*$/m.test(trimmed)) return false;
   return true;
+}
+
+/**
+ * 将 LLM 返回的 Skill 收敛到 manifest 契约，避免模型复述未暴露的内部参数。
+ * 生成器输入已经过滤一次，这里是最后一道防线：只清理输入/参数/输出列表及使用规则，
+ * 不改动用途描述，保留 LLM 对真实可控参数的自然语言说明。
+ */
+const SKILL_TYPE_LABEL: Record<string, string> = {
+  INT: '整数',
+  FLOAT: '浮点数',
+  BOOLEAN: '布尔',
+  SEED: '随机种子',
+  STRING: '文本',
+  combo: '下拉选项',
+};
+const SKILL_KIND_LABEL: Record<string, string> = {
+  image: '图像',
+  video: '视频',
+  text: '文本',
+  number: '数值',
+  boolean: '布尔',
+};
+const formatSkillDefault = (value: unknown): string => {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value);
+};
+
+/**
+ * 将 LLM 返回的 Skill 收敛到 manifest 契约。
+ * 输入/可控制参数/输出三节用 spec 数据确定性重建：每项一行、必带 id（generation.submit 的键）
+ * 与节点标题，避免模型省略 id、留空或重复；模型对某项目的自然语言描述（冒号后文本）
+ * 若能匹配该项 id/节点标题则合并保留。其余章节（用途/使用规则）保留模型内容，
+ * 仅剔除内部参数（llm:false / hidden / bypass）与跳过规则。
+ */
+export function sanitizePluginSkillToSpec(spec: WorkflowSpec, content: string): string {
+  const visibleInputs = spec.inputs.filter(input => !input.hidden);
+  const visibleParams = spec.params.filter(param => !param.hidden && param.llm !== false && !param.bypass);
+  const visibleOutputs = spec.outputs.filter(output => !output.hidden);
+  // 未暴露给 LLM 的内部参数 id（llm:false / hidden / bypass），Skill 中不得出现。
+  const forbiddenIds = spec.params
+    .filter(param => !visibleParams.includes(param))
+    .map(param => param.id);
+  const lines = content.trim().split(/\r?\n/);
+  const sectionEnd = (start: number): number => {
+    const next = lines.findIndex((line, index) => index > start && /^##\s+/.test(line.trim()));
+    return next < 0 ? lines.length : next;
+  };
+
+  // 提取模型对某项的自然语言描述（第一个冒号后的文本）；只按 id / 节点标题匹配，
+  // 避免泛 label（如 value/text）把描述误配到其他项。
+  const extractModelNote = (modelLines: string[], keys: Array<string | undefined>): string => {
+    const line = modelLines.find(item => keys.some(key => key && item.includes(key)));
+    if (!line) return '';
+    const idx = line.search(/[:：]/);
+    if (idx < 0) return '';
+    const rest = line.slice(idx + 1).replace(/[*`]/g, '').trim();
+    return rest ? `：${rest}` : '';
+  };
+
+  // 用 spec 契约重建列表节：每项一行、必带 id；模型未写该节时追加（避免输入为空）。
+  const rebuildSection = (
+    heading: string,
+    rows: Array<{ key: string; render: (modelLines: string[]) => string }>,
+    emptyText: string,
+  ): void => {
+    const start = lines.findIndex(line => line.trim() === heading);
+    const modelLines = start >= 0 ? lines.slice(start + 1, sectionEnd(start)) : [];
+    const body = rows.map(row => row.render(modelLines));
+    if (start >= 0) {
+      lines.splice(start + 1, sectionEnd(start) - start - 1, ...(body.length ? body : [emptyText]));
+    } else if (body.length) {
+      lines.push('', heading, ...body);
+    }
+  };
+
+  rebuildSection('## 输入', visibleInputs.map(input => ({
+    key: input.id,
+    render: modelLines => {
+      const title = input.nodeTitle && input.nodeTitle !== input.label ? `${input.nodeTitle}（${input.label}）` : (input.label || input.kind);
+      const note = extractModelNote(modelLines, [input.id, input.nodeTitle]);
+      return `- **${title}**（id \`${input.id}\`；类型 ${SKILL_KIND_LABEL[input.kind] ?? input.kind}）${note}`;
+    },
+  })), '无（工作流不接收外部输入）。');
+
+  rebuildSection('## 可控制参数', visibleParams.map(param => ({
+    key: param.id,
+    render: modelLines => {
+      const bits = [`id \`${param.id}\``, `类型 ${SKILL_TYPE_LABEL[param.type] ?? param.type}`];
+      const def = formatSkillDefault(param.default);
+      if (def) bits.push(`默认 ${def}`);
+      if (param.min !== undefined) bits.push(`范围 ${param.min} ~ ${param.max ?? '∞'}`);
+      if (param.multiple) bits.push(param.strengthable ? '多选（每项可调强度）' : '多选');
+      if (param.type === 'combo' && param.options?.length) {
+        bits.push(`可选：${param.options.slice(0, 8).join('、')}${param.options.length > 8 ? '…' : ''}`);
+      }
+      if (param.applyTo?.length) bits.push(`同时作用于节点 ${param.applyTo.join('、')}`);
+      const title = param.nodeTitle && param.nodeTitle !== param.label ? `${param.nodeTitle}（${param.label}）` : (param.label || param.field);
+      const note = extractModelNote(modelLines, [param.id, param.nodeTitle]);
+      return `- **${title}**（${bits.join('；')}）${note}`;
+    },
+  })), '无（该工作流的 widget 由模板固定，不可由 LLM 调整）。');
+
+  rebuildSection('## 输出', visibleOutputs.map(output => ({
+    key: output.id,
+    render: modelLines => {
+      const note = extractModelNote(modelLines, [output.id, output.label]);
+      return `- **${output.label}**（id \`${output.id}\`；类型 ${SKILL_KIND_LABEL[output.kind] ?? output.kind}）${note}`;
+    },
+  })), '无。');
+
+  const allowedLora = visibleParams.some(param => /\blora\b/i.test(`${param.id} ${param.label} ${param.field}`));
+  const sanitized = lines.filter(line => {
+    if (forbiddenIds.some(id => line.includes(id))) return false;
+    // bypass 从不属于 LLM 契约；相关规则也不能进入 Skill。
+    if (/\b(?:bypass|skip(?:ping)?)\b/i.test(line) || /跳过/.test(line)) return false;
+    // 当前工作流未暴露 LoRA 时，删除规则中模型补写的 LoRA 操作说明。
+    if (!allowedLora && /\blora\b/i.test(line)) return false;
+    return true;
+  });
+  return sanitized.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
 }
 
 /**
@@ -458,7 +587,7 @@ export async function runPluginSkillCreator(
   // 最多尝试 2 次：首次失败或输出不符合 SKILL.md 格式时重试一次
   for (let attempt = 0; attempt < 2; attempt++) {
     const content = await runOnce();
-    if (content && looksLikeSkillMd(content)) return content;
+    if (content && looksLikeSkillMd(content)) return sanitizePluginSkillToSpec(spec, content);
     if (attempt === 1) {
       throw new Error('plugin-creator 未返回有效 SKILL.md 内容');
     }
@@ -505,20 +634,22 @@ function serializePluginSkillChatInput(
       primary: input.primary,
       required: input.required,
     })),
-    params: spec.params.filter(param => !param.hidden && param.llm !== false).map(param => ({
-      id: param.id,
-      label: param.label,
-      type: param.type,
-      default: param.default,
-      min: param.min,
-      max: param.max,
-      step: param.step,
-      options: param.options,
-      multiple: param.multiple,
-      strengthable: param.strengthable,
-      applyTo: param.applyTo,
-      description: param.description,
-    })),
+    params: spec.params
+      .filter(param => !param.hidden && param.llm !== false && !param.bypass)
+      .map(param => ({
+        id: param.id,
+        label: param.label,
+        type: param.type,
+        default: param.default,
+        min: param.min,
+        max: param.max,
+        step: param.step,
+        options: param.options,
+        multiple: param.multiple,
+        strengthable: param.strengthable,
+        applyTo: param.applyTo,
+        description: param.description,
+      })),
     outputs: spec.outputs.filter(output => !output.hidden).map(output => ({
       id: output.id,
       kind: output.kind,
@@ -596,7 +727,8 @@ export async function runPluginSkillChat(
       if (error) reject(error);
       else {
         try {
-          resolve(parsePluginSkillChatResult(text));
+          const result = parsePluginSkillChatResult(text);
+          resolve({ ...result, skill: sanitizePluginSkillToSpec(spec, result.skill) });
         } catch (parseError) {
           reject(parseError);
         }

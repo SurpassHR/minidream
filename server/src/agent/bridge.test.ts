@@ -17,6 +17,7 @@ import {
   runAgentStream,
   runPluginSkillChat,
   runPluginSkillCreator,
+  sanitizePluginSkillToSpec,
   sanitizeTitle,
   type AgentStreamEvent,
 } from './bridge.js';
@@ -338,7 +339,12 @@ describe('Agent Bridge', () => {
       name: '测试插件',
       description: '测试',
       inputs: [{ id: 'prompt-1', kind: 'text' as const, label: '提示词', nodeId: '1', field: 'text', classType: 'Text' }],
-      params: [{ id: 'steps-3', label: '步数', nodeId: '3', field: 'steps', type: 'INT' as const, default: 20, min: 1, max: 50, llm: true }],
+      params: [
+        { id: 'steps-3', label: '步数', nodeId: '3', field: 'steps', type: 'INT' as const, default: 20, min: 1, max: 50, llm: true },
+        { id: 'lora-554', label: 'LoRA', nodeId: '554', field: 'lora', type: 'combo' as const, default: [], llm: false, multiple: true },
+        { id: 'bypass-582', label: '跳过宽度', nodeId: '582', field: '', type: 'BOOLEAN' as const, default: false, bypass: true },
+        { id: 'bypass-583', label: '跳过高度', nodeId: '583', field: '', type: 'BOOLEAN' as const, default: false, bypass: true },
+      ],
       outputs: [],
     };
     const currentSkill = `---
@@ -372,6 +378,9 @@ description: 测试
     const input = child.stdin.read()?.toString() ?? '';
     expect(input).toContain('steps-3');
     expect(input).toContain('旧用途');
+    expect(input).not.toContain('lora-554');
+    expect(input).not.toContain('bypass-582');
+    expect(input).not.toContain('bypass-583');
     expect(input).toContain('隐藏 prompt 预览');
 
     child.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: JSON.stringify({ reply: '已隐藏 prompt 预览。', skill: currentSkill.replace('prompt: visible', 'prompt: hidden') }) } }) + String.fromCharCode(10));
@@ -382,6 +391,142 @@ description: 测试
       reply: '已隐藏 prompt 预览。',
       skill: expect.stringContaining('name: test_plugin'),
     });
+  });
+
+  it('sanitizePluginSkillToSpec 只保留 manifest 中可由 LLM 控制的参数', () => {
+    const spec = {
+      id: 'test_plugin',
+      name: '测试插件',
+      description: '测试',
+      inputs: [],
+      params: [
+        { id: 'value-582', label: '宽度', nodeId: '582', field: 'value', type: 'INT' as const, default: 1024, llm: true },
+        { id: 'value-583', label: '高度', nodeId: '583', field: 'value', type: 'INT' as const, default: 1024, llm: true },
+        { id: 'lora-554', label: 'LoRA', nodeId: '554', field: 'lora', type: 'combo' as const, default: [], llm: false },
+        { id: 'bypass-582', label: '跳过宽度', nodeId: '582', field: '', type: 'BOOLEAN' as const, default: false, bypass: true },
+      ],
+      outputs: [],
+    };
+    const content = `---\nname: test_plugin\ndescription: 测试\n---\n\n# 测试插件\n\n## 用途\n\n测试用途\n\n## 输入\n\n无\n\n## 可控制参数\n\n- **宽度**（id \`value-582\`；类型 整数）\n- **高度**（id \`value-583\`；类型 整数）\n- **LoRA**（id \`lora-554\`；类型 下拉选项）\n- **跳过宽度**（id \`bypass-582\`）\n\n## 输出\n\n无\n\n## 使用规则\n\n- value-582 和 value-583 可调整。\n- bypass-582 可以跳过宽度。\n- LoRA 由用户手动选择。\n`;
+    const result = sanitizePluginSkillToSpec(spec, content);
+    expect(result).toContain('value-582');
+    expect(result).toContain('value-583');
+    expect(result).not.toContain('lora-554');
+    expect(result).not.toContain('bypass-582');
+    expect(result).not.toContain('跳过宽度');
+    expect(result).not.toContain('LoRA');
+  });
+
+  it('sanitizePluginSkillToSpec 每项重建为一行：带 id/节点标题且合并模型描述，不重复', () => {
+    const spec = {
+      id: 'test_plugin',
+      name: '测试插件',
+      description: '测试',
+      inputs: [],
+      params: [
+        { id: 'value-582', label: 'value', nodeId: '582', field: 'value', type: 'INT' as const, default: 1024, llm: true, nodeTitle: 'Width' },
+        { id: 'value-583', label: 'value', nodeId: '583', field: 'value', type: 'INT' as const, default: 1024, llm: true, nodeTitle: 'Height' },
+        { id: 'lora-554', label: 'lora', nodeId: '554', field: 'lora', type: 'combo' as const, default: [], llm: false },
+        { id: 'bypass-582', label: '跳过Width', nodeId: '582', field: '', type: 'BOOLEAN' as const, default: false, bypass: true },
+      ],
+      outputs: [],
+    };
+    const content = `---\nname: test_plugin\ndescription: 测试\n---\n\n# 测试插件\n\n## 用途\n\n测试用途\n\n## 输入\n\n无\n\n## 可控制参数\n\n- **Width**（整数）：图像宽度，以像素为单位。\n- **Height**（整数）：图像高度，以像素为单位。\n- LoRA 列表（需用户手动选择）。\n- 跳过 Width 节点。\n\n## 输出\n\n无\n\n## 使用规则\n\n- 宽度和高度可调整。\n`;
+    const result = sanitizePluginSkillToSpec(spec, content);
+    // 每个参数恰好一行，带 id + 节点标题，并合并模型描述
+    expect(result.match(/value-582/g)).toHaveLength(1);
+    expect(result.match(/value-583/g)).toHaveLength(1);
+    expect(result).toContain('**Width（value）**（id `value-582`');
+    expect(result).toContain('：图像宽度，以像素为单位。');
+    expect(result).toContain('**Height（value）**（id `value-583`');
+    expect(result).not.toContain('LoRA');
+    expect(result).not.toContain('跳过');
+  });
+
+  it('sanitizePluginSkillToSpec 输入/输出为空时按 spec 重建且带 id', () => {
+    const spec = {
+      id: 'test_plugin',
+      name: '测试插件',
+      description: '测试',
+      inputs: [
+        { id: 'input-text-555-text', kind: 'text' as const, label: 'text', nodeId: '555', field: 'text', classType: 'Text', nodeTitle: 'Positive Prompt' },
+      ],
+      params: [
+        { id: 'value-582', label: 'value', nodeId: '582', field: 'value', type: 'INT' as const, default: 1024, llm: true, nodeTitle: 'Width' },
+      ],
+      outputs: [
+        { id: 'images-578', kind: 'image' as const, label: 'Preview Image', nodeId: '578', classType: 'PreviewImage' },
+      ],
+    };
+    const content = `---\nname: test_plugin\ndescription: 测试\n---\n\n# 测试插件\n\n## 用途\n\n测试用途\n\n## 输入\n\n## 可控制参数\n\n## 输出\n\n## 使用规则\n\n- 按提示词生成。\n`;
+    const result = sanitizePluginSkillToSpec(spec, content);
+    // 输入/输出空时从 spec 重建：每项带 id
+    expect(result).toContain('**Positive Prompt（text）**（id `input-text-555-text`；类型 文本）');
+    expect(result).toContain('**Width（value）**（id `value-582`；类型 整数；默认 1024）');
+    expect(result).toContain('**Preview Image**（id `images-578`；类型 图像）');
+  });
+
+  it('sanitizePluginSkillToSpec 删除英文 skip 规则但保留 Width/Height 参数', () => {
+    const spec = {
+      id: 'test_plugin',
+      name: '测试插件',
+      description: '测试',
+      inputs: [],
+      params: [
+        { id: 'value-582', label: 'Width', nodeId: '582', field: 'value', type: 'INT' as const, default: 1024, llm: true },
+        { id: 'value-583', label: 'Height', nodeId: '583', field: 'value', type: 'INT' as const, default: 1024, llm: true },
+        { id: 'bypass-582', label: 'Bypass Width', nodeId: '582', field: '', type: 'BOOLEAN' as const, default: false, bypass: true },
+      ],
+      outputs: [],
+    };
+    const content = `---\nname: test_plugin\ndescription: 测试\n---\n\n# 测试插件\n\n## 用途\n\n测试用途\n\n## 输入\n\n无\n\n## 可控制参数\n\n- value-582 Width\n- value-583 Height\n\n## 输出\n\n无\n\n## 使用规则\n\n- Skip Width and Height for this workflow.\n- The Width and Height parameters control the output size.\n`;
+    const result = sanitizePluginSkillToSpec(spec, content);
+    expect(result).toContain('value-582');
+    expect(result).toContain('value-583');
+    expect(result).not.toMatch(/skip width|bypass/i);
+  });
+
+  it('runPluginSkillCreator 只向生成器传入 LLM 可控参数', async () => {
+    const child = createFakeChild();
+    spawnMock.mockReturnValue(child);
+    const spec = {
+      id: 'test_plugin',
+      name: '测试插件',
+      description: '测试',
+      inputs: [
+        { id: 'hidden-input', kind: 'text' as const, label: '内部输入', nodeId: '9', field: 'text', classType: 'Text', hidden: true },
+      ],
+      params: [
+        { id: 'value-582', label: '宽度', nodeId: '582', field: 'value', type: 'INT' as const, default: 1024, llm: true, nodeTitle: 'Width' },
+        { id: 'value-583', label: '高度', nodeId: '583', field: 'value', type: 'INT' as const, default: 1024, llm: true, nodeTitle: 'Height' },
+        { id: 'lora-554', label: 'LoRA', nodeId: '554', field: 'lora', type: 'combo' as const, default: [], llm: false, multiple: true },
+        { id: 'bypass-582', label: '跳过宽度', nodeId: '582', field: '', type: 'BOOLEAN' as const, default: false, bypass: true },
+        { id: 'bypass-583', label: '跳过高度', nodeId: '583', field: '', type: 'BOOLEAN' as const, default: false, bypass: true },
+      ],
+      outputs: [
+        { id: 'hidden-output', kind: 'text' as const, label: '内部输出', nodeId: '9', classType: 'PreviewAny', hidden: true },
+      ],
+    };
+
+    const resultPromise = runPluginSkillCreator(spec, { timeoutMs: 2000 });
+    const input = child.stdin.read()?.toString() ?? '';
+    expect(input).toContain('value-582');
+    expect(input).not.toContain('hidden-input');
+    expect(input).not.toContain('内部输入');
+    expect(input).not.toContain('hidden-output');
+    expect(input).not.toContain('内部输出');
+    expect(input).toContain('value-583');
+    expect(input).not.toContain('lora-554');
+    expect(input).not.toContain('bypass-582');
+    expect(input).not.toContain('bypass-583');
+    // 生成器输入应带节点标题（title），供模型生成可读参数名
+    expect(input).toContain('"title": "Width"');
+    expect(input).toContain('"title": "Height"');
+
+    child.stdout.write(JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '---\nname: test_plugin\ndescription: 测试\n---\n\n# 测试插件\n\n## 用途\n\n测试用途\n\n## 输入\n\n无\n\n## 可控制参数\n\n- value-582\n- value-583\n\n## 输出\n\n无\n\n## 使用规则\n\n- 按提示词直接生成即可，无额外素材要求。\n' } }) + '\n');
+    child.stdout.write(JSON.stringify({ type: 'agent_end' }) + '\n');
+    child.stdin.end();
+    await expect(resultPromise).resolves.toContain('value-582');
   });
 
   it('runPluginSkillCreator 加载 plugin-creator skill 并解析围栏输出', async () => {

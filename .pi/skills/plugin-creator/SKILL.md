@@ -16,6 +16,7 @@ description: 为工作流插件生成 SKILL.md：根据插件 manifest 的输入
 - **不要**输出任何解释、分析、开场白、问候语或结尾语。
 - **不要**凭空补充 steps/cfg/seed/采样器等未在 manifest 中出现的参数。
 - **不要**虚构比例建议、内存警告等 manifest 中不存在的使用约束。
+- **不要生成 bypass/skip 节点控制规则**——bypass 是节点视图的内部控制项，不属于 LLM 可控制参数；即使输入工作流存在 Width/Height 等参数，也不能写成“跳过/Skip Width/Height”。
 - **只输出 SKILL.md 格式的 markdown 文档**——必须严格遵循下方「输出模板」的结构。
 
 ## 输入数据
@@ -47,11 +48,11 @@ description: 为工作流插件生成 SKILL.md：根据插件 manifest 的输入
 
 ## 生成规则
 
-1. **过滤**：只保留 `!hidden && llm !== false` 的输入/参数/输出；`hidden` 或 `llm === false` 的项一律不出现。
+1. **过滤**：只保留 `!hidden && llm !== false` 的输入/参数/输出；`hidden` 或 `llm === false` 的项一律不出现。`bypass` 参数以及任何“跳过/Skip”节点规则均不得出现在 Skill 中。
 2. **frontmatter**：只包含 `name` 和 `description`，`name` 为插件 `id`，`description` 为插件用途（截断到 100 字符内）。不要添加 `id`、`displayName` 或 `response` 等额外字段。
 3. **正文结构**：`# 插件名` → 生成标记行 → `## 用途` → `## 输入` → `## 可控制参数` → `## 输出` → `## 使用规则`。章节顺序固定，不要调换。回复协议由独立 `response.json` 管理，不在 Skill 文本中描述。
 4. **列表格式**：所有 `## 输入`、`## 可控制参数`、`## 输出`、`## 使用规则` 下的内容**必须用 `- ` 开头的无序列表**，严禁使用表格。
-5. **参数标注**：每个参数给出 `id`（反引号）、类型中文名（INT=整数、FLOAT=浮点数、BOOLEAN=布尔、SEED=随机种子、STRING=文本、combo=下拉选项）、默认值、范围（min ~ max 与步长）、combo 有限选项、多选/每项可调强度、applyTo 联动（"同时作用于节点 X、Y"）；**逐字保留用户填写的 `description`**。
+5. **参数标注**：每个参数行**必须包含参数 `id`（反引号，如 `value-582`）**——它是 `generation.submit` 的 `params` 键，LLM 靠它提交参数值；**禁止只写中文名而省略 id**（如只写"图像宽度"）。除 id 外还需给出类型中文名（INT=整数、FLOAT=浮点数、BOOLEAN=布尔、SEED=随机种子、STRING=文本、combo=下拉选项）、默认值、范围（min ~ max 与步长）、combo 有限选项、多选/每项可调强度、applyTo 联动（"同时作用于节点 X、Y"）；**逐字保留用户填写的 `description`**。输入行同理需包含输入 id。
 6. **使用规则推导**：只从 manifest 中的 inputs/params/output 推导，不要凭通用知识补充。
    - 无任何文本输入 → "本工作流不接受提示词，仅用于图像放大/增强等处理任务；必须通过 `images` 传入参考素材。"
    - 有必传图像/视频输入 → "必须按顺序传入 N 张参考图（`generation.submit` 的 `images` 参数）" 等。

@@ -82,13 +82,43 @@ function hideDetectedInterfaces(spec: WorkflowSpec): WorkflowSpec {
   };
 }
 
+/** 从工作流源 JSON 提取 nodeId → 节点标题（UI 格式 nodes[].title / API 格式 _meta.title） */
+function nodeTitlesFromWorkflow(json: Record<string, any>): Map<string, string> {
+  const map = new Map<string, string>();
+  if (Array.isArray(json?.nodes)) {
+    for (const node of (json.nodes as Record<string, any>[])) {
+      if (!node || typeof node !== 'object') continue;
+      const title = String(node.title ?? '').trim();
+      if (title && node.id !== undefined) map.set(String(node.id), title);
+    }
+  }
+  for (const [nodeId, node] of Object.entries(json ?? {})) {
+    if (!node || typeof node !== 'object') continue;
+    const title = String((node as { _meta?: { title?: string } })._meta?.title ?? '').trim();
+    if (title) map.set(nodeId, title);
+  }
+  return map;
+}
+
 export async function buildCatalogSpecs(options: WorkflowCatalogOptions): Promise<WorkflowSpec[]> {
   const specs: WorkflowSpec[] = [];
   for (const source of listCatalogSources(options)) {
     const manifest = readManifest(options.manifestDir, source.id);
     if (manifest.status === 'valid') {
-      // manifest 是用户契约（含节点视图勾选的参数与 bypass 开关），直接作为事实来源
-      specs.push(withCatalogMetadata(manifest.manifest, source, true));
+      // manifest 是用户契约（含节点视图勾选的参数与 bypass 开关），直接作为事实来源；
+      // 旧 manifest 的 params/inputs 缺节点标题时，从源 JSON 轻量补充（不改变用户契约）。
+      let spec = manifest.manifest;
+      const titles = nodeTitlesFromWorkflow(source.json);
+      if (titles.size > 0) {
+        const enrich = <T extends { nodeId: string; nodeTitle?: string }>(items: T[]): T[] =>
+          items.map(item => {
+            if (item.nodeTitle) return item;
+            const title = titles.get(item.nodeId);
+            return title ? { ...item, nodeTitle: title } : item;
+          });
+        spec = { ...spec, params: enrich(spec.params), inputs: enrich(spec.inputs) };
+      }
+      specs.push(withCatalogMetadata(spec, source, true));
       continue;
     }
     if (source.source.type === 'imported') continue; // 无有效 manifest 的导入工作流不可用

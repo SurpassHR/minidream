@@ -68,6 +68,19 @@ describe('generatePluginSkill', () => {
     expect(md).not.toContain('内部文本');
   });
 
+  it('参数带节点标题时合并展示（如 Width（value））', () => {
+    const md = generatePluginSkill(baseSpec({
+      params: [
+        { id: 'value-582', label: 'value', nodeId: '582', field: 'value', type: 'INT', default: 1024, nodeTitle: 'Width' },
+        { id: 'value-583', label: 'value', nodeId: '583', field: 'value', type: 'INT', default: 1024, nodeTitle: 'Height' },
+      ],
+    }));
+    expect(md).toContain('Width（value）');
+    expect(md).toContain('Height（value）');
+    expect(md).toMatch(/id `value-582`/);
+    expect(md).toMatch(/id `value-583`/);
+  });
+
   it('参数标注类型/默认值/范围/选项/applyTo 联动', () => {
     const md = generatePluginSkill(baseSpec());
     expect(md).toMatch(/steps-3.*整数/);

@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { WorkflowSpec } from './workflow.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const PLUGIN_SKILLS_DIR = path.resolve(__dirname, '../../.pi/skills');
+import { SKILLS_ROOT } from './paths.js';
+
+export const PLUGIN_SKILLS_DIR = SKILLS_ROOT;
 
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
@@ -116,7 +116,9 @@ function paramLines(params: WorkflowSpec['params']): string {
       bits.push(`可选：${shown}${p.options.length > 8 ? '…' : ''}`);
     }
     if (p.applyTo?.length) bits.push(`同时作用于节点 ${p.applyTo.join('、')}`);
-    return `- **${p.label || p.field}**（${bits.join('；')}）${p.description ? `\n  - ${p.description}` : ''}`;
+    // 节点标题（如 Width/Height）比字段名更有语义；与字段名不同时合并展示
+    const readable = p.nodeTitle && p.nodeTitle !== p.label ? `${p.nodeTitle}（${p.label || p.field}）` : (p.label || p.field);
+    return `- **${readable}**（${bits.join('；')}）${p.description ? `\n  - ${p.description}` : ''}`;
   }).join('\n');
 }
 
