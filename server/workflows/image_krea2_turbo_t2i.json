@@ -338,36 +338,6 @@
       "PowerLoraLoaderHeaderWidget": {
         "type": "PowerLoraLoaderHeaderWidget"
       },
-      "lora_1": {
-        "on": false,
-        "lora": "KREA2/lenovo_krea2.safetensors",
-        "strength": 0.6
-      },
-      "lora_2": {
-        "on": false,
-        "lora": "KREA2/realism_engine_krea2_v3.1.safetensors",
-        "strength": 0.4
-      },
-      "lora_3": {
-        "on": false,
-        "lora": "KREA2/realism_engine_krea2_v2.safetensors",
-        "strength": 0.4
-      },
-      "lora_4": {
-        "on": false,
-        "lora": "KREA2/PornMaster_Low_Resolution_Slider_Krea2_V1.safetensors",
-        "strength": 3
-      },
-      "lora_5": {
-        "on": false,
-        "lora": "KREA2/canon_krea2.safetensors",
-        "strength": 0.6
-      },
-      "lora_6": {
-        "on": false,
-        "lora": "KREA2/RealisticSnapshotKrea2.safetensors",
-        "strength": 0.6
-      },
       "➕ Add Lora": "",
       "model": [
         "520",
@@ -412,7 +382,7 @@
     },
     "class_type": "Text Multiline",
     "_meta": {
-      "title": "Text Multiline"
+      "title": "Negative Prompt"
     }
   },
   "552": {
@@ -443,191 +413,6 @@
       "PowerLoraLoaderHeaderWidget": {
         "type": "PowerLoraLoaderHeaderWidget"
       },
-      "lora_1": {
-        "on": false,
-        "lora": "KREA2/krea2_rt_v1_bs1.safetensors",
-        "strength": 0.6
-      },
-      "lora_2": {
-        "on": false,
-        "lora": "KREA2/onoffcrea_000001750.safetensors",
-        "strength": 0.8
-      },
-      "lora_3": {
-        "on": false,
-        "lora": "KREA2/beasti_v1_000001500.safetensors",
-        "strength": 1
-      },
-      "lora_4": {
-        "on": false,
-        "lora": "KREA2/beasti_v1_000001750.safetensors",
-        "strength": 1
-      },
-      "lora_5": {
-        "on": false,
-        "lora": "KREA2/beasti_v1_000002000.safetensors",
-        "strength": 1
-      },
-      "lora_6": {
-        "on": false,
-        "lora": "KREA2/beasti_v1_000002250.safetensors",
-        "strength": 1
-      },
-      "lora_7": {
-        "on": false,
-        "lora": "KREA2/pawg_krea2.safetensors",
-        "strength": 0.7
-      },
-      "lora_8": {
-        "on": true,
-        "lora": "KREA2/nicegirls_krea2.safetensors",
-        "strength": 0.4
-      },
-      "lora_9": {
-        "on": false,
-        "lora": "KREA2/snofs_krea_v1_1.safetensors",
-        "strength": 0.6
-      },
-      "lora_10": {
-        "on": false,
-        "lora": "KREA2/igbadie-krea2-turbo.safetensors",
-        "strength": 0.6
-      },
-      "lora_11": {
-        "on": false,
-        "lora": "KREA2/k2_nice_body.safetensors",
-        "strength": 0.4
-      },
-      "lora_12": {
-        "on": false,
-        "lora": "KREA2/krea2filterbypass.safetensors",
-        "strength": 0.6
-      },
-      "lora_13": {
-        "on": false,
-        "lora": "KREA2/krea2filterbypass3.safetensors",
-        "strength": 0.7
-      },
-      "lora_14": {
-        "on": false,
-        "lora": "KREA2/size_diff_krea2_loraholic.safetensors",
-        "strength": 3
-      },
-      "lora_15": {
-        "on": true,
-        "lora": "KREA2/Krea2_TextFusion_Refusal_Reduction.safetensors",
-        "strength": 1
-      },
-      "lora_16": {
-        "on": false,
-        "lora": "KREA2/light_krea2_loraholic.safetensors",
-        "strength": 5
-      },
-      "lora_17": {
-        "on": false,
-        "lora": "KREA2/zoom_loraholic.safetensors",
-        "strength": 1
-      },
-      "lora_18": {
-        "on": false,
-        "lora": "KREA2/real_3d_krea2_loraholic.safetensors",
-        "strength": 3
-      },
-      "lora_19": {
-        "on": false,
-        "lora": "KREA2/Krea2_FNS_V1.safetensors",
-        "strength": 1
-      },
-      "lora_20": {
-        "on": false,
-        "lora": "KREA2/KREA2_D33P_V2.safetensors",
-        "strength": 2
-      },
-      "lora_21": {
-        "on": false,
-        "lora": "KREA2/usedcondom-krea2.safetensors",
-        "strength": 0.8
-      },
-      "lora_22": {
-        "on": false,
-        "lora": "KREA2/onglass-krea2_v3.safetensors",
-        "strength": 1
-      },
-      "lora_23": {
-        "on": false,
-        "lora": "KREA2/monolid_krea2_loraholic.safetensors",
-        "strength": 2
-      },
-      "lora_24": {
-        "on": false,
-        "lora": "KREA2/Full_Nelson_Reverse_Cowgirl_Anal_V1.safetensors",
-        "strength": 0.6
-      },
-      "lora_25": {
-        "on": false,
-        "lora": "KREA2/Krea2_GrippyPussy_v1.safetensors",
-        "strength": 0.8
-      },
-      "lora_26": {
-        "on": false,
-        "lora": "KREA2/Momoka-k2-v1-1000.safetensors",
-        "strength": 0.8
-      },
-      "lora_27": {
-        "on": false,
-        "lora": "KREA2/krea2_better_pussy_poses_v1.0.safetensors",
-        "strength": 0.6
-      },
-      "lora_28": {
-        "on": false,
-        "lora": "KREA2/Krea2 Detailed_Canine_Penis v10.safetensors",
-        "strength": 1
-      },
-      "lora_29": {
-        "on": false,
-        "lora": "KREA2/Marie_Rose_epoch_10.safetensors",
-        "strength": 0.2
-      },
-      "lora_30": {
-        "on": false,
-        "lora": "KREA2/NSFW3d.safetensors",
-        "strength": 1
-      },
-      "lora_31": {
-        "on": false,
-        "lora": "ANIMA/Overwatch Porn Style 2.safetensors",
-        "strength": 0.4
-      },
-      "lora_32": {
-        "on": false,
-        "lora": "KREA2/vhs_krea2.safetensors",
-        "strength": 0.8
-      },
-      "lora_33": {
-        "on": false,
-        "lora": "KREA2/TeeKaysTittyTime_SkiSlopeTiddies_SteepSlopeTiddies_XXL_Kr2.safetensors",
-        "strength": 0.6
-      },
-      "lora_34": {
-        "on": false,
-        "lora": "KREA2/Torpedo_Tits_Krea2_GMR_epoch_7.safetensors",
-        "strength": 0.6
-      },
-      "lora_35": {
-        "on": false,
-        "lora": "KREA2/nipple insertion-krea2.safetensors",
-        "strength": 1
-      },
-      "lora_36": {
-        "on": false,
-        "lora": "KREA2/Pierced_nipples_-_Krea2_epoch_15.safetensors",
-        "strength": 0.8
-      },
-      "lora_37": {
-        "on": false,
-        "lora": "KREA2/headscissors_krea2.safetensors",
-        "strength": 1
-      },
       "➕ Add Lora": "",
       "model": [
         "557",
@@ -649,74 +434,13 @@
     },
     "class_type": "Text Multiline",
     "_meta": {
-      "title": "Text Multiline",
-      "promptPlaceholder": true
+      "title": "Positive Prompt"
     }
   },
   "557": {
     "inputs": {
       "PowerLoraLoaderHeaderWidget": {
         "type": "PowerLoraLoaderHeaderWidget"
-      },
-      "lora_1": {
-        "on": false,
-        "lora": "KREA2/PornMaster_Krea2_Asian_slider_V1.safetensors",
-        "strength": 1
-      },
-      "lora_2": {
-        "on": false,
-        "lora": "KREA2/PornMaster_Krea2_Realism_slider_V1.safetensors",
-        "strength": 2
-      },
-      "lora_3": {
-        "on": false,
-        "lora": "KREA2/PornMaster_Low_Resolution_Slider_Krea2_V1.safetensors",
-        "strength": -2
-      },
-      "lora_4": {
-        "on": true,
-        "lora": "KREA2/waist_slider_krea2.safetensors",
-        "strength": -4
-      },
-      "lora_5": {
-        "on": true,
-        "lora": "KREA2/skindetails_krea2_loraholic.safetensors",
-        "strength": -2
-      },
-      "lora_6": {
-        "on": true,
-        "lora": "KREA2/skintone_krea2_loraholic.safetensors",
-        "strength": -1
-      },
-      "lora_7": {
-        "on": false,
-        "lora": "KREA2/age_krea2_loraholic.safetensors",
-        "strength": -3
-      },
-      "lora_8": {
-        "on": false,
-        "lora": "KREA2/breast_size_v2_krea2_loraholic.safetensors",
-        "strength": 3
-      },
-      "lora_9": {
-        "on": false,
-        "lora": "KREA2/RLY-KREA2-thighgap-v1-trigger-thighgap.safetensors",
-        "strength": 0.8
-      },
-      "lora_10": {
-        "on": false,
-        "lora": "KREA2/height_krea2_loraholic.safetensors",
-        "strength": -4
-      },
-      "lora_11": {
-        "on": false,
-        "lora": "KREA2/Detailer-KREA2.safetensors",
-        "strength": -1
-      },
-      "lora_12": {
-        "on": false,
-        "lora": "KREA2/penis_size_krea2_v2_loraholic.safetensors",
-        "strength": 2
       },
       "➕ Add Lora": "",
       "model": [
@@ -778,20 +502,6 @@
     "class_type": "PrimitiveInt",
     "_meta": {
       "title": "Height"
-    }
-  },
-  "_minidream_node_positions": {
-    "478": {
-      "x": 3981.388288035503,
-      "y": 34.183825219797434
-    },
-    "538": {
-      "x": 476.66680230034723,
-      "y": 367.49996609157984
-    },
-    "553": {
-      "x": 1357.6735064218433,
-      "y": 529.1573100060568
     }
   }
 }
