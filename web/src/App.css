@@ -328,7 +328,6 @@
 }
 
 .rail-lang {
-  margin-top: auto;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -800,201 +799,225 @@
   background: var(--bg-hover);
 }
 
-.activity-panel {
-  position: absolute;
-  top: 52px;
-  right: 28px;
-  z-index: 40;
-  width: min(420px, calc(100vw - 32px));
-  max-height: calc(100vh - 100px);
-  overflow-y: auto;
-  padding: 18px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow-float);
-}
-
-.activity-panel-head,
-.activity-item-head,
-.activity-item-meta {
+/* ============ SessionTaskIndicator (导航栏任务指示器) ============ */
+.rail-footer {
+  width: 100%;
+  margin-top: auto;
   display: flex;
+  flex-direction: column;
   align-items: center;
 }
 
-.activity-panel-head {
-  justify-content: space-between;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--border);
+.session-task-rail {
+  position: relative;
+  margin-bottom: 4px;
 }
 
-.activity-panel-kicker {
-  margin-bottom: 3px;
-  color: var(--text-tertiary);
-  font-size: 11px;
-}
-
-.activity-panel h2 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-}
-
-.activity-close {
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
+/* 语言切换按钮在 flex 底部，任务指示插在它上方 */
+.session-task-rail .session-task-rail-trigger {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
   color: var(--text-secondary);
-  font-size: 20px;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
 }
 
-.activity-close:hover {
+.session-task-rail-trigger:hover {
   background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
-.activity-list {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding-top: 14px;
+.session-task-rail-trigger.active {
+  color: var(--brand-deep);
 }
 
-.activity-section {
+.session-task-icon-wrap {
+  position: relative;
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+
+.session-task-icon {
+  color: var(--text-secondary);
+  transition: color 0.15s;
+}
+
+.session-task-icon-wrap.active .session-task-icon {
+  color: var(--brand-deep);
+}
+
+.session-task-ring {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.session-task-ring-bg {
+  fill: none;
+  stroke: var(--bg-progress);
+  stroke-width: 2;
+}
+
+.session-task-ring-fg {
+  fill: none;
+  stroke: var(--brand-deep);
+  stroke-width: 2;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.3s ease;
+}
+
+.session-task-popover {
+  position: absolute;
+  left: calc(100% + 10px);
+  bottom: calc(100% + 8px);
+  z-index: 60;
+  width: min(340px, calc(100vw - 96px));
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-float);
+}
+
+.session-task-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
+  padding: 0 2px 8px;
 }
 
-.activity-section-title {
+.session-task-popover-title {
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 600;
 }
 
-.activity-section-title em {
-  margin-left: 5px;
-  padding: 1px 6px;
-  border-radius: 8px;
-  color: var(--brand-deep);
-  background: var(--brand-soft);
-  font-style: normal;
-}
-
-.activity-item {
-  padding: 11px 12px;
+.session-task-toggle {
+  height: 22px;
+  padding: 0 8px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 6px;
+  color: var(--text-tertiary);
+  background: transparent;
+  font-size: 11px;
+  transition: color 0.15s, background-color 0.15s;
 }
 
-.activity-item-head {
-  gap: 7px;
+.session-task-toggle:hover {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
 }
 
-.activity-pulse {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #16a34a;
-  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.12);
+.session-task-empty {
+  margin: 4px 2px 2px;
+  color: var(--text-tertiary);
+  font-size: 12px;
 }
 
-.activity-pulse.history {
-  background: var(--text-muted);
-  box-shadow: none;
+.session-task-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.activity-history-item {
-  opacity: 0.86;
+.session-task-item {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-hover);
+  transition: opacity 0.2s ease;
 }
 
-.activity-progress-fill.history {
-  background: var(--text-muted);
+.session-task-item.finished {
+  opacity: 0.62;
 }
 
-.activity-task-kind {
-  width: 18px;
+.session-task-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.activity-item-title {
+.session-task-kind {
+  width: 16px;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.session-task-workflow {
   min-width: 0;
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
 }
 
-.activity-item-status {
+.session-task-status {
   flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 99px;
+  color: var(--brand-deep);
+  background: var(--brand-soft);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.session-task-item.finished .session-task-status {
   color: var(--text-tertiary);
-  font-size: 11px;
+  background: var(--bg-card);
 }
 
-.activity-item-message {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  margin: 8px 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.activity-item-meta {
-  gap: 8px;
-  color: var(--text-tertiary);
-  font-size: 11px;
-}
-
-.activity-danger-btn {
-  margin-left: auto;
-  padding: 3px 8px;
-  border: 1px solid rgba(220, 38, 38, 0.24);
+.session-task-cancel {
+  flex-shrink: 0;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(220, 38, 38, 0.2);
   border-radius: 6px;
   color: #dc2626;
   background: transparent;
-  font-size: 11px;
+  font-size: 10px;
+  transition: background-color 0.15s, border-color 0.15s;
 }
 
-.activity-danger-btn:hover {
+.session-task-cancel:hover {
+  border-color: rgba(220, 38, 38, 0.4);
   background: rgba(220, 38, 38, 0.08);
 }
 
-.activity-progress-track {
-  height: 4px;
+.session-task-progress-track {
+  height: 3px;
   overflow: hidden;
-  margin: 8px 0;
+  margin-top: 7px;
   border-radius: 2px;
   background: var(--bg-progress);
 }
 
-.activity-progress-fill {
+.session-task-progress-fill {
   height: 100%;
   border-radius: inherit;
-  background: var(--brand-deep);
-  transition: width 0.25s ease;
+  background: linear-gradient(90deg, var(--brand-deep), var(--brand));
+  transition: width 0.3s ease;
 }
 
-.activity-empty {
-  padding: 38px 12px 22px;
-  text-align: center;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.activity-empty-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  margin-bottom: 10px;
-  border-radius: 50%;
-  color: #16a34a;
-  background: rgba(22, 163, 74, 0.1);
+.session-task-progress-fill.finished {
+  background: var(--text-muted);
 }
 
 .composer-stop {
@@ -1216,6 +1239,7 @@
 
 /* ============ Composer ============ */
 .composer-wrap {
+  position: relative;
   padding: 0 32px 20px;
 }
 

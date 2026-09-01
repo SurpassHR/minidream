@@ -11,7 +11,7 @@ import {
   fetchActivity,
   openActivityEvents,
   openSessionEvents,
-  cancelSession as apiCancelSession,
+  cancelSession,
   openJobEvents,
   createSession,
   deleteSession as apiDeleteSession,
@@ -41,7 +41,6 @@ import Sidebar, { type Conversation } from './components/Sidebar';
 import SettingsModal from './components/SettingsModal';
 import Composer, { type ComposerSubmitOpts } from './components/Composer';
 import ChatView from './components/ChatView';
-import ActivityPanel from './components/ActivityPanel';
 import DraftsView from './components/DraftsView';
 import SessionAssetsPanel from './components/SessionAssetsPanel';
 import { extractSessionAssets, findMentionedSessionAssets, type SessionAsset } from './sessionAssets';
@@ -271,7 +270,6 @@ export default function App() {
   /** Agent 正文回复是否已结束：回复完成后即使生成任务仍在进行，也不再显示打字光标 */
   const [agentReplyDone, setAgentReplyDone] = useState(false);
   const [activity, setActivity] = useState<ActivitySnapshot>({ sessions: [], tasks: [] });
-  const [activityOpen, setActivityOpen] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConv, setActiveConv] = useState<string | null>(null);
   const [loadedConv, setLoadedConv] = useState<string | null>(null);
@@ -728,14 +726,8 @@ export default function App() {
   const handleStopConversation = () => {
     streamAbortRef.current?.abort();
     if (activeConv) {
-      void apiCancelSession(activeConv).catch(() => undefined);
+      void cancelSession(activeConv).catch(() => undefined);
     }
-  };
-
-  const handleCancelSession = (sessionId: string) => {
-    void apiCancelSession(sessionId).then(() => {
-      if (sessionId === activeConv) streamAbortRef.current?.abort();
-    }).catch(() => undefined);
   };
 
   const handleDeleteMessage = async (index: number) => {
@@ -917,6 +909,8 @@ export default function App() {
         theme={theme}
         onToggleTheme={() => setTheme(t => (t === 'dark' ? 'light' : 'dark'))}
         onOpenSettings={() => setSettingsOpen(true)}
+        tasks={activity.tasks.filter(task => task.sessionId === activeConv)}
+        onCancelTask={handleCancelTask}
       />
       <div className="workbench">
         {isChatView && (
@@ -931,25 +925,6 @@ export default function App() {
           />
         )}
         <main className="main">
-          <div className="main-statusbar">
-            <span className={`status-dot${activity.sessions.some(s => s.status === 'running') || activity.tasks.length > 0 ? ' active' : ''}`} />
-            <span className="main-status-label">
-              {activity.sessions.filter(s => s.status === 'running').length + activity.tasks.length > 0
-                ? t('statusbar.runningCount', { count: activity.sessions.filter(s => s.status === 'running').length + activity.tasks.length })
-                : t('statusbar.idle')}
-            </span>
-            <button className="activity-open-btn" onClick={() => setActivityOpen(true)}>
-              {t('statusbar.viewActivity')}
-            </button>
-          </div>
-          {activityOpen && (
-            <ActivityPanel
-              snapshot={activity}
-              onClose={() => setActivityOpen(false)}
-              onCancelSession={handleCancelSession}
-              onCancelTask={handleCancelTask}
-            />
-          )}
           {activeNav === 'drafts' ? (
             <DraftsView />
           ) : activeNav === 'generate' ? (
